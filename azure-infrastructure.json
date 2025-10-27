@@ -1,0 +1,443 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "defaultValue": "car-rental-api",
+      "metadata": {
+        "description": "Name of the application"
+      }
+    },
+    "environment": {
+      "type": "string",
+      "defaultValue": "production",
+      "allowedValues": ["development", "staging", "production"],
+      "metadata": {
+        "description": "Environment name"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all resources"
+      }
+    },
+    "containerRegistryName": {
+      "type": "string",
+      "defaultValue": "[concat('acr', uniqueString(resourceGroup().id))]",
+      "metadata": {
+        "description": "Name of the Azure Container Registry"
+      }
+    },
+    "postgresqlServerName": {
+      "type": "string",
+      "defaultValue": "[concat('postgres-', uniqueString(resourceGroup().id))]",
+      "metadata": {
+        "description": "Name of the PostgreSQL server"
+      }
+    },
+    "postgresqlAdminLogin": {
+      "type": "string",
+      "defaultValue": "alex",
+      "metadata": {
+        "description": "Administrator username for PostgreSQL"
+      }
+    },
+    "postgresqlAdminPassword": {
+      "type": "securestring",
+      "defaultValue": "Kis@1963",
+      "metadata": {
+        "description": "Administrator password for PostgreSQL"
+      }
+    }
+  },
+  "variables": {
+    "containerAppEnvironmentName": "[concat(parameters('appName'), '-env')]",
+    "containerAppName": "[concat(parameters('appName'), '-app')]",
+    "logAnalyticsWorkspaceName": "[concat(parameters('appName'), '-logs')]",
+    "applicationInsightsName": "[concat(parameters('appName'), '-insights')]",
+    "keyVaultName": "[concat(parameters('appName'), '-kv')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2021-12-01-preview",
+      "name": "[variables('logAnalyticsWorkspaceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('applicationInsightsName')]",
+      "location": "[parameters('location')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsWorkspaceName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsWorkspaceName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2022-07-01",
+      "name": "[variables('keyVaultName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "tenantId": "[subscription().tenantId]",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "accessPolicies": [],
+        "enabledForDeployment": false,
+        "enabledForDiskEncryption": false,
+        "enabledForTemplateDeployment": true,
+        "enableSoftDelete": true,
+        "softDeleteRetentionInDays": 90,
+        "enableRbacAuthorization": true
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/secrets",
+      "apiVersion": "2022-07-01",
+      "name": "[concat(variables('keyVaultName'), '/db-password')]",
+      "properties": {
+        "value": "[parameters('postgresqlAdminPassword')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/secrets",
+      "apiVersion": "2022-07-01",
+      "name": "[concat(variables('keyVaultName'), '/jwt-secret')]",
+      "properties": {
+        "value": "production-super-secret-jwt-key-that-should-be-at-least-64-characters-long-for-maximum-security"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2021-09-01",
+      "name": "[parameters('containerRegistryName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Basic"
+      },
+      "properties": {
+        "adminUserEnabled": true
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2022-12-01",
+      "name": "[parameters('postgresqlServerName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard_B1ms",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "administratorLogin": "[parameters('postgresqlAdminLogin')]",
+        "administratorLoginPassword": "[parameters('postgresqlAdminPassword')]",
+        "version": "15",
+        "storage": {
+          "storageSizeGB": 32
+        },
+        "backup": {
+          "backupRetentionDays": 7,
+          "geoRedundantBackup": "Disabled"
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2022-12-01",
+      "name": "[concat(parameters('postgresqlServerName'), '/aegis_ao_car_rentals')]",
+      "properties": {
+        "charset": "UTF8",
+        "collation": "en_US.UTF8"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('postgresqlServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+      "apiVersion": "2022-12-01",
+      "name": "[concat(parameters('postgresqlServerName'), '/AllowAzureServices')]",
+      "properties": {
+        "startIpAddress": "0.0.0.0",
+        "endIpAddress": "0.0.0.0"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('postgresqlServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('containerAppEnvironmentName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsWorkspaceName'))).customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsWorkspaceName')), '2021-12-01-preview').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsWorkspaceName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('containerAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
+        "configuration": {
+          "ingress": {
+            "external": true,
+            "targetPort": 8080,
+            "allowInsecure": false,
+            "traffic": [
+              {
+                "weight": 100,
+                "latestRevision": true
+              }
+            ]
+          },
+          "secrets": [
+            {
+              "name": "db-password",
+              "value": "[parameters('postgresqlAdminPassword')]"
+            },
+            {
+              "name": "jwt-secret",
+              "value": "production-super-secret-jwt-key-that-should-be-at-least-64-characters-long-for-maximum-security"
+            }
+          ],
+          "activeRevisionsMode": "Single"
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "car-rental-api",
+              "image": "[concat(parameters('containerRegistryName'), '.azurecr.io/', parameters('appName'), ':latest')]",
+              "resources": {
+                "cpu": 1.0,
+                "memory": "2Gi"
+              },
+              "env": [
+                {
+                  "name": "ASPNETCORE_ENVIRONMENT",
+                  "value": "Production"
+                },
+                {
+                  "name": "ASPNETCORE_URLS",
+                  "value": "http://+:8080"
+                },
+                {
+                  "name": "Database__Host",
+                  "value": "[reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('postgresqlServerName'))).fullyQualifiedDomainName]"
+                },
+                {
+                  "name": "Database__Port",
+                  "value": "5432"
+                },
+                {
+                  "name": "Database__Database",
+                  "value": "aegis_ao_car_rentals"
+                },
+                {
+                  "name": "Database__Username",
+                  "value": "[parameters('postgresqlAdminLogin')]"
+                },
+                {
+                  "name": "Database__Password",
+                  "secretRef": "db-password"
+                },
+                {
+                  "name": "Database__Pooling",
+                  "value": "true"
+                },
+                {
+                  "name": "Database__MinPoolSize",
+                  "value": "5"
+                },
+                {
+                  "name": "Database__MaxPoolSize",
+                  "value": "200"
+                },
+                {
+                  "name": "Database__ConnectionLifetime",
+                  "value": "0"
+                },
+                {
+                  "name": "Database__SSLMode",
+                  "value": "Require"
+                },
+                {
+                  "name": "DatabaseSettings__Provider",
+                  "value": "PostgreSQL"
+                },
+                {
+                  "name": "DatabaseSettings__CommandTimeout",
+                  "value": "60"
+                },
+                {
+                  "name": "DatabaseSettings__EnableSensitiveDataLogging",
+                  "value": "false"
+                },
+                {
+                  "name": "DatabaseSettings__EnableDetailedErrors",
+                  "value": "false"
+                },
+                {
+                  "name": "DatabaseSettings__EnableRetryOnFailure",
+                  "value": "true"
+                },
+                {
+                  "name": "DatabaseSettings__MaxRetryCount",
+                  "value": "5"
+                },
+                {
+                  "name": "DatabaseSettings__MaxRetryDelay",
+                  "value": "00:01:00"
+                },
+                {
+                  "name": "DatabaseSettings__EnableServiceProviderCaching",
+                  "value": "true"
+                },
+                {
+                  "name": "DatabaseSettings__EnableQuerySplittingBehavior",
+                  "value": "SplitQuery"
+                },
+                {
+                  "name": "JwtSettings__SecretKey",
+                  "secretRef": "jwt-secret"
+                },
+                {
+                  "name": "JwtSettings__Issuer",
+                  "value": "CarRentalAPI-Prod"
+                },
+                {
+                  "name": "JwtSettings__Audience",
+                  "value": "CarRentalClients-Prod"
+                },
+                {
+                  "name": "JwtSettings__ExpiryMinutes",
+                  "value": "30"
+                },
+                {
+                  "name": "Logging__LogLevel__Default",
+                  "value": "Warning"
+                },
+                {
+                  "name": "Logging__LogLevel__Microsoft.AspNetCore",
+                  "value": "Warning"
+                },
+                {
+                  "name": "Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command",
+                  "value": "Warning"
+                },
+                {
+                  "name": "AllowedHosts",
+                  "value": "*"
+                },
+                {
+                  "name": "Swagger__Enabled",
+                  "value": "true"
+                },
+                {
+                  "name": "Swagger__Title",
+                  "value": "Car Rental API"
+                },
+                {
+                  "name": "Swagger__Version",
+                  "value": "v1"
+                }
+              ],
+              "probes": [
+                {
+                  "type": "Liveness",
+                  "httpGet": {
+                    "path": "/health",
+                    "port": 8080
+                  },
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 5,
+                  "failureThreshold": 3
+                },
+                {
+                  "type": "Readiness",
+                  "httpGet": {
+                    "path": "/health/ready",
+                    "port": 8080
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 5,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 3
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 10,
+            "rules": [
+              {
+                "name": "http-scaling",
+                "http": {
+                  "metadata": {
+                    "concurrentRequests": "30"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', variables('containerAppEnvironmentName'))]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('postgresqlServerName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "containerAppUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', variables('containerAppName'))).properties.configuration.ingress.fqdn]"
+    },
+    "containerRegistryLoginServer": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))).loginServer]"
+    },
+    "postgresqlServerFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('postgresqlServerName'))).fullyQualifiedDomainName]"
+    }
+  }
+}

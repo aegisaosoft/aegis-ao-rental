@@ -1,0 +1,32 @@
+# Car Rental API Environment Variables
+# Copy this file to .env.local and update values as needed
+
+# Database Configuration
+DATABASE_HOST=aegis-ao-db.postgres.database.azure.com
+DATABASE_PORT=5432
+DATABASE_NAME=aegis_ao_rental
+DATABASE_USERNAME=alex
+DATABASE_PASSWORD=Kis@1963
+DATABASE_SSL_MODE=Require
+
+# JWT Settings
+JWT_SECRET_KEY=your-super-secret-jwt-key-that-should-be-at-least-32-characters-long-for-production-use
+JWT_ISSUER=CarRentalAPI
+JWT_AUDIENCE=CarRentalClients
+JWT_EXPIRY_MINUTES=60
+
+# Stripe Configuration (Update with your actual keys)
+STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key_here
+STRIPE_PUBLISHABLE_KEY=pk_test_your_stripe_publishable_key_here
+STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
+
+# API URLs
+API_BASE_URL=https://localhost:7163/api
+API_HTTP_URL=http://localhost:5094/api
+
+# Development Settings
+ASPNETCORE_ENVIRONMENT=Development
+ASPNETCORE_URLS=https://localhost:7163;http://localhost:5094
+
+# CORS Origins (comma-separated)
+CORS_ORIGINS=http://localhost:3000,https://localhost:3000

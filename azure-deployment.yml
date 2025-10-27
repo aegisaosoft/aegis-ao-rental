@@ -1,0 +1,151 @@
+# Azure Container Apps Deployment Configuration
+# This file defines the deployment configuration for the Car Rental API on Azure Container Apps
+
+apiVersion: 2022-10-01
+kind: ContainerApp
+metadata:
+  name: car-rental-api
+  location: eastus
+spec:
+  environmentId: /subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.App/managedEnvironments/{environment-name}
+  
+  configuration:
+    # Ingress configuration
+    ingress:
+      external: true
+      targetPort: 8080
+      allowInsecure: false
+      traffic:
+        - weight: 100
+          latestRevision: true
+    
+    # Secrets for sensitive configuration
+    secrets:
+      - name: db-password
+        value: "Kis@1963"  # Replace with Azure Key Vault reference in production
+      - name: jwt-secret
+        value: "production-super-secret-jwt-key-that-should-be-at-least-64-characters-long-for-maximum-security"
+    
+    # Environment variables
+    activeRevisionsMode: Single
+    
+  template:
+    # Container configuration
+    containers:
+      - name: car-rental-api
+        image: {container-registry}.azurecr.io/car-rental-api:latest
+        resources:
+          cpu: 1.0
+          memory: 2Gi
+        
+        # Environment variables
+        env:
+          # ASP.NET Core configuration
+          - name: ASPNETCORE_ENVIRONMENT
+            value: "Production"
+          - name: ASPNETCORE_URLS
+            value: "http://+:8080"
+          
+          # Database configuration
+          - name: Database__Host
+            value: "aegis-ao-rental-database.postgres.database.azure.com"
+          - name: Database__Port
+            value: "5432"
+          - name: Database__Database
+            value: "aegis_ao_car_rentals"
+          - name: Database__Username
+            value: "alex"
+          - name: Database__Password
+            secretRef: db-password
+          - name: Database__Pooling
+            value: "true"
+          - name: Database__MinPoolSize
+            value: "5"
+          - name: Database__MaxPoolSize
+            value: "200"
+          - name: Database__ConnectionLifetime
+            value: "0"
+          - name: Database__SSLMode
+            value: "Require"
+          
+          # Database settings
+          - name: DatabaseSettings__Provider
+            value: "PostgreSQL"
+          - name: DatabaseSettings__CommandTimeout
+            value: "60"
+          - name: DatabaseSettings__EnableSensitiveDataLogging
+            value: "false"
+          - name: DatabaseSettings__EnableDetailedErrors
+            value: "false"
+          - name: DatabaseSettings__EnableRetryOnFailure
+            value: "true"
+          - name: DatabaseSettings__MaxRetryCount
+            value: "5"
+          - name: DatabaseSettings__MaxRetryDelay
+            value: "00:01:00"
+          - name: DatabaseSettings__EnableServiceProviderCaching
+            value: "true"
+          - name: DatabaseSettings__EnableQuerySplittingBehavior
+            value: "SplitQuery"
+          
+          # JWT settings
+          - name: JwtSettings__SecretKey
+            secretRef: jwt-secret
+          - name: JwtSettings__Issuer
+            value: "CarRentalAPI-Prod"
+          - name: JwtSettings__Audience
+            value: "CarRentalClients-Prod"
+          - name: JwtSettings__ExpiryMinutes
+            value: "30"
+          
+          # Logging configuration
+          - name: Logging__LogLevel__Default
+            value: "Warning"
+          - name: Logging__LogLevel__Microsoft.AspNetCore
+            value: "Warning"
+          - name: Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command
+            value: "Warning"
+          
+          # Security
+          - name: AllowedHosts
+            value: "*"
+          
+          # Swagger configuration
+          - name: Swagger__Enabled
+            value: "true"
+          - name: Swagger__Title
+            value: "Car Rental API"
+          - name: Swagger__Version
+            value: "v1"
+    
+    # Scaling configuration
+    scale:
+      minReplicas: 1
+      maxReplicas: 10
+      rules:
+        - name: http-scaling
+          http:
+            metadata:
+              concurrentRequests: "30"
+    
+    # Health probes
+    containers:
+      - name: car-rental-api
+        # ... (same container config as above)
+        probes:
+          - type: Liveness
+            httpGet:
+              path: "/health"
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          - type: Readiness
+            httpGet:
+              path: "/health/ready"
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
