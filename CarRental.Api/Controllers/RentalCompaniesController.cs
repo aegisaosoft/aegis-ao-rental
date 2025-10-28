@@ -100,6 +100,12 @@ public class RentalCompaniesController : ControllerBase
                 About = c.About,
                 BookingIntegrated = c.BookingIntegrated,
                 CompanyPath = c.CompanyPath,
+                Subdomain = c.Subdomain,
+                PrimaryColor = c.PrimaryColor,
+                SecondaryColor = c.SecondaryColor,
+                LogoUrl = c.LogoUrl,
+                FaviconUrl = c.FaviconUrl,
+                CustomCss = c.CustomCss,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -145,6 +151,12 @@ public class RentalCompaniesController : ControllerBase
             About = company.About,
             BookingIntegrated = company.BookingIntegrated,
             CompanyPath = company.CompanyPath,
+            Subdomain = company.Subdomain,
+            PrimaryColor = company.PrimaryColor,
+            SecondaryColor = company.SecondaryColor,
+            LogoUrl = company.LogoUrl,
+            FaviconUrl = company.FaviconUrl,
+            CustomCss = company.CustomCss,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -190,6 +202,12 @@ public class RentalCompaniesController : ControllerBase
             About = company.About,
             BookingIntegrated = company.BookingIntegrated,
             CompanyPath = company.CompanyPath,
+            Subdomain = company.Subdomain,
+            PrimaryColor = company.PrimaryColor,
+            SecondaryColor = company.SecondaryColor,
+            LogoUrl = company.LogoUrl,
+            FaviconUrl = company.FaviconUrl,
+            CustomCss = company.CustomCss,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -234,6 +252,12 @@ public class RentalCompaniesController : ControllerBase
             About = createCompanyDto.About,
             BookingIntegrated = createCompanyDto.BookingIntegrated,
             CompanyPath = createCompanyDto.CompanyPath,
+            Subdomain = createCompanyDto.Subdomain,
+            PrimaryColor = createCompanyDto.PrimaryColor,
+            SecondaryColor = createCompanyDto.SecondaryColor,
+            LogoUrl = createCompanyDto.LogoUrl,
+            FaviconUrl = createCompanyDto.FaviconUrl,
+            CustomCss = createCompanyDto.CustomCss,
             IsActive = true
         };
 
@@ -283,6 +307,12 @@ public class RentalCompaniesController : ControllerBase
                 About = company.About,
                 BookingIntegrated = company.BookingIntegrated,
                 CompanyPath = company.CompanyPath,
+                Subdomain = company.Subdomain,
+                PrimaryColor = company.PrimaryColor,
+                SecondaryColor = company.SecondaryColor,
+                LogoUrl = company.LogoUrl,
+                FaviconUrl = company.FaviconUrl,
+                CustomCss = company.CustomCss,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -381,6 +411,24 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.CompanyPath != null)
             company.CompanyPath = updateCompanyDto.CompanyPath;
+
+        if (updateCompanyDto.Subdomain != null)
+            company.Subdomain = updateCompanyDto.Subdomain;
+
+        if (updateCompanyDto.PrimaryColor != null)
+            company.PrimaryColor = updateCompanyDto.PrimaryColor;
+
+        if (updateCompanyDto.SecondaryColor != null)
+            company.SecondaryColor = updateCompanyDto.SecondaryColor;
+
+        if (updateCompanyDto.LogoUrl != null)
+            company.LogoUrl = updateCompanyDto.LogoUrl;
+
+        if (updateCompanyDto.FaviconUrl != null)
+            company.FaviconUrl = updateCompanyDto.FaviconUrl;
+
+        if (updateCompanyDto.CustomCss != null)
+            company.CustomCss = updateCompanyDto.CustomCss;
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;

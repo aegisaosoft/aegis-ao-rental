@@ -110,6 +110,29 @@ public class RentalCompany
     [Column("company_path")]
     public string? CompanyPath { get; set; }
 
+    [MaxLength(100)]
+    [Column("subdomain")]
+    public string? Subdomain { get; set; }
+
+    [MaxLength(7)]
+    [Column("primary_color")]
+    public string? PrimaryColor { get; set; }
+
+    [MaxLength(7)]
+    [Column("secondary_color")]
+    public string? SecondaryColor { get; set; }
+
+    [MaxLength(500)]
+    [Column("logo_url")]
+    public string? LogoUrl { get; set; }
+
+    [MaxLength(500)]
+    [Column("favicon_url")]
+    public string? FaviconUrl { get; set; }
+
+    [Column("custom_css")]
+    public string? CustomCss { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 

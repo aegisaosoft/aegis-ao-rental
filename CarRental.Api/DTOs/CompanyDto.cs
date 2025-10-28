@@ -83,6 +83,23 @@ public class RentalCompanyDto
     
     public string? CompanyPath { get; set; }
     
+    [MaxLength(100)]
+    public string? Subdomain { get; set; }
+    
+    [MaxLength(7)]
+    public string? PrimaryColor { get; set; }
+    
+    [MaxLength(7)]
+    public string? SecondaryColor { get; set; }
+    
+    [MaxLength(500)]
+    public string? LogoUrl { get; set; }
+    
+    [MaxLength(500)]
+    public string? FaviconUrl { get; set; }
+    
+    public string? CustomCss { get; set; }
+    
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -149,6 +166,23 @@ public class CreateRentalCompanyDto
     public string? BookingIntegrated { get; set; }
     
     public string? CompanyPath { get; set; }
+    
+    [MaxLength(100)]
+    public string? Subdomain { get; set; }
+    
+    [MaxLength(7)]
+    public string? PrimaryColor { get; set; }
+    
+    [MaxLength(7)]
+    public string? SecondaryColor { get; set; }
+    
+    [MaxLength(500)]
+    public string? LogoUrl { get; set; }
+    
+    [MaxLength(500)]
+    public string? FaviconUrl { get; set; }
+    
+    public string? CustomCss { get; set; }
 }
 
 public class UpdateRentalCompanyDto
@@ -210,6 +244,23 @@ public class UpdateRentalCompanyDto
     public string? BookingIntegrated { get; set; }
     
     public string? CompanyPath { get; set; }
+    
+    [MaxLength(100)]
+    public string? Subdomain { get; set; }
+    
+    [MaxLength(7)]
+    public string? PrimaryColor { get; set; }
+    
+    [MaxLength(7)]
+    public string? SecondaryColor { get; set; }
+    
+    [MaxLength(500)]
+    public string? LogoUrl { get; set; }
+    
+    [MaxLength(500)]
+    public string? FaviconUrl { get; set; }
+    
+    public string? CustomCss { get; set; }
     
     public bool? IsActive { get; set; }
 }
