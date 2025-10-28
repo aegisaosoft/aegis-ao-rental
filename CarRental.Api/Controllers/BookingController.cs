@@ -69,6 +69,60 @@ public class BookingController : ControllerBase
             if (!vehicle.IsActive || vehicle.Status != "available")
                 return BadRequest("Vehicle is not available for booking");
 
+            // Fetch location details for pickup and return locations
+            LocationInfo? pickupLocationInfo = null;
+            LocationInfo? returnLocationInfo = null;
+
+            if (!string.IsNullOrEmpty(createDto.BookingData.PickupLocation))
+            {
+                var pickupLocation = await _context.Locations
+                    .Where(l => l.CompanyId == createDto.CompanyId && 
+                               l.LocationName == createDto.BookingData.PickupLocation &&
+                               l.IsActive && l.IsPickupLocation)
+                    .FirstOrDefaultAsync();
+
+                if (pickupLocation != null)
+                {
+                    pickupLocationInfo = new LocationInfo
+                    {
+                        LocationName = pickupLocation.LocationName,
+                        Address = pickupLocation.Address,
+                        City = pickupLocation.City,
+                        State = pickupLocation.State,
+                        Country = pickupLocation.Country,
+                        PostalCode = pickupLocation.PostalCode,
+                        Phone = pickupLocation.Phone,
+                        Email = pickupLocation.Email,
+                        OpeningHours = pickupLocation.OpeningHours
+                    };
+                }
+            }
+
+            if (!string.IsNullOrEmpty(createDto.BookingData.ReturnLocation))
+            {
+                var returnLocation = await _context.Locations
+                    .Where(l => l.CompanyId == createDto.CompanyId && 
+                               l.LocationName == createDto.BookingData.ReturnLocation &&
+                               l.IsActive && l.IsReturnLocation)
+                    .FirstOrDefaultAsync();
+
+                if (returnLocation != null)
+                {
+                    returnLocationInfo = new LocationInfo
+                    {
+                        LocationName = returnLocation.LocationName,
+                        Address = returnLocation.Address,
+                        City = returnLocation.City,
+                        State = returnLocation.State,
+                        Country = returnLocation.Country,
+                        PostalCode = returnLocation.PostalCode,
+                        Phone = returnLocation.Phone,
+                        Email = returnLocation.Email,
+                        OpeningHours = returnLocation.OpeningHours
+                    };
+                }
+            }
+
             // Generate secure token
             var token = GenerateSecureToken();
 
@@ -107,6 +161,8 @@ public class BookingController : ControllerBase
                         Name = company.CompanyName,
                         Email = company.Email
                     },
+                    PickupLocationInfo = pickupLocationInfo,
+                    ReturnLocationInfo = returnLocationInfo,
                     Notes = createDto.BookingData.Notes
                 },
                 ExpiresAt = DateTime.UtcNow.AddHours(createDto.ExpirationHours)
@@ -154,6 +210,30 @@ public class BookingController : ControllerBase
                         Name = bookingToken.BookingData.CompanyInfo?.Name ?? "",
                         Email = bookingToken.BookingData.CompanyInfo?.Email ?? ""
                     },
+                    PickupLocationInfo = bookingToken.BookingData.PickupLocationInfo != null ? new LocationInfoDto
+                    {
+                        LocationName = bookingToken.BookingData.PickupLocationInfo.LocationName,
+                        Address = bookingToken.BookingData.PickupLocationInfo.Address,
+                        City = bookingToken.BookingData.PickupLocationInfo.City,
+                        State = bookingToken.BookingData.PickupLocationInfo.State,
+                        Country = bookingToken.BookingData.PickupLocationInfo.Country,
+                        PostalCode = bookingToken.BookingData.PickupLocationInfo.PostalCode,
+                        Phone = bookingToken.BookingData.PickupLocationInfo.Phone,
+                        Email = bookingToken.BookingData.PickupLocationInfo.Email,
+                        OpeningHours = bookingToken.BookingData.PickupLocationInfo.OpeningHours
+                    } : null,
+                    ReturnLocationInfo = bookingToken.BookingData.ReturnLocationInfo != null ? new LocationInfoDto
+                    {
+                        LocationName = bookingToken.BookingData.ReturnLocationInfo.LocationName,
+                        Address = bookingToken.BookingData.ReturnLocationInfo.Address,
+                        City = bookingToken.BookingData.ReturnLocationInfo.City,
+                        State = bookingToken.BookingData.ReturnLocationInfo.State,
+                        Country = bookingToken.BookingData.ReturnLocationInfo.Country,
+                        PostalCode = bookingToken.BookingData.ReturnLocationInfo.PostalCode,
+                        Phone = bookingToken.BookingData.ReturnLocationInfo.Phone,
+                        Email = bookingToken.BookingData.ReturnLocationInfo.Email,
+                        OpeningHours = bookingToken.BookingData.ReturnLocationInfo.OpeningHours
+                    } : null,
                     Notes = bookingToken.BookingData.Notes
                 },
                 ExpiresAt = bookingToken.ExpiresAt,
@@ -439,13 +519,32 @@ public class BookingController : ControllerBase
                     CompanyInfo = new CompanyInfoDto
                     {
                         Name = bookingConfirmation.BookingDetails.CompanyInfo?.Name ?? "",
-                        Email = bookingConfirmation.BookingDetails.CompanyInfo?.Email ?? "",
-                        Phone = bookingConfirmation.BookingDetails.CompanyInfo?.Phone,
-                        Address = bookingConfirmation.BookingDetails.CompanyInfo?.Address,
-                        City = bookingConfirmation.BookingDetails.CompanyInfo?.City,
-                        State = bookingConfirmation.BookingDetails.CompanyInfo?.State,
-                        Country = bookingConfirmation.BookingDetails.CompanyInfo?.Country
+                        Email = bookingConfirmation.BookingDetails.CompanyInfo?.Email ?? ""
                     },
+                    PickupLocationInfo = bookingConfirmation.BookingDetails.PickupLocationInfo != null ? new LocationInfoDto
+                    {
+                        LocationName = bookingConfirmation.BookingDetails.PickupLocationInfo.LocationName,
+                        Address = bookingConfirmation.BookingDetails.PickupLocationInfo.Address,
+                        City = bookingConfirmation.BookingDetails.PickupLocationInfo.City,
+                        State = bookingConfirmation.BookingDetails.PickupLocationInfo.State,
+                        Country = bookingConfirmation.BookingDetails.PickupLocationInfo.Country,
+                        PostalCode = bookingConfirmation.BookingDetails.PickupLocationInfo.PostalCode,
+                        Phone = bookingConfirmation.BookingDetails.PickupLocationInfo.Phone,
+                        Email = bookingConfirmation.BookingDetails.PickupLocationInfo.Email,
+                        OpeningHours = bookingConfirmation.BookingDetails.PickupLocationInfo.OpeningHours
+                    } : null,
+                    ReturnLocationInfo = bookingConfirmation.BookingDetails.ReturnLocationInfo != null ? new LocationInfoDto
+                    {
+                        LocationName = bookingConfirmation.BookingDetails.ReturnLocationInfo.LocationName,
+                        Address = bookingConfirmation.BookingDetails.ReturnLocationInfo.Address,
+                        City = bookingConfirmation.BookingDetails.ReturnLocationInfo.City,
+                        State = bookingConfirmation.BookingDetails.ReturnLocationInfo.State,
+                        Country = bookingConfirmation.BookingDetails.ReturnLocationInfo.Country,
+                        PostalCode = bookingConfirmation.BookingDetails.ReturnLocationInfo.PostalCode,
+                        Phone = bookingConfirmation.BookingDetails.ReturnLocationInfo.Phone,
+                        Email = bookingConfirmation.BookingDetails.ReturnLocationInfo.Email,
+                        OpeningHours = bookingConfirmation.BookingDetails.ReturnLocationInfo.OpeningHours
+                    } : null,
                     Notes = bookingConfirmation.BookingDetails.Notes
                 },
                 PaymentStatus = bookingConfirmation.PaymentStatus,

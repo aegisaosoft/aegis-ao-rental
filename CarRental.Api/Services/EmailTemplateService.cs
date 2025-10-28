@@ -130,9 +130,20 @@ public class EmailTemplateService : IEmailTemplateService
             </div>
             
             <div class='contact-info'>
-                <h4 style='color: {style.PrimaryColor};'>Need Help?</h4>
+                <h4 style='color: {style.PrimaryColor};'>Pickup Location</h4>
                 <p style='color: {style.TextColor};'>
-                    Contact {companyInfo?.Name}:<br>
+                    {(bookingData.PickupLocationInfo != null ? 
+                        $@"<strong>{bookingData.PickupLocationInfo.LocationName}</strong><br>
+                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Address) ? $"📍 {bookingData.PickupLocationInfo.Address}, {bookingData.PickupLocationInfo.City}, {bookingData.PickupLocationInfo.State} {bookingData.PickupLocationInfo.PostalCode}<br>" : "")}
+                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Phone) ? $"📞 {bookingData.PickupLocationInfo.Phone}<br>" : "")}
+                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Email) ? $"📧 {bookingData.PickupLocationInfo.Email}<br>" : "")}
+                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.OpeningHours) ? $"🕒 {bookingData.PickupLocationInfo.OpeningHours}" : "")}" 
+                        : $"📍 {bookingData.PickupLocation}")}
+                </p>
+                
+                <h4 style='color: {style.PrimaryColor}; margin-top: 20px;'>Company Contact</h4>
+                <p style='color: {style.TextColor};'>
+                    {companyInfo?.Name}<br>
                     📧 {companyInfo?.Email}
                 </p>
             </div>
@@ -230,7 +241,33 @@ public class EmailTemplateService : IEmailTemplateService
             </div>
             
             <div class='contact-info'>
-                <h4 style='color: {style.PrimaryColor};'>Contact Information</h4>
+                <h4 style='color: {style.PrimaryColor};'>Pickup Location Details</h4>
+                <div style='background-color: {style.BackgroundColor}; padding: 15px; border-radius: 5px; margin-bottom: 15px;'>
+                    <p style='margin: 5px 0; color: {style.TextColor};'>
+                        {(bookingData.PickupLocationInfo != null ? 
+                            $@"<strong>{bookingData.PickupLocationInfo.LocationName}</strong><br>
+                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Address) ? $"📍 {bookingData.PickupLocationInfo.Address}, {bookingData.PickupLocationInfo.City}, {bookingData.PickupLocationInfo.State} {bookingData.PickupLocationInfo.PostalCode}<br>" : "")}
+                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Phone) ? $"📞 {bookingData.PickupLocationInfo.Phone}<br>" : "")}
+                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Email) ? $"📧 {bookingData.PickupLocationInfo.Email}<br>" : "")}
+                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.OpeningHours) ? $"🕒 {bookingData.PickupLocationInfo.OpeningHours}" : "")}" 
+                            : $"📍 {bookingData.PickupLocation}")}
+                    </p>
+                </div>
+                
+                <h4 style='color: {style.PrimaryColor};'>Return Location Details</h4>
+                <div style='background-color: {style.BackgroundColor}; padding: 15px; border-radius: 5px; margin-bottom: 15px;'>
+                    <p style='margin: 5px 0; color: {style.TextColor};'>
+                        {(bookingData.ReturnLocationInfo != null ? 
+                            $@"<strong>{bookingData.ReturnLocationInfo.LocationName}</strong><br>
+                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.Address) ? $"📍 {bookingData.ReturnLocationInfo.Address}, {bookingData.ReturnLocationInfo.City}, {bookingData.ReturnLocationInfo.State} {bookingData.ReturnLocationInfo.PostalCode}<br>" : "")}
+                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.Phone) ? $"📞 {bookingData.ReturnLocationInfo.Phone}<br>" : "")}
+                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.Email) ? $"📧 {bookingData.ReturnLocationInfo.Email}<br>" : "")}
+                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.OpeningHours) ? $"🕒 {bookingData.ReturnLocationInfo.OpeningHours}" : "")}" 
+                            : $"📍 {bookingData.ReturnLocation}")}
+                    </p>
+                </div>
+                
+                <h4 style='color: {style.PrimaryColor};'>Company Contact</h4>
                 <div style='background-color: {style.BackgroundColor}; padding: 15px; border-radius: 5px;'>
                     <p style='margin: 5px 0; color: {style.TextColor};'>
                         <strong>{companyInfo?.Name}</strong><br>

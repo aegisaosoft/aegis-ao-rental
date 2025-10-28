@@ -97,6 +97,8 @@ public class BookingData
     public decimal TotalAmount { get; set; }
     public VehicleInfo? VehicleInfo { get; set; }
     public CompanyInfo? CompanyInfo { get; set; }
+    public LocationInfo? PickupLocationInfo { get; set; }
+    public LocationInfo? ReturnLocationInfo { get; set; }
     public string? Notes { get; set; }
 }
 
@@ -115,4 +117,17 @@ public class CompanyInfo
 {
     public string Name { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
+}
+
+public class LocationInfo
+{
+    public string LocationName { get; set; } = string.Empty;
+    public string? Address { get; set; }
+    public string? City { get; set; }
+    public string? State { get; set; }
+    public string? Country { get; set; }
+    public string? PostalCode { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? OpeningHours { get; set; }
 }
