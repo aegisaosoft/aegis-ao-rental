@@ -36,32 +36,9 @@ public class RentalCompany
     [Column("email")]
     public string Email { get; set; } = string.Empty;
 
-    [MaxLength(50)]
-    [Column("phone")]
-    public string? Phone { get; set; }
-
     [MaxLength(255)]
     [Column("website")]
     public string? Website { get; set; }
-
-    [Column("address")]
-    public string? Address { get; set; }
-
-    [MaxLength(100)]
-    [Column("city")]
-    public string? City { get; set; }
-
-    [MaxLength(100)]
-    [Column("state")]
-    public string? State { get; set; }
-
-    [MaxLength(100)]
-    [Column("country")]
-    public string? Country { get; set; }
-
-    [MaxLength(20)]
-    [Column("postal_code")]
-    public string? PostalCode { get; set; }
 
     [MaxLength(255)]
     [Column("stripe_account_id")]
@@ -94,8 +71,8 @@ public class RentalCompany
     [Column("invitation")]
     public string? Invitation { get; set; } = "Find & Book a Great Deal Today";
 
-    [Column("tests", TypeName = "jsonb")]
-    public string? Tests { get; set; } // Stored as JSON string
+    [Column("texts", TypeName = "jsonb")]
+    public string? Texts { get; set; } // Stored as JSON string
 
     [MaxLength(255)]
     [Column("background_link")]

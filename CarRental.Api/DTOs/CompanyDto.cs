@@ -30,25 +30,8 @@ public class RentalCompanyDto
     [MaxLength(255)]
     public string Email { get; set; } = string.Empty;
     
-    [MaxLength(50)]
-    public string? Phone { get; set; }
-    
     [MaxLength(255)]
     public string? Website { get; set; }
-    
-    public string? Address { get; set; }
-    
-    [MaxLength(100)]
-    public string? City { get; set; }
-    
-    [MaxLength(100)]
-    public string? State { get; set; }
-    
-    [MaxLength(100)]
-    public string? Country { get; set; }
-    
-    [MaxLength(20)]
-    public string? PostalCode { get; set; }
     
     public string? StripeAccountId { get; set; }
     
@@ -72,7 +55,7 @@ public class RentalCompanyDto
     
     public string? Invitation { get; set; }
     
-    public string? Tests { get; set; } // JSONB field
+    public string? Texts { get; set; } // JSONB field
     
     [MaxLength(255)]
     public string? BackgroundLink { get; set; }
@@ -116,25 +99,8 @@ public class CreateRentalCompanyDto
     [MaxLength(255)]
     public string Email { get; set; } = string.Empty;
     
-    [MaxLength(50)]
-    public string? Phone { get; set; }
-    
     [MaxLength(255)]
     public string? Website { get; set; }
-    
-    public string? Address { get; set; }
-    
-    [MaxLength(100)]
-    public string? City { get; set; }
-    
-    [MaxLength(100)]
-    public string? State { get; set; }
-    
-    [MaxLength(100)]
-    public string? Country { get; set; }
-    
-    [MaxLength(20)]
-    public string? PostalCode { get; set; }
     
     [MaxLength(100)]
     public string? TaxId { get; set; }
@@ -156,7 +122,7 @@ public class CreateRentalCompanyDto
     
     public string? Invitation { get; set; }
     
-    public string? Tests { get; set; } // JSONB field
+    public string? Texts { get; set; } // JSONB field
     
     [MaxLength(255)]
     public string? BackgroundLink { get; set; }
@@ -194,25 +160,8 @@ public class UpdateRentalCompanyDto
     [MaxLength(255)]
     public string? Email { get; set; }
     
-    [MaxLength(50)]
-    public string? Phone { get; set; }
-    
     [MaxLength(255)]
     public string? Website { get; set; }
-    
-    public string? Address { get; set; }
-    
-    [MaxLength(100)]
-    public string? City { get; set; }
-    
-    [MaxLength(100)]
-    public string? State { get; set; }
-    
-    [MaxLength(100)]
-    public string? Country { get; set; }
-    
-    [MaxLength(20)]
-    public string? PostalCode { get; set; }
     
     [MaxLength(100)]
     public string? TaxId { get; set; }
@@ -234,7 +183,7 @@ public class UpdateRentalCompanyDto
     
     public string? Invitation { get; set; }
     
-    public string? Tests { get; set; } // JSONB field
+    public string? Texts { get; set; } // JSONB field
     
     [MaxLength(255)]
     public string? BackgroundLink { get; set; }

@@ -80,13 +80,7 @@ public class RentalCompaniesController : ControllerBase
                 CompanyId = c.CompanyId,
                 CompanyName = c.CompanyName,
                 Email = c.Email,
-                Phone = c.Phone,
                 Website = c.Website,
-                Address = c.Address,
-                City = c.City,
-                State = c.State,
-                Country = c.Country,
-                PostalCode = c.PostalCode,
                 StripeAccountId = c.StripeAccountId,
                 TaxId = c.TaxId,
                 VideoLink = c.VideoLink,
@@ -95,7 +89,7 @@ public class RentalCompaniesController : ControllerBase
                 Motto = c.Motto,
                 MottoDescription = c.MottoDescription,
                 Invitation = c.Invitation,
-                Tests = c.Tests,
+                Texts = c.Texts,
                 BackgroundLink = c.BackgroundLink,
                 About = c.About,
                 BookingIntegrated = c.BookingIntegrated,
@@ -131,13 +125,7 @@ public class RentalCompaniesController : ControllerBase
             CompanyId = company.CompanyId,
             CompanyName = company.CompanyName,
             Email = company.Email,
-            Phone = company.Phone,
             Website = company.Website,
-            Address = company.Address,
-            City = company.City,
-            State = company.State,
-            Country = company.Country,
-            PostalCode = company.PostalCode,
             StripeAccountId = company.StripeAccountId,
             TaxId = company.TaxId,
             VideoLink = company.VideoLink,
@@ -146,7 +134,7 @@ public class RentalCompaniesController : ControllerBase
             Motto = company.Motto,
             MottoDescription = company.MottoDescription,
             Invitation = company.Invitation,
-            Tests = company.Tests,
+            Texts = company.Texts,
             BackgroundLink = company.BackgroundLink,
             About = company.About,
             BookingIntegrated = company.BookingIntegrated,
@@ -182,13 +170,7 @@ public class RentalCompaniesController : ControllerBase
             CompanyId = company.CompanyId,
             CompanyName = company.CompanyName,
             Email = company.Email,
-            Phone = company.Phone,
             Website = company.Website,
-            Address = company.Address,
-            City = company.City,
-            State = company.State,
-            Country = company.Country,
-            PostalCode = company.PostalCode,
             StripeAccountId = company.StripeAccountId,
             TaxId = company.TaxId,
             VideoLink = company.VideoLink,
@@ -197,7 +179,7 @@ public class RentalCompaniesController : ControllerBase
             Motto = company.Motto,
             MottoDescription = company.MottoDescription,
             Invitation = company.Invitation,
-            Tests = company.Tests,
+            Texts = company.Texts,
             BackgroundLink = company.BackgroundLink,
             About = company.About,
             BookingIntegrated = company.BookingIntegrated,
@@ -233,13 +215,7 @@ public class RentalCompaniesController : ControllerBase
         {
             CompanyName = createCompanyDto.CompanyName,
             Email = createCompanyDto.Email,
-            Phone = createCompanyDto.Phone,
             Website = createCompanyDto.Website,
-            Address = createCompanyDto.Address,
-            City = createCompanyDto.City,
-            State = createCompanyDto.State,
-            Country = createCompanyDto.Country,
-            PostalCode = createCompanyDto.PostalCode,
             TaxId = createCompanyDto.TaxId,
             VideoLink = createCompanyDto.VideoLink,
             BannerLink = createCompanyDto.BannerLink,
@@ -247,7 +223,7 @@ public class RentalCompaniesController : ControllerBase
             Motto = createCompanyDto.Motto,
             MottoDescription = createCompanyDto.MottoDescription,
             Invitation = createCompanyDto.Invitation,
-            Tests = createCompanyDto.Tests,
+            Texts = createCompanyDto.Texts,
             BackgroundLink = createCompanyDto.BackgroundLink,
             About = createCompanyDto.About,
             BookingIntegrated = createCompanyDto.BookingIntegrated,
@@ -271,7 +247,7 @@ public class RentalCompaniesController : ControllerBase
             {
                 var stripeAccount = await _stripeService.CreateConnectedAccountAsync(
                     company.Email, 
-                    company.Country ?? "US");
+                    "US"); // Default to US, country can be specified per location
                 
                 company.StripeAccountId = stripeAccount.Id;
                 _context.RentalCompanies.Update(company);
@@ -302,7 +278,7 @@ public class RentalCompaniesController : ControllerBase
                 Motto = company.Motto,
                 MottoDescription = company.MottoDescription,
                 Invitation = company.Invitation,
-                Tests = company.Tests,
+                Texts = company.Texts,
                 BackgroundLink = company.BackgroundLink,
                 About = company.About,
                 BookingIntegrated = company.BookingIntegrated,
@@ -355,26 +331,8 @@ public class RentalCompaniesController : ControllerBase
         if (!string.IsNullOrEmpty(updateCompanyDto.Email))
             company.Email = updateCompanyDto.Email;
 
-        if (updateCompanyDto.Phone != null)
-            company.Phone = updateCompanyDto.Phone;
-
         if (updateCompanyDto.Website != null)
             company.Website = updateCompanyDto.Website;
-
-        if (updateCompanyDto.Address != null)
-            company.Address = updateCompanyDto.Address;
-
-        if (updateCompanyDto.City != null)
-            company.City = updateCompanyDto.City;
-
-        if (updateCompanyDto.State != null)
-            company.State = updateCompanyDto.State;
-
-        if (updateCompanyDto.Country != null)
-            company.Country = updateCompanyDto.Country;
-
-        if (updateCompanyDto.PostalCode != null)
-            company.PostalCode = updateCompanyDto.PostalCode;
 
         if (updateCompanyDto.TaxId != null)
             company.TaxId = updateCompanyDto.TaxId;
@@ -397,8 +355,8 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.Invitation != null)
             company.Invitation = updateCompanyDto.Invitation;
 
-        if (updateCompanyDto.Tests != null)
-            company.Tests = updateCompanyDto.Tests;
+        if (updateCompanyDto.Texts != null)
+            company.Texts = updateCompanyDto.Texts;
 
         if (updateCompanyDto.BackgroundLink != null)
             company.BackgroundLink = updateCompanyDto.BackgroundLink;
