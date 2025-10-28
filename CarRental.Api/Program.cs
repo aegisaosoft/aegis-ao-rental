@@ -50,6 +50,31 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
     
+    // Add JWT Bearer authentication to Swagger
+    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.",
+        Name = "Authorization",
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+    
+    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                {
+                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+    
     // Add support for file uploads in Swagger
     c.OperationFilter<SwaggerFileOperationFilter>();
 });
@@ -169,7 +194,21 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Configure the HTTP request pipeline in correct order
+// 1. HTTPS Redirection (early in pipeline)
+app.UseHttpsRedirection();
+
+// 2. Static files for uploads
+app.UseStaticFiles();
+
+// 3. CORS (before authentication)
+app.UseCors("AllowAll");
+
+// 4. Authentication & Authorization
+app.UseAuthentication();
+app.UseAuthorization();
+
+// 5. Swagger (after auth, so it can use auth if needed)
 // Enable Swagger in all environments
 try
 {
@@ -186,14 +225,7 @@ catch (Exception ex)
     app.Logger.LogWarning(ex, "Swagger failed to initialize");
 }
 
-app.UseHttpsRedirection();
-
-// Enable static files for uploads
-app.UseStaticFiles();
-
-app.UseCors("AllowAll");
-app.UseAuthentication();
-app.UseAuthorization();
+// 6. Map Controllers (always last)
 app.MapControllers();
 
 app.Run();
