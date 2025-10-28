@@ -96,6 +96,9 @@ public class RentalCompaniesController : ControllerBase
                 MottoDescription = c.MottoDescription,
                 Invitation = c.Invitation,
                 Tests = c.Tests,
+                BackgroundLink = c.BackgroundLink,
+                About = c.About,
+                BookingIntegrated = c.BookingIntegrated,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -137,6 +140,9 @@ public class RentalCompaniesController : ControllerBase
             MottoDescription = company.MottoDescription,
             Invitation = company.Invitation,
             Tests = company.Tests,
+            BackgroundLink = company.BackgroundLink,
+            About = company.About,
+            BookingIntegrated = company.BookingIntegrated,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -178,6 +184,9 @@ public class RentalCompaniesController : ControllerBase
             MottoDescription = company.MottoDescription,
             Invitation = company.Invitation,
             Tests = company.Tests,
+            BackgroundLink = company.BackgroundLink,
+            About = company.About,
+            BookingIntegrated = company.BookingIntegrated,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -218,6 +227,9 @@ public class RentalCompaniesController : ControllerBase
             MottoDescription = createCompanyDto.MottoDescription,
             Invitation = createCompanyDto.Invitation,
             Tests = createCompanyDto.Tests,
+            BackgroundLink = createCompanyDto.BackgroundLink,
+            About = createCompanyDto.About,
+            BookingIntegrated = createCompanyDto.BookingIntegrated,
             IsActive = true
         };
 
@@ -263,6 +275,9 @@ public class RentalCompaniesController : ControllerBase
                 MottoDescription = company.MottoDescription,
                 Invitation = company.Invitation,
                 Tests = company.Tests,
+                BackgroundLink = company.BackgroundLink,
+                About = company.About,
+                BookingIntegrated = company.BookingIntegrated,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -349,6 +364,15 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.Tests != null)
             company.Tests = updateCompanyDto.Tests;
+
+        if (updateCompanyDto.BackgroundLink != null)
+            company.BackgroundLink = updateCompanyDto.BackgroundLink;
+
+        if (updateCompanyDto.About != null)
+            company.About = updateCompanyDto.About;
+
+        if (updateCompanyDto.BookingIntegrated != null)
+            company.BookingIntegrated = updateCompanyDto.BookingIntegrated;
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;

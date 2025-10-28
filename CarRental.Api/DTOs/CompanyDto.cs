@@ -74,6 +74,13 @@ public class RentalCompanyDto
     
     public string? Tests { get; set; } // JSONB field
     
+    [MaxLength(255)]
+    public string? BackgroundLink { get; set; }
+    
+    public string? About { get; set; }
+    
+    public string? BookingIntegrated { get; set; }
+    
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -131,6 +138,13 @@ public class CreateRentalCompanyDto
     public string? Invitation { get; set; }
     
     public string? Tests { get; set; } // JSONB field
+    
+    [MaxLength(255)]
+    public string? BackgroundLink { get; set; }
+    
+    public string? About { get; set; }
+    
+    public string? BookingIntegrated { get; set; }
 }
 
 public class UpdateRentalCompanyDto
@@ -183,6 +197,13 @@ public class UpdateRentalCompanyDto
     public string? Invitation { get; set; }
     
     public string? Tests { get; set; } // JSONB field
+    
+    [MaxLength(255)]
+    public string? BackgroundLink { get; set; }
+    
+    public string? About { get; set; }
+    
+    public string? BookingIntegrated { get; set; }
     
     public bool? IsActive { get; set; }
 }

@@ -97,6 +97,16 @@ public class RentalCompany
     [Column("tests", TypeName = "jsonb")]
     public string? Tests { get; set; } // Stored as JSON string
 
+    [MaxLength(255)]
+    [Column("background_link")]
+    public string? BackgroundLink { get; set; }
+
+    [Column("about")]
+    public string? About { get; set; }
+
+    [Column("booking_integrated")]
+    public string? BookingIntegrated { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 
