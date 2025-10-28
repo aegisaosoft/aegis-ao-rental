@@ -124,12 +124,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.WithOrigins(
-            "http://localhost:3000", 
-            "https://localhost:3000",
-            "https://argis-ao-rental-web-afaaexe2abg8cwaf.canadacentral-01.azurewebsites.net",
-            "https://*.azurewebsites.net"
-        )
+        policy.WithOrigins("http://localhost:3000", "https://localhost:3000")
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
