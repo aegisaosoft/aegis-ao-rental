@@ -19,6 +19,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
+using CarRental.Api.Filters;
 
 // Enable legacy timestamp behavior for Npgsql to handle DateTimes
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -48,6 +49,9 @@ builder.Services.AddSwaggerGen(c =>
             Name = "Car Rental API Support"
         }
     });
+    
+    // Add support for file uploads in Swagger
+    c.OperationFilter<SwaggerFileOperationFilter>();
 });
 
 // Add Database Configuration Service
@@ -166,19 +170,27 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-// Enable Swagger for all environments (Development, Staging, Production)
-app.UseSwagger();
-app.UseSwaggerUI(c =>
+// Enable Swagger with error handling
+try
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
-    c.RoutePrefix = string.Empty; // Serve Swagger UI at root
-    c.DocumentTitle = "Car Rental API Documentation";
-    c.DisplayRequestDuration();
-    c.EnableDeepLinking();
-    c.EnableFilter();
-    c.ShowExtensions();
-    c.EnableValidator();
-});
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
+        c.RoutePrefix = string.Empty; // Serve Swagger UI at root
+        c.DocumentTitle = "Car Rental API Documentation";
+        c.DisplayRequestDuration();
+        c.EnableDeepLinking();
+        c.EnableFilter();
+        c.ShowExtensions();
+        c.EnableValidator();
+    });
+}
+catch (Exception ex)
+{
+    // Log but don't crash if Swagger fails
+    app.Logger.LogWarning(ex, "Swagger UI initialization failed, continuing without it");
+}
 
 app.UseHttpsRedirection();
 
