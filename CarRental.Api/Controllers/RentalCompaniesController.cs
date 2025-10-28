@@ -699,7 +699,7 @@ public class RentalCompaniesController : ControllerBase
         {
             var stripeAccount = await _stripeService.CreateConnectedAccountAsync(
                 company.Email, 
-                company.Country ?? "US");
+                "US"); // Default to US - country information now stored in locations
 
             company.StripeAccountId = stripeAccount.Id;
             _context.RentalCompanies.Update(company);
