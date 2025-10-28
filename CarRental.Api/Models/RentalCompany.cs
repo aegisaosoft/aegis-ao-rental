@@ -107,6 +107,9 @@ public class RentalCompany
     [Column("booking_integrated")]
     public string? BookingIntegrated { get; set; }
 
+    [Column("company_path")]
+    public string? CompanyPath { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 

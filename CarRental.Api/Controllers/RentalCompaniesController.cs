@@ -99,6 +99,7 @@ public class RentalCompaniesController : ControllerBase
                 BackgroundLink = c.BackgroundLink,
                 About = c.About,
                 BookingIntegrated = c.BookingIntegrated,
+                CompanyPath = c.CompanyPath,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -143,6 +144,7 @@ public class RentalCompaniesController : ControllerBase
             BackgroundLink = company.BackgroundLink,
             About = company.About,
             BookingIntegrated = company.BookingIntegrated,
+            CompanyPath = company.CompanyPath,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -187,6 +189,7 @@ public class RentalCompaniesController : ControllerBase
             BackgroundLink = company.BackgroundLink,
             About = company.About,
             BookingIntegrated = company.BookingIntegrated,
+            CompanyPath = company.CompanyPath,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -230,6 +233,7 @@ public class RentalCompaniesController : ControllerBase
             BackgroundLink = createCompanyDto.BackgroundLink,
             About = createCompanyDto.About,
             BookingIntegrated = createCompanyDto.BookingIntegrated,
+            CompanyPath = createCompanyDto.CompanyPath,
             IsActive = true
         };
 
@@ -278,6 +282,7 @@ public class RentalCompaniesController : ControllerBase
                 BackgroundLink = company.BackgroundLink,
                 About = company.About,
                 BookingIntegrated = company.BookingIntegrated,
+                CompanyPath = company.CompanyPath,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -373,6 +378,9 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.BookingIntegrated != null)
             company.BookingIntegrated = updateCompanyDto.BookingIntegrated;
+
+        if (updateCompanyDto.CompanyPath != null)
+            company.CompanyPath = updateCompanyDto.CompanyPath;
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;

@@ -81,6 +81,8 @@ public class RentalCompanyDto
     
     public string? BookingIntegrated { get; set; }
     
+    public string? CompanyPath { get; set; }
+    
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -145,6 +147,8 @@ public class CreateRentalCompanyDto
     public string? About { get; set; }
     
     public string? BookingIntegrated { get; set; }
+    
+    public string? CompanyPath { get; set; }
 }
 
 public class UpdateRentalCompanyDto
@@ -204,6 +208,8 @@ public class UpdateRentalCompanyDto
     public string? About { get; set; }
     
     public string? BookingIntegrated { get; set; }
+    
+    public string? CompanyPath { get; set; }
     
     public bool? IsActive { get; set; }
 }
