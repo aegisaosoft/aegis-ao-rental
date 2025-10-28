@@ -170,25 +170,20 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-// Swagger is disabled due to reflection issues with file upload endpoints
-// API documentation can be accessed via the controllers directly
-if (app.Environment.IsDevelopment())
+// Enable Swagger in all environments
+try
 {
-    // Only enable Swagger in development for now
-    try
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
     {
-        app.UseSwagger();
-        app.UseSwaggerUI(c =>
-        {
-            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
-            c.RoutePrefix = "swagger"; // Changed from root to /swagger
-            c.DocumentTitle = "Car Rental API Documentation";
-        });
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning(ex, "Swagger failed to initialize");
-    }
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
+        c.RoutePrefix = "swagger"; // Access at /swagger
+        c.DocumentTitle = "Car Rental API Documentation";
+    });
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "Swagger failed to initialize");
 }
 
 app.UseHttpsRedirection();
