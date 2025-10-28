@@ -195,8 +195,11 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline in correct order
-// 1. HTTPS Redirection (early in pipeline)
-app.UseHttpsRedirection();
+// 1. HTTPS Redirection (only in production when HTTPS is properly configured)
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 // 2. Static files for uploads
 app.UseStaticFiles();
