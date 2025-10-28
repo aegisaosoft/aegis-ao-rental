@@ -33,6 +33,9 @@ public class RentalCompanyDto
     [MaxLength(50)]
     public string? Phone { get; set; }
     
+    [MaxLength(255)]
+    public string? Website { get; set; }
+    
     public string? Address { get; set; }
     
     [MaxLength(100)]
@@ -51,6 +54,25 @@ public class RentalCompanyDto
     
     [MaxLength(100)]
     public string? TaxId { get; set; }
+    
+    [MaxLength(500)]
+    public string? VideoLink { get; set; }
+    
+    [MaxLength(500)]
+    public string? BannerLink { get; set; }
+    
+    [MaxLength(500)]
+    public string? LogoLink { get; set; }
+    
+    [MaxLength(255)]
+    public string? Motto { get; set; }
+    
+    [MaxLength(500)]
+    public string? MottoDescription { get; set; }
+    
+    public string? Invitation { get; set; }
+    
+    public string? Tests { get; set; } // JSONB field
     
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -71,6 +93,9 @@ public class CreateRentalCompanyDto
     [MaxLength(50)]
     public string? Phone { get; set; }
     
+    [MaxLength(255)]
+    public string? Website { get; set; }
+    
     public string? Address { get; set; }
     
     [MaxLength(100)]
@@ -87,6 +112,25 @@ public class CreateRentalCompanyDto
     
     [MaxLength(100)]
     public string? TaxId { get; set; }
+    
+    [MaxLength(500)]
+    public string? VideoLink { get; set; }
+    
+    [MaxLength(500)]
+    public string? BannerLink { get; set; }
+    
+    [MaxLength(500)]
+    public string? LogoLink { get; set; }
+    
+    [MaxLength(255)]
+    public string? Motto { get; set; }
+    
+    [MaxLength(500)]
+    public string? MottoDescription { get; set; }
+    
+    public string? Invitation { get; set; }
+    
+    public string? Tests { get; set; } // JSONB field
 }
 
 public class UpdateRentalCompanyDto
@@ -101,6 +145,9 @@ public class UpdateRentalCompanyDto
     [MaxLength(50)]
     public string? Phone { get; set; }
     
+    [MaxLength(255)]
+    public string? Website { get; set; }
+    
     public string? Address { get; set; }
     
     [MaxLength(100)]
@@ -117,6 +164,25 @@ public class UpdateRentalCompanyDto
     
     [MaxLength(100)]
     public string? TaxId { get; set; }
+    
+    [MaxLength(500)]
+    public string? VideoLink { get; set; }
+    
+    [MaxLength(500)]
+    public string? BannerLink { get; set; }
+    
+    [MaxLength(500)]
+    public string? LogoLink { get; set; }
+    
+    [MaxLength(255)]
+    public string? Motto { get; set; }
+    
+    [MaxLength(500)]
+    public string? MottoDescription { get; set; }
+    
+    public string? Invitation { get; set; }
+    
+    public string? Tests { get; set; } // JSONB field
     
     public bool? IsActive { get; set; }
 }

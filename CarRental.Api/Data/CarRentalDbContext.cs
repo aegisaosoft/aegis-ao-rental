@@ -28,6 +28,7 @@ public class CarRentalDbContext : DbContext
     public DbSet<Customer> Customers { get; set; }
     public DbSet<VehicleCategory> VehicleCategories { get; set; }
     public DbSet<Vehicle> Vehicles { get; set; }
+    public DbSet<Location> Locations { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Rental> Rentals { get; set; }
     public DbSet<Payment> Payments { get; set; }
@@ -58,6 +59,10 @@ public class CarRentalDbContext : DbContext
 
         modelBuilder.Entity<Vehicle>()
             .Property(e => e.VehicleId)
+            .HasDefaultValueSql("uuid_generate_v4()");
+
+        modelBuilder.Entity<Location>()
+            .Property(e => e.LocationId)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Reservation>()
@@ -96,6 +101,18 @@ public class CarRentalDbContext : DbContext
             .WithMany(c => c.Vehicles)
             .HasForeignKey(v => v.CategoryId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Vehicle>()
+            .HasOne(v => v.LocationDetails)
+            .WithMany(l => l.Vehicles)
+            .HasForeignKey(v => v.LocationId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Location>()
+            .HasOne(l => l.Company)
+            .WithMany(c => c.Locations)
+            .HasForeignKey(l => l.CompanyId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Reservation>()
             .HasOne(r => r.Customer)
@@ -197,6 +214,21 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<Vehicle>()
             .HasIndex(v => v.CategoryId);
 
+        modelBuilder.Entity<Vehicle>()
+            .HasIndex(v => v.LocationId);
+
+        modelBuilder.Entity<Location>()
+            .HasIndex(l => l.CompanyId);
+
+        modelBuilder.Entity<Location>()
+            .HasIndex(l => l.IsActive);
+
+        modelBuilder.Entity<Location>()
+            .HasIndex(l => l.IsPickupLocation);
+
+        modelBuilder.Entity<Location>()
+            .HasIndex(l => l.IsReturnLocation);
+
         modelBuilder.Entity<Reservation>()
             .HasIndex(r => r.CustomerId);
 
@@ -290,6 +322,14 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<Payment>()
             .Property(p => p.Amount)
             .HasPrecision(10, 2);
+
+        modelBuilder.Entity<Location>()
+            .Property(l => l.Latitude)
+            .HasPrecision(10, 8);
+
+        modelBuilder.Entity<Location>()
+            .Property(l => l.Longitude)
+            .HasPrecision(11, 8);
 
         // Configure BookingToken entity
         modelBuilder.Entity<BookingToken>(entity =>

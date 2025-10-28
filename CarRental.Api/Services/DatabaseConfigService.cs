@@ -38,9 +38,9 @@ public class DatabaseConfigService : IDatabaseConfigService
         
         var host = databaseConfig["Host"] ?? "localhost";
         var port = databaseConfig["Port"] ?? "5432";
-        var database = databaseConfig["Database"] ?? "car_rental";
-        var username = databaseConfig["Username"] ?? "postgres";
-        var password = databaseConfig["Password"] ?? "password";
+        var database = databaseConfig["Database"] ?? "aegis_ao_rental";
+        var username = databaseConfig["Username"] ?? "alex";
+        var password = databaseConfig["Password"] ?? "Kis@1963";
         var pooling = databaseConfig["Pooling"] ?? "true";
         var minPoolSize = databaseConfig["MinPoolSize"] ?? "0";
         var maxPoolSize = databaseConfig["MaxPoolSize"] ?? "100";

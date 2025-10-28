@@ -81,6 +81,7 @@ public class RentalCompaniesController : ControllerBase
                 CompanyName = c.CompanyName,
                 Email = c.Email,
                 Phone = c.Phone,
+                Website = c.Website,
                 Address = c.Address,
                 City = c.City,
                 State = c.State,
@@ -88,6 +89,13 @@ public class RentalCompaniesController : ControllerBase
                 PostalCode = c.PostalCode,
                 StripeAccountId = c.StripeAccountId,
                 TaxId = c.TaxId,
+                VideoLink = c.VideoLink,
+                BannerLink = c.BannerLink,
+                LogoLink = c.LogoLink,
+                Motto = c.Motto,
+                MottoDescription = c.MottoDescription,
+                Invitation = c.Invitation,
+                Tests = c.Tests,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -114,6 +122,7 @@ public class RentalCompaniesController : ControllerBase
             CompanyName = company.CompanyName,
             Email = company.Email,
             Phone = company.Phone,
+            Website = company.Website,
             Address = company.Address,
             City = company.City,
             State = company.State,
@@ -121,6 +130,13 @@ public class RentalCompaniesController : ControllerBase
             PostalCode = company.PostalCode,
             StripeAccountId = company.StripeAccountId,
             TaxId = company.TaxId,
+            VideoLink = company.VideoLink,
+            BannerLink = company.BannerLink,
+            LogoLink = company.LogoLink,
+            Motto = company.Motto,
+            MottoDescription = company.MottoDescription,
+            Invitation = company.Invitation,
+            Tests = company.Tests,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -147,6 +163,7 @@ public class RentalCompaniesController : ControllerBase
             CompanyName = company.CompanyName,
             Email = company.Email,
             Phone = company.Phone,
+            Website = company.Website,
             Address = company.Address,
             City = company.City,
             State = company.State,
@@ -154,6 +171,13 @@ public class RentalCompaniesController : ControllerBase
             PostalCode = company.PostalCode,
             StripeAccountId = company.StripeAccountId,
             TaxId = company.TaxId,
+            VideoLink = company.VideoLink,
+            BannerLink = company.BannerLink,
+            LogoLink = company.LogoLink,
+            Motto = company.Motto,
+            MottoDescription = company.MottoDescription,
+            Invitation = company.Invitation,
+            Tests = company.Tests,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -180,12 +204,20 @@ public class RentalCompaniesController : ControllerBase
             CompanyName = createCompanyDto.CompanyName,
             Email = createCompanyDto.Email,
             Phone = createCompanyDto.Phone,
+            Website = createCompanyDto.Website,
             Address = createCompanyDto.Address,
             City = createCompanyDto.City,
             State = createCompanyDto.State,
             Country = createCompanyDto.Country,
             PostalCode = createCompanyDto.PostalCode,
             TaxId = createCompanyDto.TaxId,
+            VideoLink = createCompanyDto.VideoLink,
+            BannerLink = createCompanyDto.BannerLink,
+            LogoLink = createCompanyDto.LogoLink,
+            Motto = createCompanyDto.Motto,
+            MottoDescription = createCompanyDto.MottoDescription,
+            Invitation = createCompanyDto.Invitation,
+            Tests = createCompanyDto.Tests,
             IsActive = true
         };
 
@@ -224,6 +256,13 @@ public class RentalCompaniesController : ControllerBase
                 PostalCode = company.PostalCode,
                 StripeAccountId = company.StripeAccountId,
                 TaxId = company.TaxId,
+                VideoLink = company.VideoLink,
+                BannerLink = company.BannerLink,
+                LogoLink = company.LogoLink,
+                Motto = company.Motto,
+                MottoDescription = company.MottoDescription,
+                Invitation = company.Invitation,
+                Tests = company.Tests,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -269,6 +308,9 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.Phone != null)
             company.Phone = updateCompanyDto.Phone;
 
+        if (updateCompanyDto.Website != null)
+            company.Website = updateCompanyDto.Website;
+
         if (updateCompanyDto.Address != null)
             company.Address = updateCompanyDto.Address;
 
@@ -286,6 +328,27 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.TaxId != null)
             company.TaxId = updateCompanyDto.TaxId;
+
+        if (updateCompanyDto.VideoLink != null)
+            company.VideoLink = updateCompanyDto.VideoLink;
+
+        if (updateCompanyDto.BannerLink != null)
+            company.BannerLink = updateCompanyDto.BannerLink;
+
+        if (updateCompanyDto.LogoLink != null)
+            company.LogoLink = updateCompanyDto.LogoLink;
+
+        if (updateCompanyDto.Motto != null)
+            company.Motto = updateCompanyDto.Motto;
+
+        if (updateCompanyDto.MottoDescription != null)
+            company.MottoDescription = updateCompanyDto.MottoDescription;
+
+        if (updateCompanyDto.Invitation != null)
+            company.Invitation = updateCompanyDto.Invitation;
+
+        if (updateCompanyDto.Tests != null)
+            company.Tests = updateCompanyDto.Tests;
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;

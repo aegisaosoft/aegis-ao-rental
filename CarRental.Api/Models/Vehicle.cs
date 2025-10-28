@@ -87,7 +87,10 @@ public class Vehicle
 
     [MaxLength(255)]
     [Column("location")]
-    public string? Location { get; set; }
+    public string? Location { get; set; } // Deprecated: use LocationId instead
+
+    [Column("location_id")]
+    public Guid? LocationId { get; set; }
 
     [Column("image_url")]
     public string? ImageUrl { get; set; }
@@ -110,6 +113,9 @@ public class Vehicle
 
     [ForeignKey("CategoryId")]
     public virtual VehicleCategory? Category { get; set; }
+
+    [ForeignKey("LocationId")]
+    public virtual Location? LocationDetails { get; set; }
 
     public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();

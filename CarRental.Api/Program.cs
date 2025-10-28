@@ -20,10 +20,21 @@ using System.Text;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
 
+// Enable legacy timestamp behavior for Npgsql to handle DateTimes
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
+
+// Configure file upload limits
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 524_288_000; // 500 MB
+    options.ValueLengthLimit = 524_288_000;
+    options.MultipartHeadersLengthLimit = 524_288_000;
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -128,7 +139,9 @@ builder.Services.AddCors(options =>
             "http://localhost:3000", 
             "https://localhost:3000",
             "https://argis-ao-rental-web-afaaexe2abg8cwaf.canadacentral-01.azurewebsites.net",
-            "https://*.azurewebsites.net"
+            "https://*.azurewebsites.net",
+            "https://www.aegis-rental.com",
+            "http://www.aegis-rental.com"
         )
               .AllowAnyHeader()
               .AllowAnyMethod()
@@ -154,6 +167,10 @@ app.UseSwaggerUI(c =>
 });
 
 app.UseHttpsRedirection();
+
+// Enable static files for uploads
+app.UseStaticFiles();
+
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();

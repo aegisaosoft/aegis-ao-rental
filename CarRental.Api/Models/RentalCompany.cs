@@ -40,6 +40,10 @@ public class RentalCompany
     [Column("phone")]
     public string? Phone { get; set; }
 
+    [MaxLength(255)]
+    [Column("website")]
+    public string? Website { get; set; }
+
     [Column("address")]
     public string? Address { get; set; }
 
@@ -67,6 +71,32 @@ public class RentalCompany
     [Column("tax_id")]
     public string? TaxId { get; set; }
 
+    [MaxLength(500)]
+    [Column("video_link")]
+    public string? VideoLink { get; set; }
+
+    [MaxLength(500)]
+    [Column("banner_link")]
+    public string? BannerLink { get; set; }
+
+    [MaxLength(500)]
+    [Column("logo_link")]
+    public string? LogoLink { get; set; }
+
+    [MaxLength(255)]
+    [Column("motto")]
+    public string? Motto { get; set; } = "Meet our newest fleet yet";
+
+    [MaxLength(500)]
+    [Column("motto_description")]
+    public string? MottoDescription { get; set; } = "New rental cars. No lines. Let's go!";
+
+    [Column("invitation")]
+    public string? Invitation { get; set; } = "Find & Book a Great Deal Today";
+
+    [Column("tests", TypeName = "jsonb")]
+    public string? Tests { get; set; } // Stored as JSON string
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 
@@ -78,6 +108,7 @@ public class RentalCompany
 
     // Navigation properties
     public virtual ICollection<Vehicle> Vehicles { get; set; } = new List<Vehicle>();
+    public virtual ICollection<Location> Locations { get; set; } = new List<Location>();
     public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
