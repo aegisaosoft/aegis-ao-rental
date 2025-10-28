@@ -46,8 +46,6 @@ public class RentalCompaniesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<RentalCompanyDto>>> GetRentalCompanies(
         string? search = null,
-        string? state = null,
-        string? country = null,
         bool? isActive = null,
         int page = 1,
         int pageSize = 20)
@@ -58,15 +56,8 @@ public class RentalCompaniesController : ControllerBase
         {
             query = query.Where(c => 
                 c.CompanyName.Contains(search) || 
-                c.Email.Contains(search) ||
-                (c.City != null && c.City.Contains(search)));
+                c.Email.Contains(search));
         }
-
-        if (!string.IsNullOrEmpty(state))
-            query = query.Where(c => c.State == state);
-
-        if (!string.IsNullOrEmpty(country))
-            query = query.Where(c => c.Country == country);
 
         if (isActive.HasValue)
             query = query.Where(c => c.IsActive == isActive.Value);
@@ -264,12 +255,7 @@ public class RentalCompaniesController : ControllerBase
                 CompanyId = company.CompanyId,
                 CompanyName = company.CompanyName,
                 Email = company.Email,
-                Phone = company.Phone,
-                Address = company.Address,
-                City = company.City,
-                State = company.State,
-                Country = company.Country,
-                PostalCode = company.PostalCode,
+                Website = company.Website,
                 StripeAccountId = company.StripeAccountId,
                 TaxId = company.TaxId,
                 VideoLink = company.VideoLink,
