@@ -81,9 +81,9 @@ public class LocationsController : ControllerBase
                 .ToListAsync();
 
             // Add pagination headers
-            Response.Headers.Add("X-Total-Count", totalCount.ToString());
-            Response.Headers.Add("X-Page-Number", pageNumber.ToString());
-            Response.Headers.Add("X-Page-Size", pageSize.ToString());
+            Response.Headers["X-Total-Count"] = totalCount.ToString();
+            Response.Headers["X-Page-Number"] = pageNumber.ToString();
+            Response.Headers["X-Page-Size"] = pageSize.ToString();
 
             return Ok(locations);
         }

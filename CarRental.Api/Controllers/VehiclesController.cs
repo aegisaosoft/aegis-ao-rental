@@ -382,12 +382,14 @@ public class VehiclesController : ControllerBase
 
             // Check if category is being changed and bulk update is requested
             bool shouldBulkUpdateCategory = false;
+            Guid? newCategoryId = null;
             if (updateVehicleDto.CategoryId.HasValue && 
                 updateVehicleDto.CategoryId.Value != vehicle.CategoryId &&
                 !string.IsNullOrEmpty(updateVehicleDto.Make) && 
                 !string.IsNullOrEmpty(updateVehicleDto.Model))
             {
                 shouldBulkUpdateCategory = true;
+                newCategoryId = updateVehicleDto.CategoryId.Value;
             }
 
             // Update properties if provided
@@ -438,7 +440,7 @@ public class VehiclesController : ControllerBase
             await _context.SaveChangesAsync();
 
             // If category changed and make/model provided, update all matching vehicles
-            if (shouldBulkUpdateCategory)
+            if (shouldBulkUpdateCategory && newCategoryId.HasValue)
             {
                 var matchingVehicles = await _context.Vehicles
                     .Where(v => v.Make == vehicle.Make && v.Model == vehicle.Model && v.VehicleId != id)
@@ -446,7 +448,7 @@ public class VehiclesController : ControllerBase
 
                 foreach (var v in matchingVehicles)
                 {
-                    v.CategoryId = updateVehicleDto.CategoryId.Value;
+                    v.CategoryId = newCategoryId.Value;
                     v.UpdatedAt = DateTime.UtcNow;
                 }
 
@@ -454,7 +456,7 @@ public class VehiclesController : ControllerBase
                 
                 _logger.LogInformation(
                     "Bulk updated category for {Count} vehicles with make '{Make}' and model '{Model}' to category {CategoryId}",
-                    matchingVehicles.Count, vehicle.Make, vehicle.Model, updateVehicleDto.CategoryId.Value);
+                    matchingVehicles.Count, vehicle.Make, vehicle.Model, newCategoryId.Value);
             }
 
             // Load related data for response
