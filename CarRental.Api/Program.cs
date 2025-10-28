@@ -135,17 +135,31 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.WithOrigins(
-            "http://localhost:3000", 
-            "https://localhost:3000",
-            "https://argis-ao-rental-web-afaaexe2abg8cwaf.canadacentral-01.azurewebsites.net",
-            "https://*.azurewebsites.net",
-            "https://www.aegis-rental.com",
-            "http://www.aegis-rental.com"
-        )
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        policy.SetIsOriginAllowed(origin =>
+        {
+            if (string.IsNullOrEmpty(origin))
+                return false;
+
+            var uri = new Uri(origin);
+            
+            // Allow localhost for development
+            if (uri.Host == "localhost" || uri.Host == "127.0.0.1")
+                return true;
+            
+            // Allow Azure websites
+            if (uri.Host.EndsWith(".azurewebsites.net", StringComparison.OrdinalIgnoreCase))
+                return true;
+            
+            // Allow aegis-rental.com and all subdomains
+            if (uri.Host.Equals("aegis-rental.com", StringComparison.OrdinalIgnoreCase) ||
+                uri.Host.EndsWith(".aegis-rental.com", StringComparison.OrdinalIgnoreCase))
+                return true;
+            
+            return false;
+        })
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials();
     });
 });
 
