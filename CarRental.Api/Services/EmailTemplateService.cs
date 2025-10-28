@@ -133,9 +133,7 @@ public class EmailTemplateService : IEmailTemplateService
                 <h4 style='color: {style.PrimaryColor};'>Need Help?</h4>
                 <p style='color: {style.TextColor};'>
                     Contact {companyInfo?.Name}:<br>
-                    📧 {companyInfo?.Email}<br>
-                    📞 {companyInfo?.Phone}<br>
-                    📍 {companyInfo?.Address}, {companyInfo?.City}, {companyInfo?.State} {companyInfo?.Country}
+                    📧 {companyInfo?.Email}
                 </p>
             </div>
         </div>
@@ -236,9 +234,7 @@ public class EmailTemplateService : IEmailTemplateService
                 <div style='background-color: {style.BackgroundColor}; padding: 15px; border-radius: 5px;'>
                     <p style='margin: 5px 0; color: {style.TextColor};'>
                         <strong>{companyInfo?.Name}</strong><br>
-                        📧 {companyInfo?.Email}<br>
-                        📞 {companyInfo?.Phone}<br>
-                        📍 {companyInfo?.Address}, {companyInfo?.City}, {companyInfo?.State} {companyInfo?.Country}
+                        📧 {companyInfo?.Email}
                     </p>
                 </div>
             </div>
@@ -325,8 +321,7 @@ public class EmailTemplateService : IEmailTemplateService
                 <p style='color: {style.TextColor};'>
                     If you have any questions about your payment or booking, please contact:<br>
                     <strong>{companyInfo?.Name}</strong><br>
-                    📧 {companyInfo?.Email}<br>
-                    📞 {companyInfo?.Phone}
+                    📧 {companyInfo?.Email}
                 </p>
             </div>
         </div>

@@ -105,12 +105,7 @@ public class BookingController : ControllerBase
                     CompanyInfo = new CompanyInfo
                     {
                         Name = company.CompanyName,
-                        Email = company.Email,
-                        Phone = company.Phone,
-                        Address = company.Address,
-                        City = company.City,
-                        State = company.State,
-                        Country = company.Country
+                        Email = company.Email
                     },
                     Notes = createDto.BookingData.Notes
                 },
@@ -157,12 +152,7 @@ public class BookingController : ControllerBase
                     CompanyInfo = new CompanyInfoDto
                     {
                         Name = bookingToken.BookingData.CompanyInfo?.Name ?? "",
-                        Email = bookingToken.BookingData.CompanyInfo?.Email ?? "",
-                        Phone = bookingToken.BookingData.CompanyInfo?.Phone,
-                        Address = bookingToken.BookingData.CompanyInfo?.Address,
-                        City = bookingToken.BookingData.CompanyInfo?.City,
-                        State = bookingToken.BookingData.CompanyInfo?.State,
-                        Country = bookingToken.BookingData.CompanyInfo?.Country
+                        Email = bookingToken.BookingData.CompanyInfo?.Email ?? ""
                     },
                     Notes = bookingToken.BookingData.Notes
                 },
