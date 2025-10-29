@@ -43,7 +43,7 @@ public class MediaController : ControllerBase
     [HttpPost("companies/{companyId}/video")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(524_288_000)] // 500 MB limit
-    public async Task<ActionResult<object>> UploadCompanyVideo(Guid companyId, [FromForm] IFormFile video)
+    public async Task<ActionResult<object>> UploadCompanyVideo(Guid companyId, IFormFile video)
     {
         try
         {
@@ -155,7 +155,7 @@ public class MediaController : ControllerBase
     [HttpPost("companies/{companyId}/banner")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(10_485_760)] // 10 MB limit for images
-    public async Task<ActionResult<object>> UploadCompanyBanner(Guid companyId, [FromForm] IFormFile banner)
+    public async Task<ActionResult<object>> UploadCompanyBanner(Guid companyId, IFormFile banner)
     {
         try
         {
@@ -223,7 +223,7 @@ public class MediaController : ControllerBase
     [HttpPost("companies/{companyId}/logo")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(5_242_880)] // 5 MB limit for logos
-    public async Task<ActionResult<object>> UploadCompanyLogo(Guid companyId, [FromForm] IFormFile logo)
+    public async Task<ActionResult<object>> UploadCompanyLogo(Guid companyId, IFormFile logo)
     {
         try
         {

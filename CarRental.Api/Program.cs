@@ -206,20 +206,23 @@ app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// 5. Swagger (enabled in all environments with proper error handling)
-try
+// 5. Swagger (only in Development - file uploads cause issues in production)
+if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
+    try
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
-        c.RoutePrefix = "swagger"; // Access at /swagger
-        c.DocumentTitle = "Car Rental API Documentation";
-    });
-}
-catch (Exception ex)
-{
-    app.Logger.LogWarning(ex, "Swagger failed to initialize");
+        app.UseSwagger();
+        app.UseSwaggerUI(c =>
+        {
+            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
+            c.RoutePrefix = "swagger"; // Access at /swagger
+            c.DocumentTitle = "Car Rental API Documentation";
+        });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Swagger failed to initialize");
+    }
 }
 
 // 6. Map Controllers (always last)
