@@ -19,7 +19,6 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
-using CarRental.Api.Filters;
 
 // Enable legacy timestamp behavior for Npgsql to handle DateTimes
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -75,8 +74,7 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
     
-    // Add support for file uploads in Swagger
-    c.OperationFilter<SwaggerFileOperationFilter>();
+    // No longer need SwaggerFileOperationFilter since we use [FromForm] attributes
 });
 
 // Add Database Configuration Service
