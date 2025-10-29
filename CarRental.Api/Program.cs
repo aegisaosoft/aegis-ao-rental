@@ -195,7 +195,7 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline in correct order
-// 1. HTTPS Redirection (works in all environments)
+// 1. HTTPS Redirection (early in pipeline)
 app.UseHttpsRedirection();
 
 // 2. Static files for uploads
@@ -208,8 +208,7 @@ app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// 5. Swagger (after auth, so it can use auth if needed)
-// Enable Swagger in all environments
+// 5. Swagger (enabled in all environments with proper error handling)
 try
 {
     app.UseSwagger();
