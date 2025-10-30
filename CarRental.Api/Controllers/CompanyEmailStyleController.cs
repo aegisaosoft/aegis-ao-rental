@@ -76,7 +76,7 @@ public class CompanyEmailStyleController : ControllerBase
         try
         {
             // Check if company exists
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 return NotFound("Company not found");
 

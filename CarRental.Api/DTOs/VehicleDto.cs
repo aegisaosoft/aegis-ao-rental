@@ -58,7 +58,7 @@ public class VehicleDto
     public decimal DailyRate { get; set; }
     
     [MaxLength(50)]
-    public string Status { get; set; } = "available";
+    public string Status { get; set; } = "Available";
     
     [MaxLength(2)]
     public string? State { get; set; }
@@ -69,9 +69,7 @@ public class VehicleDto
     public string? ImageUrl { get; set; }
     
     public string[]? Features { get; set; }
-    
-    public bool IsActive { get; set; }
-    
+
     public DateTime CreatedAt { get; set; }
     
     public DateTime UpdatedAt { get; set; }
@@ -85,8 +83,6 @@ public class CreateVehicleDto
 {
     [Required]
     public Guid CompanyId { get; set; }
-    
-    public Guid? CategoryId { get; set; }
     
     [Required]
     [MaxLength(100)]
@@ -112,9 +108,6 @@ public class CreateVehicleDto
     public int Mileage { get; set; } = 0;
     
     [MaxLength(50)]
-    public string? FuelType { get; set; }
-    
-    [MaxLength(50)]
     public string? Transmission { get; set; }
     
     public int? Seats { get; set; }
@@ -123,7 +116,7 @@ public class CreateVehicleDto
     public decimal DailyRate { get; set; }
     
     [MaxLength(50)]
-    public string Status { get; set; } = "available";
+    public string Status { get; set; } = "Available";
     
     [MaxLength(2)]
     public string? State { get; set; }
@@ -134,14 +127,10 @@ public class CreateVehicleDto
     public string? ImageUrl { get; set; }
     
     public string[]? Features { get; set; }
-    
-    public bool IsActive { get; set; } = true;
 }
 
 public class UpdateVehicleDto
 {
-    public Guid? CategoryId { get; set; }
-    
     [MaxLength(100)]
     public string? Make { get; set; }
     
@@ -162,9 +151,6 @@ public class UpdateVehicleDto
     public int? Mileage { get; set; }
     
     [MaxLength(50)]
-    public string? FuelType { get; set; }
-    
-    [MaxLength(50)]
     public string? Transmission { get; set; }
     
     public int? Seats { get; set; }
@@ -183,27 +169,22 @@ public class UpdateVehicleDto
     public string? ImageUrl { get; set; }
     
     public string[]? Features { get; set; }
-    
-    public bool? IsActive { get; set; }
 }
 
 public class VehicleSearchDto
 {
     public Guid? CompanyId { get; set; }
-    public Guid? CategoryId { get; set; }
     public string? Make { get; set; }
     public string? Model { get; set; }
     public int? MinYear { get; set; }
     public int? MaxYear { get; set; }
     public decimal? MinDailyRate { get; set; }
     public decimal? MaxDailyRate { get; set; }
-    public string? FuelType { get; set; }
     public string? Transmission { get; set; }
     public int? MinSeats { get; set; }
     public string? Location { get; set; }
     public DateTime? AvailableFrom { get; set; }
     public DateTime? AvailableTo { get; set; }
-    public bool? IsActive { get; set; } = true;
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 20;
 }

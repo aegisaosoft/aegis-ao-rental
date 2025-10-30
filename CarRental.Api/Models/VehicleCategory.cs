@@ -22,8 +22,8 @@ namespace CarRental.Api.Models;
 public class VehicleCategory
 {
     [Key]
-    [Column("category_id")]
-    public Guid CategoryId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [MaxLength(100)]
@@ -36,6 +36,6 @@ public class VehicleCategory
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    // Navigation properties
-    public virtual ICollection<Vehicle> Vehicles { get; set; } = new List<Vehicle>();
+    // Navigation properties - Note: Vehicles no longer have direct category relationship
+    // Vehicle categories are accessed through the Models table
 }

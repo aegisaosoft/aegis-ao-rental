@@ -48,7 +48,7 @@ public class MediaController : ControllerBase
         try
         {
             // Validate company exists
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 return NotFound("Company not found");
 
@@ -123,7 +123,7 @@ public class MediaController : ControllerBase
     {
         try
         {
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 return NotFound("Company not found");
 
@@ -159,7 +159,7 @@ public class MediaController : ControllerBase
     {
         try
         {
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 return NotFound("Company not found");
 
@@ -227,7 +227,7 @@ public class MediaController : ControllerBase
     {
         try
         {
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 return NotFound("Company not found");
 
@@ -293,7 +293,7 @@ public class MediaController : ControllerBase
     {
         try
         {
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 return NotFound("Company not found");
 
@@ -323,7 +323,7 @@ public class MediaController : ControllerBase
     {
         try
         {
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 return NotFound("Company not found");
 

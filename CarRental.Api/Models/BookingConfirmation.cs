@@ -23,8 +23,8 @@ namespace CarRental.Api.Models;
 public class BookingConfirmation
 {
     [Key]
-    [Column("confirmation_id")]
-    public Guid ConfirmationId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [Column("booking_token_id")]

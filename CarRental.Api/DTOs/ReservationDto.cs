@@ -19,14 +19,17 @@ namespace CarRental.Api.DTOs;
 
 public class ReservationDto
 {
-    public Guid ReservationId { get; set; }
+    public Guid Id { get; set; }
     public Guid CustomerId { get; set; }
     public Guid VehicleId { get; set; }
     public Guid CompanyId { get; set; }
     
     [Required]
     [MaxLength(50)]
-    public string ReservationNumber { get; set; } = string.Empty;
+    public string BookingNumber { get; set; } = string.Empty;
+    
+    [MaxLength(100)]
+    public string? AltBookingNumber { get; set; }
     
     [Required]
     public DateTime PickupDate { get; set; }
@@ -56,8 +59,9 @@ public class ReservationDto
     [Required]
     public decimal TotalAmount { get; set; }
     
+    [Required]
     [MaxLength(50)]
-    public string Status { get; set; } = "pending";
+    public string Status { get; set; } = "Pending";
     
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -81,6 +85,9 @@ public class CreateReservationDto
     
     [Required]
     public Guid CompanyId { get; set; }
+    
+    [MaxLength(100)]
+    public string? AltBookingNumber { get; set; }
     
     [Required]
     public DateTime PickupDate { get; set; }
@@ -106,6 +113,9 @@ public class CreateReservationDto
 
 public class UpdateReservationDto
 {
+    [MaxLength(100)]
+    public string? AltBookingNumber { get; set; }
+    
     public DateTime? PickupDate { get; set; }
     public DateTime? ReturnDate { get; set; }
     
@@ -130,7 +140,7 @@ public class ReservationSearchDto
     public Guid? CustomerId { get; set; }
     public Guid? VehicleId { get; set; }
     public Guid? CompanyId { get; set; }
-    public string? ReservationNumber { get; set; }
+    public string? BookingNumber { get; set; }
     public DateTime? PickupDateFrom { get; set; }
     public DateTime? PickupDateTo { get; set; }
     public DateTime? ReturnDateFrom { get; set; }

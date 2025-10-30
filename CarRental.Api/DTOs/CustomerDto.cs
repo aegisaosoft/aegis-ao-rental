@@ -39,14 +39,6 @@ public class CustomerDto
     
     public DateTime? DateOfBirth { get; set; }
     
-    [MaxLength(100)]
-    public string? DriversLicenseNumber { get; set; }
-    
-    [MaxLength(50)]
-    public string? DriversLicenseState { get; set; }
-    
-    public DateTime? DriversLicenseExpiry { get; set; }
-    
     public string? Address { get; set; }
     
     [MaxLength(100)]
@@ -64,6 +56,8 @@ public class CustomerDto
     public string? StripeCustomerId { get; set; }
     
     public bool IsVerified { get; set; }
+    
+    public string CustomerType { get; set; } = "Individual";
     
     public string? Role { get; set; }
     
@@ -96,14 +90,6 @@ public class CreateCustomerDto
     
     public DateTime? DateOfBirth { get; set; }
     
-    [MaxLength(100)]
-    public string? DriversLicenseNumber { get; set; }
-    
-    [MaxLength(50)]
-    public string? DriversLicenseState { get; set; }
-    
-    public DateTime? DriversLicenseExpiry { get; set; }
-    
     public string? Address { get; set; }
     
     [MaxLength(100)]
@@ -117,6 +103,8 @@ public class CreateCustomerDto
     
     [MaxLength(20)]
     public string? PostalCode { get; set; }
+    
+    public string? CustomerType { get; set; }
 }
 
 public class UpdateCustomerDto
@@ -136,14 +124,6 @@ public class UpdateCustomerDto
     
     public DateTime? DateOfBirth { get; set; }
     
-    [MaxLength(100)]
-    public string? DriversLicenseNumber { get; set; }
-    
-    [MaxLength(50)]
-    public string? DriversLicenseState { get; set; }
-    
-    public DateTime? DriversLicenseExpiry { get; set; }
-    
     public string? Address { get; set; }
     
     [MaxLength(100)]
@@ -157,4 +137,6 @@ public class UpdateCustomerDto
     
     [MaxLength(20)]
     public string? PostalCode { get; set; }
+    
+    public string? CustomerType { get; set; }
 }

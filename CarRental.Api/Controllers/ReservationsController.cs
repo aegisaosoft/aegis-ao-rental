@@ -80,7 +80,7 @@ public class ReservationsController : ControllerBase
                 .Take(pageSize)
                 .Select(r => new ReservationDto
                 {
-                    ReservationId = r.ReservationId,
+                    Id = r.Id,
                     CustomerId = r.CustomerId,
                     CustomerName = r.Customer.FirstName + " " + r.Customer.LastName,
                     CustomerEmail = r.Customer.Email,
@@ -89,7 +89,8 @@ public class ReservationsController : ControllerBase
                     LicensePlate = r.Vehicle.LicensePlate,
                     CompanyId = r.CompanyId,
                     CompanyName = r.Company.CompanyName,
-                    ReservationNumber = r.ReservationNumber,
+                    BookingNumber = r.BookingNumber,
+                    AltBookingNumber = r.AltBookingNumber,
                     PickupDate = r.PickupDate,
                     ReturnDate = r.ReturnDate,
                     PickupLocation = r.PickupLocation,
@@ -141,14 +142,14 @@ public class ReservationsController : ControllerBase
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
                 .Include(r => r.Company)
-                .FirstOrDefaultAsync(r => r.ReservationId == id);
+                .FirstOrDefaultAsync(r => r.Id == id);
 
             if (reservation == null)
                 return NotFound();
 
             var reservationDto = new ReservationDto
             {
-                ReservationId = reservation.ReservationId,
+                Id = reservation.Id,
                 CustomerId = reservation.CustomerId,
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
@@ -157,7 +158,8 @@ public class ReservationsController : ControllerBase
                 LicensePlate = reservation.Vehicle.LicensePlate,
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
-                ReservationNumber = reservation.ReservationNumber,
+                BookingNumber = reservation.BookingNumber,
+                AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
                 ReturnDate = reservation.ReturnDate,
                 PickupLocation = reservation.PickupLocation,
@@ -210,11 +212,11 @@ public class ReservationsController : ControllerBase
             if (vehicle == null)
                 return BadRequest("Vehicle not found");
 
-            if (vehicle.Status != "available")
+            if (vehicle.Status != VehicleStatus.Available)
                 return BadRequest("Vehicle is not available");
 
             // Check if company exists
-            var company = await _context.RentalCompanies.FindAsync(createReservationDto.CompanyId);
+            var company = await _context.Companies.FindAsync(createReservationDto.CompanyId);
             if (company == null)
                 return BadRequest("Company not found");
 
@@ -223,15 +225,16 @@ public class ReservationsController : ControllerBase
             var subtotal = createReservationDto.DailyRate * totalDays;
             var totalAmount = subtotal + createReservationDto.TaxAmount + createReservationDto.InsuranceAmount + createReservationDto.AdditionalFees;
 
-            // Generate unique reservation number
-            var reservationNumber = $"RES-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
+            // Generate unique booking number
+            var bookingNumber = $"BK-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
 
             var reservation = new Reservation
             {
                 CustomerId = createReservationDto.CustomerId,
                 VehicleId = createReservationDto.VehicleId,
                 CompanyId = createReservationDto.CompanyId,
-                ReservationNumber = reservationNumber,
+                BookingNumber = bookingNumber,
+                AltBookingNumber = createReservationDto.AltBookingNumber,
                 PickupDate = createReservationDto.PickupDate,
                 ReturnDate = createReservationDto.ReturnDate,
                 PickupLocation = createReservationDto.PickupLocation,
@@ -262,7 +265,7 @@ public class ReservationsController : ControllerBase
 
             var reservationDto = new ReservationDto
             {
-                ReservationId = reservation.ReservationId,
+                Id = reservation.Id,
                 CustomerId = reservation.CustomerId,
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
@@ -271,7 +274,8 @@ public class ReservationsController : ControllerBase
                 LicensePlate = reservation.Vehicle.LicensePlate,
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
-                ReservationNumber = reservation.ReservationNumber,
+                BookingNumber = reservation.BookingNumber,
+                AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
                 ReturnDate = reservation.ReturnDate,
                 PickupLocation = reservation.PickupLocation,
@@ -289,11 +293,375 @@ public class ReservationsController : ControllerBase
                 UpdatedAt = reservation.UpdatedAt
             };
 
-            return CreatedAtAction(nameof(GetReservation), new { id = reservation.ReservationId }, reservationDto);
+            return CreatedAtAction(nameof(GetReservation), new { id = reservation.Id }, reservationDto);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating reservation");
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>
+    /// Update an existing reservation
+    /// </summary>
+    /// <param name="id">Reservation ID</param>
+    /// <param name="updateReservationDto">Updated reservation data</param>
+    /// <returns>Updated reservation</returns>
+    [HttpPut("{id}")]
+    [ProducesResponseType(typeof(ReservationDto), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)] // Unauthorized
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> UpdateReservation(Guid id, [FromBody] UpdateReservationDto updateReservationDto)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var reservation = await _context.Reservations
+                .Include(r => r.Customer)
+                .Include(r => r.Vehicle)
+                .Include(r => r.Company)
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (reservation == null)
+                return NotFound();
+
+            // Update fields if provided
+            if (!string.IsNullOrEmpty(updateReservationDto.AltBookingNumber))
+                reservation.AltBookingNumber = updateReservationDto.AltBookingNumber;
+
+            if (updateReservationDto.PickupDate.HasValue)
+                reservation.PickupDate = updateReservationDto.PickupDate.Value;
+
+            if (updateReservationDto.ReturnDate.HasValue)
+                reservation.ReturnDate = updateReservationDto.ReturnDate.Value;
+
+            if (!string.IsNullOrEmpty(updateReservationDto.PickupLocation))
+                reservation.PickupLocation = updateReservationDto.PickupLocation;
+
+            if (!string.IsNullOrEmpty(updateReservationDto.ReturnLocation))
+                reservation.ReturnLocation = updateReservationDto.ReturnLocation;
+
+            if (updateReservationDto.TaxAmount.HasValue)
+                reservation.TaxAmount = updateReservationDto.TaxAmount.Value;
+
+            if (updateReservationDto.InsuranceAmount.HasValue)
+                reservation.InsuranceAmount = updateReservationDto.InsuranceAmount.Value;
+
+            if (updateReservationDto.AdditionalFees.HasValue)
+                reservation.AdditionalFees = updateReservationDto.AdditionalFees.Value;
+
+            if (!string.IsNullOrEmpty(updateReservationDto.Status))
+                reservation.Status = updateReservationDto.Status;
+
+            if (updateReservationDto.Notes != null)
+                reservation.Notes = updateReservationDto.Notes;
+
+            // Recalculate totals if dates changed
+            if (updateReservationDto.PickupDate.HasValue || updateReservationDto.ReturnDate.HasValue)
+            {
+                reservation.TotalDays = (int)(reservation.ReturnDate - reservation.PickupDate).TotalDays;
+                reservation.Subtotal = reservation.DailyRate * reservation.TotalDays;
+            }
+
+            // Recalculate total amount
+            reservation.TotalAmount = reservation.Subtotal + reservation.TaxAmount + 
+                                     reservation.InsuranceAmount + reservation.AdditionalFees;
+            
+            reservation.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            var reservationDto = new ReservationDto
+            {
+                Id = reservation.Id,
+                CustomerId = reservation.CustomerId,
+                CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
+                CustomerEmail = reservation.Customer.Email,
+                VehicleId = reservation.VehicleId,
+                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
+                LicensePlate = reservation.Vehicle.LicensePlate,
+                CompanyId = reservation.CompanyId,
+                CompanyName = reservation.Company.CompanyName,
+                BookingNumber = reservation.BookingNumber,
+                AltBookingNumber = reservation.AltBookingNumber,
+                PickupDate = reservation.PickupDate,
+                ReturnDate = reservation.ReturnDate,
+                PickupLocation = reservation.PickupLocation,
+                ReturnLocation = reservation.ReturnLocation,
+                DailyRate = reservation.DailyRate,
+                TotalDays = reservation.TotalDays,
+                Subtotal = reservation.Subtotal,
+                TaxAmount = reservation.TaxAmount,
+                InsuranceAmount = reservation.InsuranceAmount,
+                AdditionalFees = reservation.AdditionalFees,
+                TotalAmount = reservation.TotalAmount,
+                Status = reservation.Status,
+                Notes = reservation.Notes,
+                CreatedAt = reservation.CreatedAt,
+                UpdatedAt = reservation.UpdatedAt
+            };
+
+            return Ok(reservationDto);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating reservation {ReservationId}", id);
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>
+    /// Update reservation status
+    /// </summary>
+    /// <param name="id">Reservation ID</param>
+    /// <param name="status">New status (Pending, Confirmed, PickedUp, Returned, Cancelled, NoShow)</param>
+    /// <returns>Updated reservation</returns>
+    [HttpPatch("{id}/status")]
+    [ProducesResponseType(typeof(ReservationDto), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)] // Unauthorized
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> UpdateReservationStatus(Guid id, [FromBody] string status)
+    {
+        try
+        {
+            var validStatuses = new[] { "Pending", "Confirmed", "PickedUp", "Returned", "Cancelled", "NoShow" };
+            if (!validStatuses.Contains(status))
+                return BadRequest($"Invalid status. Valid values: {string.Join(", ", validStatuses)}");
+
+            var reservation = await _context.Reservations
+                .Include(r => r.Customer)
+                .Include(r => r.Vehicle)
+                .Include(r => r.Company)
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (reservation == null)
+                return NotFound();
+
+            reservation.Status = status;
+            reservation.UpdatedAt = DateTime.UtcNow;
+
+            // Update vehicle status based on booking status
+            if (status == "PickedUp")
+            {
+                var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+                if (vehicle != null)
+                    vehicle.Status = VehicleStatus.Rented;
+            }
+            else if (status == "Returned" || status == "Cancelled")
+            {
+                var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+                if (vehicle != null)
+                    vehicle.Status = VehicleStatus.Available;
+            }
+
+            await _context.SaveChangesAsync();
+
+            var reservationDto = new ReservationDto
+            {
+                Id = reservation.Id,
+                CustomerId = reservation.CustomerId,
+                CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
+                CustomerEmail = reservation.Customer.Email,
+                VehicleId = reservation.VehicleId,
+                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
+                LicensePlate = reservation.Vehicle.LicensePlate,
+                CompanyId = reservation.CompanyId,
+                CompanyName = reservation.Company.CompanyName,
+                BookingNumber = reservation.BookingNumber,
+                AltBookingNumber = reservation.AltBookingNumber,
+                PickupDate = reservation.PickupDate,
+                ReturnDate = reservation.ReturnDate,
+                PickupLocation = reservation.PickupLocation,
+                ReturnLocation = reservation.ReturnLocation,
+                DailyRate = reservation.DailyRate,
+                TotalDays = reservation.TotalDays,
+                Subtotal = reservation.Subtotal,
+                TaxAmount = reservation.TaxAmount,
+                InsuranceAmount = reservation.InsuranceAmount,
+                AdditionalFees = reservation.AdditionalFees,
+                TotalAmount = reservation.TotalAmount,
+                Status = reservation.Status,
+                Notes = reservation.Notes,
+                CreatedAt = reservation.CreatedAt,
+                UpdatedAt = reservation.UpdatedAt
+            };
+
+            return Ok(reservationDto);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating reservation status {ReservationId}", id);
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>
+    /// Cancel a reservation
+    /// </summary>
+    /// <param name="id">Reservation ID</param>
+    /// <returns>Cancelled reservation</returns>
+    [HttpPost("{id}/cancel")]
+    [ProducesResponseType(typeof(ReservationDto), 200)]
+    [ProducesResponseType(401)] // Unauthorized
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> CancelReservation(Guid id)
+    {
+        try
+        {
+            var reservation = await _context.Reservations
+                .Include(r => r.Customer)
+                .Include(r => r.Vehicle)
+                .Include(r => r.Company)
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (reservation == null)
+                return NotFound();
+
+            reservation.Status = "Cancelled";
+            reservation.UpdatedAt = DateTime.UtcNow;
+
+            // Make vehicle available again
+            var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+            if (vehicle != null)
+                vehicle.Status = VehicleStatus.Available;
+
+            await _context.SaveChangesAsync();
+
+            var reservationDto = new ReservationDto
+            {
+                Id = reservation.Id,
+                CustomerId = reservation.CustomerId,
+                CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
+                CustomerEmail = reservation.Customer.Email,
+                VehicleId = reservation.VehicleId,
+                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
+                LicensePlate = reservation.Vehicle.LicensePlate,
+                CompanyId = reservation.CompanyId,
+                CompanyName = reservation.Company.CompanyName,
+                BookingNumber = reservation.BookingNumber,
+                AltBookingNumber = reservation.AltBookingNumber,
+                PickupDate = reservation.PickupDate,
+                ReturnDate = reservation.ReturnDate,
+                PickupLocation = reservation.PickupLocation,
+                ReturnLocation = reservation.ReturnLocation,
+                DailyRate = reservation.DailyRate,
+                TotalDays = reservation.TotalDays,
+                Subtotal = reservation.Subtotal,
+                TaxAmount = reservation.TaxAmount,
+                InsuranceAmount = reservation.InsuranceAmount,
+                AdditionalFees = reservation.AdditionalFees,
+                TotalAmount = reservation.TotalAmount,
+                Status = reservation.Status,
+                Notes = reservation.Notes,
+                CreatedAt = reservation.CreatedAt,
+                UpdatedAt = reservation.UpdatedAt
+            };
+
+            return Ok(reservationDto);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cancelling reservation {ReservationId}", id);
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>
+    /// Get reservation by booking number
+    /// </summary>
+    /// <param name="bookingNumber">Booking number</param>
+    /// <returns>Reservation details</returns>
+    [HttpGet("booking-number/{bookingNumber}")]
+    [ProducesResponseType(typeof(ReservationDto), 200)]
+    [ProducesResponseType(401)] // Unauthorized
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> GetReservationByBookingNumber(string bookingNumber)
+    {
+        try
+        {
+            var reservation = await _context.Reservations
+                .Include(r => r.Customer)
+                .Include(r => r.Vehicle)
+                .Include(r => r.Company)
+                .FirstOrDefaultAsync(r => r.BookingNumber == bookingNumber);
+
+            if (reservation == null)
+                return NotFound();
+
+            var reservationDto = new ReservationDto
+            {
+                Id = reservation.Id,
+                CustomerId = reservation.CustomerId,
+                CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
+                CustomerEmail = reservation.Customer.Email,
+                VehicleId = reservation.VehicleId,
+                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
+                LicensePlate = reservation.Vehicle.LicensePlate,
+                CompanyId = reservation.CompanyId,
+                CompanyName = reservation.Company.CompanyName,
+                BookingNumber = reservation.BookingNumber,
+                AltBookingNumber = reservation.AltBookingNumber,
+                PickupDate = reservation.PickupDate,
+                ReturnDate = reservation.ReturnDate,
+                PickupLocation = reservation.PickupLocation,
+                ReturnLocation = reservation.ReturnLocation,
+                DailyRate = reservation.DailyRate,
+                TotalDays = reservation.TotalDays,
+                Subtotal = reservation.Subtotal,
+                TaxAmount = reservation.TaxAmount,
+                InsuranceAmount = reservation.InsuranceAmount,
+                AdditionalFees = reservation.AdditionalFees,
+                TotalAmount = reservation.TotalAmount,
+                Status = reservation.Status,
+                Notes = reservation.Notes,
+                CreatedAt = reservation.CreatedAt,
+                UpdatedAt = reservation.UpdatedAt
+            };
+
+            return Ok(reservationDto);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving reservation by booking number {BookingNumber}", bookingNumber);
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>
+    /// Delete a reservation
+    /// </summary>
+    /// <param name="id">Reservation ID</param>
+    [HttpDelete("{id}")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(401)] // Unauthorized
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> DeleteReservation(Guid id)
+    {
+        try
+        {
+            var reservation = await _context.Reservations.FindAsync(id);
+
+            if (reservation == null)
+                return NotFound();
+
+            // Make vehicle available if it was reserved
+            var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+            if (vehicle != null && vehicle.Status == VehicleStatus.Rented)
+                vehicle.Status = VehicleStatus.Available;
+
+            _context.Reservations.Remove(reservation);
+            await _context.SaveChangesAsync();
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting reservation {ReservationId}", id);
             return StatusCode(500, "Internal server error");
         }
     }

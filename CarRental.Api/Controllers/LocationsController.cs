@@ -103,7 +103,7 @@ public class LocationsController : ControllerBase
             var location = await _context.Locations
                 .Include(l => l.Company)
                 .Include(l => l.Vehicles)
-                .FirstOrDefaultAsync(l => l.LocationId == id);
+                .FirstOrDefaultAsync(l => l.Id == id);
 
             if (location == null)
             {
@@ -196,14 +196,14 @@ public class LocationsController : ControllerBase
         try
         {
             // Validate company exists
-            var company = await _context.RentalCompanies.FindAsync(location.CompanyId);
+            var company = await _context.Companies.FindAsync(location.CompanyId);
             if (company == null)
             {
                 return BadRequest($"Company with ID {location.CompanyId} not found");
             }
 
             // Set timestamps
-            location.LocationId = Guid.NewGuid();
+            location.Id = Guid.NewGuid();
             location.CreatedAt = DateTime.UtcNow;
             location.UpdatedAt = DateTime.UtcNow;
 
@@ -211,9 +211,9 @@ public class LocationsController : ControllerBase
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Created location {LocationId} for company {CompanyId}", 
-                location.LocationId, location.CompanyId);
+                location.Id, location.CompanyId);
 
-            return CreatedAtAction(nameof(GetLocation), new { id = location.LocationId }, location);
+            return CreatedAtAction(nameof(GetLocation), new { id = location.Id }, location);
         }
         catch (Exception ex)
         {
@@ -226,7 +226,7 @@ public class LocationsController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateLocation(Guid id, [FromBody] Location location)
     {
-        if (id != location.LocationId)
+        if (id != location.Id)
         {
             return BadRequest("Location ID mismatch");
         }
@@ -242,7 +242,7 @@ public class LocationsController : ControllerBase
             // Validate company exists if it's being changed
             if (existingLocation.CompanyId != location.CompanyId)
             {
-                var company = await _context.RentalCompanies.FindAsync(location.CompanyId);
+                var company = await _context.Companies.FindAsync(location.CompanyId);
                 if (company == null)
                 {
                     return BadRequest($"Company with ID {location.CompanyId} not found");
@@ -296,7 +296,7 @@ public class LocationsController : ControllerBase
         {
             var location = await _context.Locations
                 .Include(l => l.Vehicles)
-                .FirstOrDefaultAsync(l => l.LocationId == id);
+                .FirstOrDefaultAsync(l => l.Id == id);
 
             if (location == null)
             {
@@ -439,7 +439,7 @@ public class LocationsController : ControllerBase
 
     private async Task<bool> LocationExists(Guid id)
     {
-        return await _context.Locations.AnyAsync(e => e.LocationId == id);
+        return await _context.Locations.AnyAsync(e => e.Id == id);
     }
 }
 

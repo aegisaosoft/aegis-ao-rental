@@ -22,15 +22,12 @@ namespace CarRental.Api.Models;
 public class Vehicle
 {
     [Key]
-    [Column("vehicle_id")]
-    public Guid VehicleId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [Column("company_id")]
     public Guid CompanyId { get; set; }
-
-    [Column("category_id")]
-    public Guid? CategoryId { get; set; }
 
     [Required]
     [MaxLength(100)]
@@ -63,10 +60,6 @@ public class Vehicle
     public int Mileage { get; set; } = 0;
 
     [MaxLength(50)]
-    [Column("fuel_type")]
-    public string? FuelType { get; set; }
-
-    [MaxLength(50)]
     [Column("transmission")]
     public string? Transmission { get; set; }
 
@@ -77,9 +70,8 @@ public class Vehicle
     [Column("daily_rate", TypeName = "decimal(10,2)")]
     public decimal DailyRate { get; set; }
 
-    [MaxLength(50)]
     [Column("status")]
-    public string Status { get; set; } = "available";
+    public VehicleStatus Status { get; set; } = VehicleStatus.Available;
 
     [MaxLength(2)]
     [Column("state")]
@@ -98,9 +90,6 @@ public class Vehicle
     [Column("features")]
     public string[]? Features { get; set; }
 
-    [Column("is_active")]
-    public bool IsActive { get; set; } = true;
-
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -110,9 +99,6 @@ public class Vehicle
     // Navigation properties
     [ForeignKey("CompanyId")]
     public virtual RentalCompany Company { get; set; } = null!;
-
-    [ForeignKey("CategoryId")]
-    public virtual VehicleCategory? Category { get; set; }
 
     [ForeignKey("LocationId")]
     public virtual Location? LocationDetails { get; set; }

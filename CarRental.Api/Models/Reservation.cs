@@ -18,12 +18,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CarRental.Api.Models;
 
-[Table("reservations")]
+[Table("bookings")]
 public class Reservation
 {
     [Key]
-    [Column("reservation_id")]
-    public Guid ReservationId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [Column("customer_id")]
@@ -39,8 +39,12 @@ public class Reservation
 
     [Required]
     [MaxLength(50)]
-    [Column("reservation_number")]
-    public string ReservationNumber { get; set; } = string.Empty;
+    [Column("booking_number")]
+    public string BookingNumber { get; set; } = string.Empty;
+
+    [MaxLength(100)]
+    [Column("alt_booking_number")]
+    public string? AltBookingNumber { get; set; }
 
     [Required]
     [Column("pickup_date")]
@@ -83,8 +87,10 @@ public class Reservation
     [Column("total_amount", TypeName = "decimal(10,2)")]
     public decimal TotalAmount { get; set; }
 
+    [Required]
     [MaxLength(50)]
-    public string Status { get; set; } = "pending";
+    [Column("status")]
+    public string Status { get; set; } = "Pending";
 
     public string? Notes { get; set; }
 

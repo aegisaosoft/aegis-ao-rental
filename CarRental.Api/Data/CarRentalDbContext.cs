@@ -24,7 +24,7 @@ public class CarRentalDbContext : DbContext
     {
     }
 
-    public DbSet<RentalCompany> RentalCompanies { get; set; }
+    public DbSet<RentalCompany> Companies { get; set; }
     public DbSet<Customer> Customers { get; set; }
     public DbSet<VehicleCategory> VehicleCategories { get; set; }
     public DbSet<Vehicle> Vehicles { get; set; }
@@ -38,7 +38,11 @@ public class CarRentalDbContext : DbContext
     public DbSet<EmailNotification> EmailNotifications { get; set; }
     public DbSet<BookingConfirmation> BookingConfirmations { get; set; }
     public DbSet<CompanyEmailStyle> CompanyEmailStyles { get; set; }
-    public DbSet<User> Users { get; set; }
+    public DbSet<AdditionalService> AdditionalServices { get; set; }
+    public DbSet<CompanyService> CompanyServices { get; set; }
+    public DbSet<BookingService> BookingServices { get; set; }
+    public DbSet<CustomerLicense> CustomerLicenses { get; set; }
+    public DbSet<Model> Models { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -46,47 +50,43 @@ public class CarRentalDbContext : DbContext
 
         // Configure UUID generation
         modelBuilder.Entity<RentalCompany>()
-            .Property(e => e.CompanyId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Customer>()
-            .Property(e => e.CustomerId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<VehicleCategory>()
-            .Property(e => e.CategoryId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Vehicle>()
-            .Property(e => e.VehicleId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Location>()
-            .Property(e => e.LocationId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Reservation>()
-            .Property(e => e.ReservationId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Rental>()
-            .Property(e => e.RentalId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Payment>()
-            .Property(e => e.PaymentId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<CustomerPaymentMethod>()
-            .Property(e => e.PaymentMethodId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Review>()
-            .Property(e => e.ReviewId)
-            .HasDefaultValueSql("uuid_generate_v4()");
-
-        modelBuilder.Entity<User>()
-            .Property(e => e.UserId)
+            .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
         // Configure relationships
@@ -94,30 +94,28 @@ public class CarRentalDbContext : DbContext
             .HasOne(v => v.Company)
             .WithMany(c => c.Vehicles)
             .HasForeignKey(v => v.CompanyId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
-
-        modelBuilder.Entity<Vehicle>()
-            .HasOne(v => v.Category)
-            .WithMany(c => c.Vehicles)
-            .HasForeignKey(v => v.CategoryId)
-            .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<Vehicle>()
             .HasOne(v => v.LocationDetails)
             .WithMany(l => l.Vehicles)
             .HasForeignKey(v => v.LocationId)
+            .HasPrincipalKey(l => l.Id)
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<Location>()
             .HasOne(l => l.Company)
             .WithMany(c => c.Locations)
             .HasForeignKey(l => l.CompanyId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Reservation>()
             .HasOne(r => r.Customer)
             .WithMany(c => c.Reservations)
             .HasForeignKey(r => r.CustomerId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Reservation>()
@@ -130,18 +128,21 @@ public class CarRentalDbContext : DbContext
             .HasOne(r => r.Company)
             .WithMany(c => c.Reservations)
             .HasForeignKey(r => r.CompanyId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Rental>()
-            .HasOne(r => r.Reservation)
+            .HasOne(r => r.Booking)
             .WithMany(res => res.Rentals)
-            .HasForeignKey(r => r.ReservationId)
+            .HasForeignKey(r => r.BookingId)
+            .HasPrincipalKey(res => res.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Rental>()
             .HasOne(r => r.Customer)
             .WithMany(c => c.Rentals)
             .HasForeignKey(r => r.CustomerId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Rental>()
@@ -154,42 +155,49 @@ public class CarRentalDbContext : DbContext
             .HasOne(r => r.Company)
             .WithMany(c => c.Rentals)
             .HasForeignKey(r => r.CompanyId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Payment>()
             .HasOne(p => p.Customer)
             .WithMany(c => c.Payments)
             .HasForeignKey(p => p.CustomerId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Payment>()
             .HasOne(p => p.Company)
             .WithMany(c => c.Payments)
             .HasForeignKey(p => p.CompanyId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<CustomerPaymentMethod>()
             .HasOne(pm => pm.Customer)
             .WithMany(c => c.PaymentMethods)
             .HasForeignKey(pm => pm.CustomerId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Review>()
             .HasOne(r => r.Rental)
             .WithMany(rental => rental.Reviews)
             .HasForeignKey(r => r.RentalId)
+            .HasPrincipalKey(rental => rental.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Review>()
             .HasOne(r => r.Customer)
             .WithMany(c => c.Reviews)
             .HasForeignKey(r => r.CustomerId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Review>()
             .HasOne(r => r.Company)
             .WithMany(c => c.Reviews)
             .HasForeignKey(r => r.CompanyId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Review>()
@@ -198,11 +206,70 @@ public class CarRentalDbContext : DbContext
             .HasForeignKey(r => r.VehicleId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        modelBuilder.Entity<User>()
-            .HasOne(u => u.Company)
+        // Configure CustomerLicense
+        modelBuilder.Entity<CustomerLicense>()
+            .Property(e => e.Id)
+            .HasDefaultValueSql("uuid_generate_v4()");
+
+        modelBuilder.Entity<CustomerLicense>()
+            .Property(e => e.CreatedAt)
+            .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+        modelBuilder.Entity<CustomerLicense>()
+            .Property(e => e.UpdatedAt)
+            .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+        modelBuilder.Entity<CustomerLicense>()
+            .Property(e => e.VerificationDate)
+            .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+        modelBuilder.Entity<CustomerLicense>()
+            .HasOne(cl => cl.Customer)
+            .WithOne(c => c.License)
+            .HasForeignKey<CustomerLicense>(cl => cl.CustomerId)
+            .HasPrincipalKey<Customer>(c => c.Id)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Configure Model
+        modelBuilder.Entity<Model>()
+            .Property(e => e.Id)
+            .HasDefaultValueSql("uuid_generate_v4()");
+
+        // Configure Make and ModelName to be stored in uppercase
+        modelBuilder.Entity<Model>()
+            .Property(e => e.Make)
+            .HasConversion(
+                v => v.ToUpperInvariant(),
+                v => v
+            );
+
+        modelBuilder.Entity<Model>()
+            .Property(e => e.ModelName)
+            .HasConversion(
+                v => v.ToUpperInvariant(),
+                v => v
+            );
+
+        // Configure DailyRate precision
+        modelBuilder.Entity<Model>()
+            .Property(e => e.DailyRate)
+            .HasPrecision(10, 2);
+
+        // Configure Features array
+        modelBuilder.Entity<Model>()
+            .Property(e => e.Features)
+            .HasColumnType("text[]");
+
+        // Configure Model to VehicleCategory relationship
+        modelBuilder.Entity<Model>()
+            .HasOne(m => m.Category)
             .WithMany()
-            .HasForeignKey(u => u.CompanyId)
+            .HasForeignKey(m => m.CategoryId)
+            .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Model>()
+            .HasIndex(m => m.CategoryId);
 
         // Configure indexes
         modelBuilder.Entity<Vehicle>()
@@ -210,9 +277,6 @@ public class CarRentalDbContext : DbContext
 
         modelBuilder.Entity<Vehicle>()
             .HasIndex(v => v.Status);
-
-        modelBuilder.Entity<Vehicle>()
-            .HasIndex(v => v.CategoryId);
 
         modelBuilder.Entity<Vehicle>()
             .HasIndex(v => v.LocationId);
@@ -271,25 +335,42 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<CustomerPaymentMethod>()
             .HasIndex(pm => pm.CustomerId);
 
-        modelBuilder.Entity<User>()
-            .HasIndex(u => u.Email)
-            .IsUnique();
+        modelBuilder.Entity<CustomerLicense>()
+            .HasIndex(cl => cl.CustomerId);
 
-        modelBuilder.Entity<User>()
-            .HasIndex(u => u.Role);
+        modelBuilder.Entity<CustomerLicense>()
+            .HasIndex(cl => new { cl.LicenseNumber, cl.StateIssued });
 
-        modelBuilder.Entity<User>()
-            .HasIndex(u => u.CompanyId);
+        modelBuilder.Entity<CustomerLicense>()
+            .HasIndex(cl => cl.ExpirationDate);
+
+        modelBuilder.Entity<CustomerLicense>()
+            .HasIndex(cl => cl.StateIssued);
+
+        modelBuilder.Entity<Model>()
+            .HasIndex(m => m.Make);
+
+        modelBuilder.Entity<Model>()
+            .HasIndex(m => new { m.Make, m.ModelName });
+
+        modelBuilder.Entity<Model>()
+            .HasIndex(m => m.Year);
 
         // Configure array properties for PostgreSQL
         modelBuilder.Entity<Vehicle>()
             .Property(v => v.Features)
             .HasColumnType("text[]");
 
-        // Configure decimal precision
+        // Configure enum conversions
         modelBuilder.Entity<Vehicle>()
-            .Property(v => v.DailyRate)
-            .HasPrecision(10, 2);
+            .Property(e => e.Status)
+            .HasConversion<string>()
+            .HasMaxLength(50);
+
+        modelBuilder.Entity<Customer>()
+            .Property(e => e.CustomerType)
+            .HasConversion<string>()
+            .HasMaxLength(50);
 
         modelBuilder.Entity<Reservation>()
             .Property(r => r.DailyRate)
@@ -334,8 +415,8 @@ public class CarRentalDbContext : DbContext
         // Configure BookingToken entity
         modelBuilder.Entity<BookingToken>(entity =>
         {
-            entity.HasKey(e => e.TokenId);
-            entity.Property(e => e.TokenId).HasDefaultValueSql("uuid_generate_v4()");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
             entity.Property(e => e.Token).HasMaxLength(255).IsRequired();
             entity.Property(e => e.CustomerEmail).HasMaxLength(255).IsRequired();
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
@@ -352,11 +433,34 @@ public class CarRentalDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        // Configure BookingConfirmation entity
+        modelBuilder.Entity<BookingConfirmation>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.CustomerEmail).HasMaxLength(255).IsRequired();
+            entity.Property(e => e.ConfirmationNumber).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.PaymentStatus).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.StripePaymentIntentId).HasMaxLength(255);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            
+            entity.HasOne(e => e.BookingToken)
+                .WithMany(bt => bt.BookingConfirmations)
+                .HasForeignKey(e => e.BookingTokenId)
+                .OnDelete(DeleteBehavior.Cascade);
+                
+            entity.HasOne(e => e.Reservation)
+                .WithMany()
+                .HasForeignKey(e => e.ReservationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
         // Configure EmailNotification entity
         modelBuilder.Entity<EmailNotification>(entity =>
         {
-            entity.HasKey(e => e.NotificationId);
-            entity.Property(e => e.NotificationId).HasDefaultValueSql("uuid_generate_v4()");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
             entity.Property(e => e.CustomerEmail).HasMaxLength(255).IsRequired();
             entity.Property(e => e.NotificationType).HasMaxLength(50).IsRequired();
             entity.Property(e => e.Subject).HasMaxLength(255).IsRequired();
@@ -364,16 +468,15 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             
             entity.HasOne(e => e.BookingToken)
-                .WithMany(e => e.EmailNotifications)
+                .WithMany(bt => bt.EmailNotifications)
                 .HasForeignKey(e => e.BookingTokenId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.SetNull);
         });
-
         // Configure BookingConfirmation entity
         modelBuilder.Entity<BookingConfirmation>(entity =>
         {
-            entity.HasKey(e => e.ConfirmationId);
-            entity.Property(e => e.ConfirmationId).HasDefaultValueSql("uuid_generate_v4()");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
             entity.Property(e => e.CustomerEmail).HasMaxLength(255).IsRequired();
             entity.Property(e => e.ConfirmationNumber).HasMaxLength(50).IsRequired();
             entity.Property(e => e.PaymentStatus).HasMaxLength(50).IsRequired();
@@ -400,6 +503,67 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<BookingConfirmation>()
             .Property(bc => bc.BookingDetails)
             .HasColumnType("jsonb");
+
+        // Configure AdditionalService entity
+        modelBuilder.Entity<AdditionalService>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.Description).HasMaxLength(1000);
+            entity.Property(e => e.Price).HasPrecision(10, 2);
+            entity.Property(e => e.ServiceType).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.IsMandatory).HasDefaultValue(false);
+            entity.Property(e => e.MaxQuantity).HasDefaultValue(1);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .HasPrincipalKey(c => c.Id)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure CompanyService entity (junction table)
+        modelBuilder.Entity<CompanyService>(entity =>
+        {
+            entity.HasKey(e => new { e.CompanyId, e.AdditionalServiceId });
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .HasPrincipalKey(c => c.Id)
+                .OnDelete(DeleteBehavior.Cascade);
+                
+            entity.HasOne(e => e.AdditionalService)
+                .WithMany()
+                .HasForeignKey(e => e.AdditionalServiceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure BookingService entity (junction table)
+        modelBuilder.Entity<BookingService>(entity =>
+        {
+            entity.HasKey(e => new { e.BookingId, e.AdditionalServiceId });
+            entity.Property(e => e.Quantity).HasDefaultValue(1);
+            entity.Property(e => e.PriceAtBooking).HasPrecision(10, 2);
+            entity.Property(e => e.Subtotal).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            
+            entity.HasOne(e => e.Booking)
+                .WithMany()
+                .HasForeignKey(e => e.BookingId)
+                .OnDelete(DeleteBehavior.Cascade);
+                
+            entity.HasOne(e => e.AdditionalService)
+                .WithMany()
+                .HasForeignKey(e => e.AdditionalServiceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
 
         // Configure CompanyEmailStyle entity
         modelBuilder.Entity<CompanyEmailStyle>(entity =>

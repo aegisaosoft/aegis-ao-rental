@@ -22,8 +22,8 @@ namespace CarRental.Api.Models;
 public class Location
 {
     [Key]
-    [Column("location_id")]
-    public Guid LocationId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [Column("company_id")]

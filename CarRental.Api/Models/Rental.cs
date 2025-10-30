@@ -22,12 +22,12 @@ namespace CarRental.Api.Models;
 public class Rental
 {
     [Key]
-    [Column("rental_id")]
-    public Guid RentalId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
-    [Column("reservation_id")]
-    public Guid ReservationId { get; set; }
+    [Column("booking_id")]
+    public Guid BookingId { get; set; }
 
     [Required]
     [Column("customer_id")]
@@ -85,8 +85,8 @@ public class Rental
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation properties
-    [ForeignKey("ReservationId")]
-    public virtual Reservation Reservation { get; set; } = null!;
+    [ForeignKey("BookingId")]
+    public virtual Reservation Booking { get; set; } = null!;
 
     [ForeignKey("CustomerId")]
     public virtual Customer Customer { get; set; } = null!;

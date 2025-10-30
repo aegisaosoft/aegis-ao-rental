@@ -51,9 +51,9 @@ public class CompanyManagementService : ICompanyManagementService
             var stats = new CompanyStatsDto
             {
                 TotalVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == companyId),
-                ActiveVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == companyId && v.IsActive && v.Status == "available"),
+                ActiveVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == companyId && v.Status == VehicleStatus.Available),
                 TotalReservations = await _context.Reservations.CountAsync(r => r.CompanyId == companyId),
-                ActiveReservations = await _context.Reservations.CountAsync(r => r.CompanyId == companyId && r.Status == "confirmed"),
+                ActiveReservations = await _context.Reservations.CountAsync(r => r.CompanyId == companyId && r.Status == "Confirmed"),
                 TotalRentals = await _context.Rentals.CountAsync(r => r.CompanyId == companyId),
                 ActiveRentals = await _context.Rentals.CountAsync(r => r.CompanyId == companyId && r.Status == "active"),
                 TotalRevenue = await _context.Payments.Where(p => p.CompanyId == companyId && p.Status == "succeeded")
@@ -80,7 +80,7 @@ public class CompanyManagementService : ICompanyManagementService
     {
         try
         {
-            var company = await _context.RentalCompanies.FindAsync(companyId);
+            var company = await _context.Companies.FindAsync(companyId);
             if (company == null)
                 throw new ArgumentException("Company not found");
 
@@ -137,11 +137,7 @@ public class CompanyManagementService : ICompanyManagementService
         try
         {
             var query = _context.Vehicles
-                .Include(v => v.Category)
                 .Where(v => v.CompanyId == companyId);
-
-            if (searchDto.CategoryId.HasValue)
-                query = query.Where(v => v.CategoryId == searchDto.CategoryId.Value);
 
             if (!string.IsNullOrEmpty(searchDto.Make))
                 query = query.Where(v => v.Make.Contains(searchDto.Make));
@@ -161,9 +157,6 @@ public class CompanyManagementService : ICompanyManagementService
             if (searchDto.MaxDailyRate.HasValue)
                 query = query.Where(v => v.DailyRate <= searchDto.MaxDailyRate.Value);
 
-            if (!string.IsNullOrEmpty(searchDto.FuelType))
-                query = query.Where(v => v.FuelType == searchDto.FuelType);
-
             if (!string.IsNullOrEmpty(searchDto.Transmission))
                 query = query.Where(v => v.Transmission == searchDto.Transmission);
 
@@ -173,19 +166,39 @@ public class CompanyManagementService : ICompanyManagementService
             if (!string.IsNullOrEmpty(searchDto.Location))
                 query = query.Where(v => v.Location != null && v.Location.Contains(searchDto.Location));
 
-            if (searchDto.IsActive.HasValue)
-                query = query.Where(v => v.IsActive == searchDto.IsActive.Value);
+            // Note: IsActive has been replaced with Status field
+            // Use Status filter instead
 
             var vehicles = await query
                 .OrderBy(v => v.Make)
                 .ThenBy(v => v.Model)
                 .Skip((searchDto.Page - 1) * searchDto.PageSize)
                 .Take(searchDto.PageSize)
-                .Select(v => new VehicleDto
+                .ToListAsync();
+
+            // Get all models needed for category and fuel type lookup
+            var vehiclesMakeModelYear = vehicles.Select(v => new { v.Make, v.Model, v.Year }).Distinct().ToList();
+            var modelsDict = await _context.Models
+                .Include(m => m.Category)
+                .Where(m => vehiclesMakeModelYear.Any(v => 
+                    v.Make.ToUpper() == m.Make.ToUpper() && 
+                    v.Model.ToUpper() == m.ModelName.ToUpper() && 
+                    v.Year == m.Year))
+                .ToListAsync();
+
+            return vehicles.Select(v =>
+            {
+                var matchingModel = modelsDict.FirstOrDefault(m => 
+                    m.Make.ToUpper() == v.Make.ToUpper() && 
+                    m.ModelName.ToUpper() == v.Model.ToUpper() && 
+                    m.Year == v.Year);
+
+                return new VehicleDto
                 {
-                    VehicleId = v.VehicleId,
+                    VehicleId = v.Id,
                     CompanyId = v.CompanyId,
-                    CategoryId = v.CategoryId,
+                    CategoryId = matchingModel?.CategoryId,
+                    CategoryName = matchingModel?.Category?.CategoryName,
                     Make = v.Make,
                     Model = v.Model,
                     Year = v.Year,
@@ -193,22 +206,18 @@ public class CompanyManagementService : ICompanyManagementService
                     LicensePlate = v.LicensePlate,
                     Vin = v.Vin,
                     Mileage = v.Mileage,
-                    FuelType = v.FuelType,
+                    FuelType = matchingModel?.FuelType,
                     Transmission = v.Transmission,
                     Seats = v.Seats,
                     DailyRate = v.DailyRate,
-                    Status = v.Status,
+                    Status = v.Status.ToString(),
                     Location = v.Location,
                     ImageUrl = v.ImageUrl,
                     Features = v.Features,
-                    IsActive = v.IsActive,
                     CreatedAt = v.CreatedAt,
-                    UpdatedAt = v.UpdatedAt,
-                    CategoryName = v.Category != null ? v.Category.CategoryName : null
-                })
-                .ToListAsync();
-
-            return vehicles;
+                    UpdatedAt = v.UpdatedAt
+                };
+            }).ToList();
         }
         catch (Exception ex)
         {
@@ -232,8 +241,8 @@ public class CompanyManagementService : ICompanyManagementService
             if (searchDto.VehicleId.HasValue)
                 query = query.Where(r => r.VehicleId == searchDto.VehicleId.Value);
 
-            if (!string.IsNullOrEmpty(searchDto.ReservationNumber))
-                query = query.Where(r => r.ReservationNumber.Contains(searchDto.ReservationNumber));
+            if (!string.IsNullOrEmpty(searchDto.BookingNumber))
+                query = query.Where(r => r.BookingNumber.Contains(searchDto.BookingNumber));
 
             if (searchDto.PickupDateFrom.HasValue)
                 query = query.Where(r => r.PickupDate >= searchDto.PickupDateFrom.Value);
@@ -262,11 +271,12 @@ public class CompanyManagementService : ICompanyManagementService
                 .Take(searchDto.PageSize)
                 .Select(r => new ReservationDto
                 {
-                    ReservationId = r.ReservationId,
+                    Id = r.Id,
                     CustomerId = r.CustomerId,
                     VehicleId = r.VehicleId,
                     CompanyId = r.CompanyId,
-                    ReservationNumber = r.ReservationNumber,
+                    BookingNumber = r.BookingNumber,
+                    AltBookingNumber = r.AltBookingNumber,
                     PickupDate = r.PickupDate,
                     ReturnDate = r.ReturnDate,
                     PickupLocation = r.PickupLocation,
@@ -303,10 +313,10 @@ public class CompanyManagementService : ICompanyManagementService
         try
         {
             var hasActiveVehicles = await _context.Vehicles
-                .AnyAsync(v => v.CompanyId == companyId && v.IsActive);
+                .AnyAsync(v => v.CompanyId == companyId && v.Status != VehicleStatus.OutOfService);
 
             var hasActiveReservations = await _context.Reservations
-                .AnyAsync(r => r.CompanyId == companyId && r.Status == "confirmed");
+                .AnyAsync(r => r.CompanyId == companyId && r.Status == "Confirmed");
 
             var hasActiveRentals = await _context.Rentals
                 .AnyAsync(r => r.CompanyId == companyId && r.Status == "active");
@@ -347,7 +357,7 @@ public class CompanyManagementService : ICompanyManagementService
         try
         {
             return await _context.Vehicles
-                .CountAsync(v => v.CompanyId == companyId && v.IsActive && v.Status == "available");
+                .CountAsync(v => v.CompanyId == companyId && v.Status == VehicleStatus.Available);
         }
         catch (Exception ex)
         {
@@ -361,7 +371,7 @@ public class CompanyManagementService : ICompanyManagementService
         try
         {
             return await _context.Reservations
-                .CountAsync(r => r.CompanyId == companyId && r.Status == "confirmed");
+                .CountAsync(r => r.CompanyId == companyId && r.Status == "Confirmed");
         }
         catch (Exception ex)
         {

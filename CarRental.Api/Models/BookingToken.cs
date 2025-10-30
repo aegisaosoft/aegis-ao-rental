@@ -23,8 +23,8 @@ namespace CarRental.Api.Models;
 public class BookingToken
 {
     [Key]
-    [Column("token_id")]
-    public Guid TokenId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [Column("company_id")]

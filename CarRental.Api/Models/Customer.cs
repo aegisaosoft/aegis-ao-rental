@@ -22,8 +22,8 @@ namespace CarRental.Api.Models;
 public class Customer
 {
     [Key]
-    [Column("customer_id")]
-    public Guid CustomerId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [MaxLength(255)]
@@ -65,17 +65,6 @@ public class Customer
     [Column("date_of_birth")]
     public DateTime? DateOfBirth { get; set; }
 
-    [MaxLength(100)]
-    [Column("drivers_license_number")]
-    public string? DriversLicenseNumber { get; set; }
-
-    [MaxLength(50)]
-    [Column("drivers_license_state")]
-    public string? DriversLicenseState { get; set; }
-
-    [Column("drivers_license_expiry")]
-    public DateTime? DriversLicenseExpiry { get; set; }
-
     [Column("address")]
     public string? Address { get; set; }
 
@@ -102,6 +91,9 @@ public class Customer
     [Column("is_verified")]
     public bool IsVerified { get; set; } = false;
 
+    [Column("customer_type")]
+    public CustomerType CustomerType { get; set; } = CustomerType.Individual;
+
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -111,6 +103,8 @@ public class Customer
     // Navigation properties
     [ForeignKey("CompanyId")]
     public virtual RentalCompany? Company { get; set; }
+    
+    public virtual CustomerLicense? License { get; set; }
     
     public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();

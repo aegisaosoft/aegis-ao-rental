@@ -76,10 +76,29 @@ public class VehiclesController : ControllerBase
     }
 
     /// <summary>
+    /// Get vehicle status constants
+    /// </summary>
+    /// <returns>List of available vehicle status values</returns>
+    [HttpGet("status-constants")]
+    [ProducesResponseType(typeof(object), 200)]
+    public IActionResult GetVehicleStatusConstants()
+    {
+        var statusConstants = new
+        {
+            Available = VehicleStatusConstants.Available,
+            Rented = VehicleStatusConstants.Rented,
+            Maintenance = VehicleStatusConstants.Maintenance,
+            OutOfService = VehicleStatusConstants.OutOfService,
+            Cleaning = VehicleStatusConstants.Cleaning
+        };
+
+        return Ok(statusConstants);
+    }
+
+    /// <summary>
     /// Get all vehicles with optional filtering
     /// </summary>
     /// <param name="companyId">Filter by company ID</param>
-    /// <param name="categoryId">Filter by category ID</param>
     /// <param name="status">Filter by status</param>
     /// <param name="location">Filter by location</param>
     /// <param name="minPrice">Minimum daily rate</param>
@@ -93,6 +112,8 @@ public class VehiclesController : ControllerBase
     public async Task<IActionResult> GetVehicles(
         [FromQuery] Guid? companyId = null,
         [FromQuery] Guid? categoryId = null,
+        [FromQuery] string? make = null,
+        [FromQuery] string? model = null,
         [FromQuery] string? status = null,
         [FromQuery] string? location = null,
         [FromQuery] decimal? minPrice = null,
@@ -104,18 +125,14 @@ public class VehiclesController : ControllerBase
         {
             var query = _context.Vehicles
                 .Include(v => v.Company)
-                .Include(v => v.Category)
-                .Where(v => v.IsActive)
+                .Where(v => v.Status != VehicleStatus.OutOfService)
                 .AsQueryable();
 
             if (companyId.HasValue)
                 query = query.Where(v => v.CompanyId == companyId.Value);
 
-            if (categoryId.HasValue)
-                query = query.Where(v => v.CategoryId == categoryId.Value);
-
             if (!string.IsNullOrEmpty(status))
-                query = query.Where(v => v.Status == status);
+                query = query.Where(v => v.Status.ToString() == status);
 
             if (!string.IsNullOrEmpty(location))
                 query = query.Where(v => v.Location != null && v.Location.Contains(location));
@@ -126,19 +143,86 @@ public class VehiclesController : ControllerBase
             if (maxPrice.HasValue)
                 query = query.Where(v => v.DailyRate <= maxPrice.Value);
 
+            // Filter by make/model if provided
+            if (!string.IsNullOrEmpty(make))
+                query = query.Where(v => v.Make.ToUpper() == make.ToUpper());
+
+            if (!string.IsNullOrEmpty(model))
+                query = query.Where(v => v.Model.ToUpper() == model.ToUpper());
+
+            // Filter by categoryId through models table
+            if (categoryId.HasValue)
+            {
+                // Use a join to filter vehicles that match models with this category
+                // This approach can be translated to SQL by EF Core
+                query = query.Where(v => _context.Models
+                    .Any(m => m.CategoryId == categoryId.Value &&
+                             m.Make.ToUpper() == v.Make.ToUpper() &&
+                             m.ModelName.ToUpper() == v.Model.ToUpper() &&
+                             m.Year == v.Year));
+            }
+
             var totalCount = await query.CountAsync();
 
-            var vehicles = await query
+            var vehiclesList = await query
                 .OrderBy(v => v.DailyRate)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(v => new VehicleDto
+                .ToListAsync();
+
+            // Get all models needed for category and fuel type lookup
+            // Since we can't use client-side collections in LINQ, we'll query models separately
+            // and match in memory
+            List<Model> modelsDict;
+            
+            if (vehiclesList.Any())
+            {
+                // Get all unique make/model/year combinations from vehicles
+                var vehicleCombos = vehiclesList
+                    .Select(v => new { Make = v.Make.ToUpper(), Model = v.Model.ToUpper(), v.Year })
+                    .Distinct()
+                    .ToList();
+
+                // Fetch all models that might match (we'll filter in memory)
+                // This is more efficient than querying for each combination separately
+                var allMakeModelYears = vehicleCombos.Select(c => c.Year).Distinct().ToList();
+                var allMakes = vehicleCombos.Select(c => c.Make).Distinct().ToList();
+                var allModels = vehicleCombos.Select(c => c.Model).Distinct().ToList();
+                
+                var potentialModels = await _context.Models
+                    .Include(m => m.Category)
+                    .Where(m => allMakes.Contains(m.Make.ToUpper()) && 
+                               allModels.Contains(m.ModelName.ToUpper()) && 
+                               allMakeModelYears.Contains(m.Year))
+                    .ToListAsync();
+
+                // Filter modelsDict in memory to match vehicle combinations
+                modelsDict = potentialModels
+                    .Where(m => vehicleCombos.Any(v => 
+                        v.Make == m.Make.ToUpper() && 
+                        v.Model == m.ModelName.ToUpper() && 
+                        v.Year == m.Year))
+                    .ToList();
+            }
+            else
+            {
+                modelsDict = new List<Model>();
+            }
+
+            var vehicles = vehiclesList.Select(v =>
+            {
+                var matchingModel = modelsDict.FirstOrDefault(m => 
+                    m.Make.ToUpper() == v.Make.ToUpper() && 
+                    m.ModelName.ToUpper() == v.Model.ToUpper() && 
+                    m.Year == v.Year);
+
+                return new VehicleDto
                 {
-                    VehicleId = v.VehicleId,
+                    VehicleId = v.Id,
                     CompanyId = v.CompanyId,
                     CompanyName = v.Company.CompanyName,
-                    CategoryId = v.CategoryId,
-                    CategoryName = v.Category != null ? v.Category.CategoryName : null,
+                    CategoryId = matchingModel?.CategoryId,
+                    CategoryName = matchingModel?.Category?.CategoryName,
                     Make = v.Make,
                     Model = v.Model,
                     Year = v.Year,
@@ -146,20 +230,19 @@ public class VehiclesController : ControllerBase
                     LicensePlate = v.LicensePlate,
                     Vin = v.Vin,
                     Mileage = v.Mileage,
-                    FuelType = v.FuelType,
+                    FuelType = matchingModel?.FuelType,
                     Transmission = v.Transmission,
                     Seats = v.Seats,
                     DailyRate = v.DailyRate,
-                    Status = v.Status,
+                    Status = v.Status.ToString(),
                     State = v.State,
                     Location = v.Location,
                     ImageUrl = v.ImageUrl,
                     Features = v.Features,
-                    IsActive = v.IsActive,
                     CreatedAt = v.CreatedAt,
                     UpdatedAt = v.UpdatedAt
-                })
-                .ToListAsync();
+                };
+            }).ToList();
 
             return Ok(new
             {
@@ -192,19 +275,26 @@ public class VehiclesController : ControllerBase
         {
             var vehicle = await _context.Vehicles
                 .Include(v => v.Company)
-                .Include(v => v.Category)
-                .FirstOrDefaultAsync(v => v.VehicleId == id);
+                .FirstOrDefaultAsync(v => v.Id == id);
 
             if (vehicle == null)
                 return NotFound();
 
+            // Get category and fuel type from models table
+            var matchingModel = await _context.Models
+                .Include(m => m.Category)
+                .FirstOrDefaultAsync(m => 
+                    m.Make.ToUpper() == vehicle.Make.ToUpper() && 
+                    m.ModelName.ToUpper() == vehicle.Model.ToUpper() && 
+                    m.Year == vehicle.Year);
+
             var vehicleDto = new VehicleDto
             {
-                VehicleId = vehicle.VehicleId,
+                VehicleId = vehicle.Id,
                 CompanyId = vehicle.CompanyId,
                 CompanyName = vehicle.Company.CompanyName,
-                CategoryId = vehicle.CategoryId,
-                CategoryName = vehicle.Category?.CategoryName,
+                CategoryId = matchingModel?.CategoryId,
+                CategoryName = matchingModel?.Category?.CategoryName,
                 Make = vehicle.Make,
                 Model = vehicle.Model,
                 Year = vehicle.Year,
@@ -212,16 +302,15 @@ public class VehiclesController : ControllerBase
                 LicensePlate = vehicle.LicensePlate,
                 Vin = vehicle.Vin,
                 Mileage = vehicle.Mileage,
-                FuelType = vehicle.FuelType,
+                FuelType = matchingModel?.FuelType,
                 Transmission = vehicle.Transmission,
                 Seats = vehicle.Seats,
                 DailyRate = vehicle.DailyRate,
-                Status = vehicle.Status,
+                Status = vehicle.Status.ToString(),
                 State = vehicle.State,
                 Location = vehicle.Location,
                 ImageUrl = vehicle.ImageUrl,
                 Features = vehicle.Features,
-                IsActive = vehicle.IsActive,
                 CreatedAt = vehicle.CreatedAt,
                 UpdatedAt = vehicle.UpdatedAt
             };
@@ -262,17 +351,9 @@ public class VehiclesController : ControllerBase
                 return Forbid("You can only create vehicles for your own company");
 
             // Check if company exists
-            var company = await _context.RentalCompanies.FindAsync(createVehicleDto.CompanyId);
+            var company = await _context.Companies.FindAsync(createVehicleDto.CompanyId);
             if (company == null)
                 return BadRequest("Company not found");
-
-            // Check if category exists (if provided)
-            if (createVehicleDto.CategoryId.HasValue)
-            {
-                var category = await _context.VehicleCategories.FindAsync(createVehicleDto.CategoryId.Value);
-                if (category == null)
-                    return BadRequest("Vehicle category not found");
-            }
 
             // Check if license plate is unique
             var existingVehicle = await _context.Vehicles
@@ -283,7 +364,6 @@ public class VehiclesController : ControllerBase
             var vehicle = new Vehicle
             {
                 CompanyId = createVehicleDto.CompanyId,
-                CategoryId = createVehicleDto.CategoryId,
                 Make = createVehicleDto.Make,
                 Model = createVehicleDto.Model,
                 Year = createVehicleDto.Year,
@@ -291,16 +371,14 @@ public class VehiclesController : ControllerBase
                 LicensePlate = createVehicleDto.LicensePlate,
                 Vin = createVehicleDto.Vin,
                 Mileage = createVehicleDto.Mileage,
-                FuelType = createVehicleDto.FuelType,
                 Transmission = createVehicleDto.Transmission,
                 Seats = createVehicleDto.Seats,
                 DailyRate = createVehicleDto.DailyRate,
-                Status = createVehicleDto.Status,
+                Status = Enum.TryParse<VehicleStatus>(createVehicleDto.Status, out var statusEnum) ? statusEnum : VehicleStatus.Available,
                 State = createVehicleDto.State,
                 Location = createVehicleDto.Location,
                 ImageUrl = createVehicleDto.ImageUrl,
-                Features = createVehicleDto.Features,
-                IsActive = createVehicleDto.IsActive
+                Features = createVehicleDto.Features
             };
 
             _context.Vehicles.Add(vehicle);
@@ -310,17 +388,22 @@ public class VehiclesController : ControllerBase
             await _context.Entry(vehicle)
                 .Reference(v => v.Company)
                 .LoadAsync();
-            await _context.Entry(vehicle)
-                .Reference(v => v.Category)
-                .LoadAsync();
+
+            // Get category and fuel type from models table
+            var matchingModel = await _context.Models
+                .Include(m => m.Category)
+                .FirstOrDefaultAsync(m => 
+                    m.Make.ToUpper() == vehicle.Make.ToUpper() && 
+                    m.ModelName.ToUpper() == vehicle.Model.ToUpper() && 
+                    m.Year == vehicle.Year);
 
             var vehicleDto = new VehicleDto
             {
-                VehicleId = vehicle.VehicleId,
+                VehicleId = vehicle.Id,
                 CompanyId = vehicle.CompanyId,
                 CompanyName = vehicle.Company.CompanyName,
-                CategoryId = vehicle.CategoryId,
-                CategoryName = vehicle.Category?.CategoryName,
+                CategoryId = matchingModel?.CategoryId,
+                CategoryName = matchingModel?.Category?.CategoryName,
                 Make = vehicle.Make,
                 Model = vehicle.Model,
                 Year = vehicle.Year,
@@ -328,21 +411,20 @@ public class VehiclesController : ControllerBase
                 LicensePlate = vehicle.LicensePlate,
                 Vin = vehicle.Vin,
                 Mileage = vehicle.Mileage,
-                FuelType = vehicle.FuelType,
+                FuelType = matchingModel?.FuelType,
                 Transmission = vehicle.Transmission,
                 Seats = vehicle.Seats,
                 DailyRate = vehicle.DailyRate,
-                Status = vehicle.Status,
+                Status = vehicle.Status.ToString(),
                 State = vehicle.State,
                 Location = vehicle.Location,
                 ImageUrl = vehicle.ImageUrl,
                 Features = vehicle.Features,
-                IsActive = vehicle.IsActive,
                 CreatedAt = vehicle.CreatedAt,
                 UpdatedAt = vehicle.UpdatedAt
             };
 
-            return CreatedAtAction(nameof(GetVehicle), new { id = vehicle.VehicleId }, vehicleDto);
+            return CreatedAtAction(nameof(GetVehicle), new { id = vehicle.Id }, vehicleDto);
         }
         catch (Exception ex)
         {
@@ -380,22 +462,7 @@ public class VehiclesController : ControllerBase
             if (!CanEditCompanyVehicles(vehicle.CompanyId))
                 return Forbid("You can only update vehicles from your own company");
 
-            // Check if category is being changed and bulk update is requested
-            bool shouldBulkUpdateCategory = false;
-            Guid? newCategoryId = null;
-            if (updateVehicleDto.CategoryId.HasValue && 
-                updateVehicleDto.CategoryId.Value != vehicle.CategoryId &&
-                !string.IsNullOrEmpty(updateVehicleDto.Make) && 
-                !string.IsNullOrEmpty(updateVehicleDto.Model))
-            {
-                shouldBulkUpdateCategory = true;
-                newCategoryId = updateVehicleDto.CategoryId.Value;
-            }
-
             // Update properties if provided
-            if (updateVehicleDto.CategoryId.HasValue)
-                vehicle.CategoryId = updateVehicleDto.CategoryId.Value;
-
             if (updateVehicleDto.Year.HasValue)
                 vehicle.Year = updateVehicleDto.Year.Value;
 
@@ -408,9 +475,6 @@ public class VehiclesController : ControllerBase
             if (updateVehicleDto.Mileage.HasValue)
                 vehicle.Mileage = updateVehicleDto.Mileage.Value;
 
-            if (updateVehicleDto.FuelType != null)
-                vehicle.FuelType = updateVehicleDto.FuelType;
-
             if (updateVehicleDto.Transmission != null)
                 vehicle.Transmission = updateVehicleDto.Transmission;
 
@@ -421,7 +485,10 @@ public class VehiclesController : ControllerBase
                 vehicle.DailyRate = updateVehicleDto.DailyRate.Value;
 
             if (updateVehicleDto.Status != null)
-                vehicle.Status = updateVehicleDto.Status;
+            {
+                if (Enum.TryParse<VehicleStatus>(updateVehicleDto.Status, out var statusEnum))
+                    vehicle.Status = statusEnum;
+            }
 
             if (updateVehicleDto.Location != null)
                 vehicle.Location = updateVehicleDto.Location;
@@ -432,48 +499,33 @@ public class VehiclesController : ControllerBase
             if (updateVehicleDto.Features != null)
                 vehicle.Features = updateVehicleDto.Features;
 
-            if (updateVehicleDto.IsActive.HasValue)
-                vehicle.IsActive = updateVehicleDto.IsActive.Value;
+            // Note: IsActive has been replaced with Status field
+            // Use Status = OutOfService instead of IsActive = false
 
             vehicle.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
 
-            // If category changed and make/model provided, update all matching vehicles
-            if (shouldBulkUpdateCategory && newCategoryId.HasValue)
-            {
-                var matchingVehicles = await _context.Vehicles
-                    .Where(v => v.Make == vehicle.Make && v.Model == vehicle.Model && v.VehicleId != id)
-                    .ToListAsync();
-
-                foreach (var v in matchingVehicles)
-                {
-                    v.CategoryId = newCategoryId.Value;
-                    v.UpdatedAt = DateTime.UtcNow;
-                }
-
-                await _context.SaveChangesAsync();
-                
-                _logger.LogInformation(
-                    "Bulk updated category for {Count} vehicles with make '{Make}' and model '{Model}' to category {CategoryId}",
-                    matchingVehicles.Count, vehicle.Make, vehicle.Model, newCategoryId.Value);
-            }
-
             // Load related data for response
             await _context.Entry(vehicle)
                 .Reference(v => v.Company)
                 .LoadAsync();
-            await _context.Entry(vehicle)
-                .Reference(v => v.Category)
-                .LoadAsync();
+
+            // Get category and fuel type from models table
+            var matchingModel = await _context.Models
+                .Include(m => m.Category)
+                .FirstOrDefaultAsync(m => 
+                    m.Make.ToUpper() == vehicle.Make.ToUpper() && 
+                    m.ModelName.ToUpper() == vehicle.Model.ToUpper() && 
+                    m.Year == vehicle.Year);
 
             var vehicleDto = new VehicleDto
             {
-                VehicleId = vehicle.VehicleId,
+                VehicleId = vehicle.Id,
                 CompanyId = vehicle.CompanyId,
                 CompanyName = vehicle.Company.CompanyName,
-                CategoryId = vehicle.CategoryId,
-                CategoryName = vehicle.Category?.CategoryName,
+                CategoryId = matchingModel?.CategoryId,
+                CategoryName = matchingModel?.Category?.CategoryName,
                 Make = vehicle.Make,
                 Model = vehicle.Model,
                 Year = vehicle.Year,
@@ -481,16 +533,15 @@ public class VehiclesController : ControllerBase
                 LicensePlate = vehicle.LicensePlate,
                 Vin = vehicle.Vin,
                 Mileage = vehicle.Mileage,
-                FuelType = vehicle.FuelType,
+                FuelType = matchingModel?.FuelType,
                 Transmission = vehicle.Transmission,
                 Seats = vehicle.Seats,
                 DailyRate = vehicle.DailyRate,
-                Status = vehicle.Status,
+                Status = vehicle.Status.ToString(),
                 State = vehicle.State,
                 Location = vehicle.Location,
                 ImageUrl = vehicle.ImageUrl,
                 Features = vehicle.Features,
-                IsActive = vehicle.IsActive,
                 CreatedAt = vehicle.CreatedAt,
                 UpdatedAt = vehicle.UpdatedAt
             };
@@ -554,7 +605,7 @@ public class VehiclesController : ControllerBase
         try
         {
             var makes = await _context.Vehicles
-                .Where(v => v.IsActive && !string.IsNullOrEmpty(v.Make))
+                .Where(v => v.Status != VehicleStatus.OutOfService && !string.IsNullOrEmpty(v.Make))
                 .Select(v => v.Make)
                 .Distinct()
                 .OrderBy(m => m)
@@ -580,7 +631,7 @@ public class VehiclesController : ControllerBase
         try
         {
             var locations = await _context.Vehicles
-                .Where(v => v.IsActive && !string.IsNullOrEmpty(v.Location))
+                .Where(v => v.Status != VehicleStatus.OutOfService && !string.IsNullOrEmpty(v.Location))
                 .Select(v => v.Location!)
                 .Distinct()
                 .OrderBy(l => l)

@@ -20,7 +20,7 @@ namespace CarRental.Api.DTOs;
 public class RentalDto
 {
     public Guid RentalId { get; set; }
-    public Guid ReservationId { get; set; }
+    public Guid BookingId { get; set; }
     public Guid CustomerId { get; set; }
     public Guid VehicleId { get; set; }
     public Guid CompanyId { get; set; }
@@ -63,7 +63,7 @@ public class RentalDto
 public class CreateRentalDto
 {
     [Required]
-    public Guid ReservationId { get; set; }
+    public Guid BookingId { get; set; }
     
     [Required]
     public DateTime ActualPickupDate { get; set; }

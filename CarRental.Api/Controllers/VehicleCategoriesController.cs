@@ -46,7 +46,7 @@ public class VehicleCategoriesController : ControllerBase
             var categories = await _context.VehicleCategories
                 .Select(c => new
                 {
-                    c.CategoryId,
+                    c.Id,
                     c.CategoryName,
                     c.Description,
                     c.CreatedAt

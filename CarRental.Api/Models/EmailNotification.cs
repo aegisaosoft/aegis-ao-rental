@@ -22,8 +22,8 @@ namespace CarRental.Api.Models;
 public class EmailNotification
 {
     [Key]
-    [Column("notification_id")]
-    public Guid NotificationId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Column("booking_token_id")]
     public Guid? BookingTokenId { get; set; }

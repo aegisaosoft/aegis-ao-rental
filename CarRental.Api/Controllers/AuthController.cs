@@ -76,14 +76,14 @@ public class AuthController : ControllerBase
         await _context.SaveChangesAsync();
 
         // Generate JWT token
-        var token = _jwtService.GenerateToken(customer.CustomerId.ToString(), "user");
+        var token = _jwtService.GenerateToken(customer.Id.ToString(), "user");
 
         return CreatedAtAction(nameof(Register), new
         {
             token,
             user = new
             {
-                customerId = customer.CustomerId,
+                customerId = customer.Id,
                 email = customer.Email,
                 firstName = customer.FirstName,
                 lastName = customer.LastName,
@@ -116,7 +116,7 @@ public class AuthController : ControllerBase
 
         // Generate JWT token with customer role and company information
         var token = _jwtService.GenerateToken(
-            customer.CustomerId.ToString(), 
+            customer.Id.ToString(), 
             customer.Role, 
             customer.CompanyId?.ToString(), 
             customer.Company?.CompanyName
@@ -125,7 +125,7 @@ public class AuthController : ControllerBase
         // Store customer session information
         var session = new CustomerSession
         {
-            CustomerId = customer.CustomerId.ToString(),
+            CustomerId = customer.Id.ToString(),
             Email = customer.Email,
             FirstName = customer.FirstName,
             LastName = customer.LastName,
@@ -143,7 +143,7 @@ public class AuthController : ControllerBase
             token,
             user = new
             {
-                customerId = customer.CustomerId,
+                customerId = customer.Id,
                 email = customer.Email,
                 firstName = customer.FirstName,
                 lastName = customer.LastName,
@@ -177,7 +177,7 @@ public class AuthController : ControllerBase
         // Get customer profile (works for all roles: customer, worker, admin, mainadmin)
         var customer = await _context.Customers
             .Include(c => c.Company)
-            .FirstOrDefaultAsync(c => c.CustomerId == customerId);
+            .FirstOrDefaultAsync(c => c.Id == customerId);
 
         if (customer == null)
         {
@@ -186,15 +186,12 @@ public class AuthController : ControllerBase
 
         var customerDto = new CustomerDto
         {
-            CustomerId = customer.CustomerId,
+            CustomerId = customer.Id,
             Email = customer.Email,
             FirstName = customer.FirstName,
             LastName = customer.LastName,
             Phone = customer.Phone,
             DateOfBirth = customer.DateOfBirth,
-            DriversLicenseNumber = customer.DriversLicenseNumber,
-            DriversLicenseState = customer.DriversLicenseState,
-            DriversLicenseExpiry = customer.DriversLicenseExpiry,
             Address = customer.Address,
             City = customer.City,
             State = customer.State,
@@ -202,6 +199,7 @@ public class AuthController : ControllerBase
             PostalCode = customer.PostalCode,
             StripeCustomerId = customer.StripeCustomerId,
             IsVerified = customer.IsVerified,
+            CustomerType = customer.CustomerType.ToString(),
             CreatedAt = customer.CreatedAt,
             UpdatedAt = customer.UpdatedAt,
             Role = customer.Role,
@@ -261,15 +259,12 @@ public class AuthController : ControllerBase
 
             var customerDto = new CustomerDto
             {
-                CustomerId = customer.CustomerId,
+                CustomerId = customer.Id,
                 Email = customer.Email,
                 FirstName = customer.FirstName,
                 LastName = customer.LastName,
                 Phone = customer.Phone,
                 DateOfBirth = customer.DateOfBirth,
-                DriversLicenseNumber = customer.DriversLicenseNumber,
-                DriversLicenseState = customer.DriversLicenseState,
-                DriversLicenseExpiry = customer.DriversLicenseExpiry,
                 Address = customer.Address,
                 City = customer.City,
                 State = customer.State,
@@ -277,6 +272,7 @@ public class AuthController : ControllerBase
                 PostalCode = customer.PostalCode,
                 StripeCustomerId = customer.StripeCustomerId,
                 IsVerified = customer.IsVerified,
+            CustomerType = customer.CustomerType.ToString(),
                 CreatedAt = customer.CreatedAt,
                 UpdatedAt = customer.UpdatedAt,
                 Role = customer.Role,

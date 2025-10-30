@@ -74,8 +74,8 @@ public class StripeService : IStripeService
                 },
                 Metadata = new Dictionary<string, string>
                 {
-                    { "customer_id", customer.CustomerId.ToString() },
-                    { "drivers_license", customer.DriversLicenseNumber ?? "" }
+                    { "customer_id", customer.Id.ToString() },
+                    { "drivers_license", "" }
                 }
             };
 
@@ -117,8 +117,8 @@ public class StripeService : IStripeService
                 },
                 Metadata = new Dictionary<string, string>
                 {
-                    { "customer_id", customer.CustomerId.ToString() },
-                    { "drivers_license", customer.DriversLicenseNumber ?? "" }
+                    { "customer_id", customer.Id.ToString() },
+                    { "drivers_license", "" }
                 }
             };
 

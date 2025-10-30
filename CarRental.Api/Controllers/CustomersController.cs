@@ -41,6 +41,23 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
+    /// Get customer type constants
+    /// </summary>
+    /// <returns>List of available customer type values</returns>
+    [HttpGet("type-constants")]
+    [ProducesResponseType(typeof(object), 200)]
+    public IActionResult GetCustomerTypeConstants()
+    {
+        var typeConstants = new
+        {
+            Individual = CustomerTypeConstants.Individual,
+            Corporate = CustomerTypeConstants.Corporate
+        };
+
+        return Ok(typeConstants);
+    }
+
+    /// <summary>
     /// Get all customers with optional filtering
     /// </summary>
     [HttpGet]
@@ -78,15 +95,12 @@ public class CustomersController : ControllerBase
             .Take(pageSize)
             .Select(c => new CustomerDto
             {
-                CustomerId = c.CustomerId,
+                CustomerId = c.Id,
                 Email = c.Email,
                 FirstName = c.FirstName,
                 LastName = c.LastName,
                 Phone = c.Phone,
                 DateOfBirth = c.DateOfBirth,
-                DriversLicenseNumber = c.DriversLicenseNumber,
-                DriversLicenseState = c.DriversLicenseState,
-                DriversLicenseExpiry = c.DriversLicenseExpiry,
                 Address = c.Address,
                 City = c.City,
                 State = c.State,
@@ -94,6 +108,7 @@ public class CustomersController : ControllerBase
                 PostalCode = c.PostalCode,
                 StripeCustomerId = c.StripeCustomerId,
                 IsVerified = c.IsVerified,
+                CustomerType = c.CustomerType.ToString(),
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
             })
@@ -115,15 +130,12 @@ public class CustomersController : ControllerBase
 
         var customerDto = new CustomerDto
         {
-            CustomerId = customer.CustomerId,
+            CustomerId = customer.Id,
             Email = customer.Email,
             FirstName = customer.FirstName,
             LastName = customer.LastName,
             Phone = customer.Phone,
             DateOfBirth = customer.DateOfBirth,
-            DriversLicenseNumber = customer.DriversLicenseNumber,
-            DriversLicenseState = customer.DriversLicenseState,
-            DriversLicenseExpiry = customer.DriversLicenseExpiry,
             Address = customer.Address,
             City = customer.City,
             State = customer.State,
@@ -152,15 +164,12 @@ public class CustomersController : ControllerBase
 
         var customerDto = new CustomerDto
         {
-            CustomerId = customer.CustomerId,
+            CustomerId = customer.Id,
             Email = customer.Email,
             FirstName = customer.FirstName,
             LastName = customer.LastName,
             Phone = customer.Phone,
             DateOfBirth = customer.DateOfBirth,
-            DriversLicenseNumber = customer.DriversLicenseNumber,
-            DriversLicenseState = customer.DriversLicenseState,
-            DriversLicenseExpiry = customer.DriversLicenseExpiry,
             Address = customer.Address,
             City = customer.City,
             State = customer.State,
@@ -195,14 +204,12 @@ public class CustomersController : ControllerBase
             LastName = createCustomerDto.LastName,
             Phone = createCustomerDto.Phone,
             DateOfBirth = createCustomerDto.DateOfBirth,
-            DriversLicenseNumber = createCustomerDto.DriversLicenseNumber,
-            DriversLicenseState = createCustomerDto.DriversLicenseState,
-            DriversLicenseExpiry = createCustomerDto.DriversLicenseExpiry,
             Address = createCustomerDto.Address,
             City = createCustomerDto.City,
             State = createCustomerDto.State,
             Country = createCustomerDto.Country,
-            PostalCode = createCustomerDto.PostalCode
+            PostalCode = createCustomerDto.PostalCode,
+            CustomerType = Enum.TryParse<CustomerType>(createCustomerDto.CustomerType ?? "Individual", out var customerType) ? customerType : CustomerType.Individual
         };
 
         try
@@ -225,15 +232,12 @@ public class CustomersController : ControllerBase
 
             var customerDto = new CustomerDto
             {
-                CustomerId = customer.CustomerId,
+                CustomerId = customer.Id,
                 Email = customer.Email,
                 FirstName = customer.FirstName,
                 LastName = customer.LastName,
                 Phone = customer.Phone,
                 DateOfBirth = customer.DateOfBirth,
-                DriversLicenseNumber = customer.DriversLicenseNumber,
-                DriversLicenseState = customer.DriversLicenseState,
-                DriversLicenseExpiry = customer.DriversLicenseExpiry,
                 Address = customer.Address,
                 City = customer.City,
                 State = customer.State,
@@ -245,7 +249,7 @@ public class CustomersController : ControllerBase
                 UpdatedAt = customer.UpdatedAt
             };
 
-            return CreatedAtAction(nameof(GetCustomer), new { id = customer.CustomerId }, customerDto);
+            return CreatedAtAction(nameof(GetCustomer), new { id = customer.Id }, customerDto);
         }
         catch (Exception ex)
         {
@@ -269,7 +273,7 @@ public class CustomersController : ControllerBase
         if (!string.IsNullOrEmpty(updateCustomerDto.Email) && updateCustomerDto.Email != customer.Email)
         {
             var existingCustomer = await _context.Customers
-                .FirstOrDefaultAsync(c => c.Email == updateCustomerDto.Email && c.CustomerId != id);
+                .FirstOrDefaultAsync(c => c.Email == updateCustomerDto.Email && c.Id != id);
 
             if (existingCustomer != null)
                 return Conflict("Customer with this email already exists");
@@ -291,14 +295,7 @@ public class CustomersController : ControllerBase
         if (updateCustomerDto.DateOfBirth.HasValue)
             customer.DateOfBirth = updateCustomerDto.DateOfBirth;
 
-        if (updateCustomerDto.DriversLicenseNumber != null)
-            customer.DriversLicenseNumber = updateCustomerDto.DriversLicenseNumber;
-
-        if (updateCustomerDto.DriversLicenseState != null)
-            customer.DriversLicenseState = updateCustomerDto.DriversLicenseState;
-
-        if (updateCustomerDto.DriversLicenseExpiry.HasValue)
-            customer.DriversLicenseExpiry = updateCustomerDto.DriversLicenseExpiry;
+        // Note: Drivers license fields have been removed
 
         if (updateCustomerDto.Address != null)
             customer.Address = updateCustomerDto.Address;
@@ -314,6 +311,12 @@ public class CustomersController : ControllerBase
 
         if (updateCustomerDto.PostalCode != null)
             customer.PostalCode = updateCustomerDto.PostalCode;
+
+        if (updateCustomerDto.CustomerType != null)
+        {
+            if (Enum.TryParse<CustomerType>(updateCustomerDto.CustomerType, out var customerType))
+                customer.CustomerType = customerType;
+        }
 
         customer.UpdatedAt = DateTime.UtcNow;
 
@@ -357,7 +360,7 @@ public class CustomersController : ControllerBase
 
         // Check if customer has active reservations or rentals
         var hasActiveReservations = await _context.Reservations
-            .AnyAsync(r => r.CustomerId == id && r.Status == "confirmed");
+            .AnyAsync(r => r.CustomerId == id && r.Status == "Confirmed");
 
         var hasActiveRentals = await _context.Rentals
             .AnyAsync(r => r.CustomerId == id && r.Status == "active");

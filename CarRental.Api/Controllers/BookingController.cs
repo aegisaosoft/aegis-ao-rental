@@ -54,19 +54,18 @@ public class BookingController : ControllerBase
         try
         {
             // Validate company and vehicle exist
-            var company = await _context.RentalCompanies.FindAsync(createDto.CompanyId);
+            var company = await _context.Companies.FindAsync(createDto.CompanyId);
             if (company == null)
                 return NotFound("Company not found");
 
             var vehicle = await _context.Vehicles
                 .Include(v => v.Company)
-                .Include(v => v.Category)
-                .FirstOrDefaultAsync(v => v.VehicleId == createDto.VehicleId && v.CompanyId == createDto.CompanyId);
+                .FirstOrDefaultAsync(v => v.Id == createDto.VehicleId && v.CompanyId == createDto.CompanyId);
 
             if (vehicle == null)
                 return NotFound("Vehicle not found or not available");
 
-            if (!vehicle.IsActive || vehicle.Status != "available")
+            if (vehicle.Status != VehicleStatus.Available)
                 return BadRequest("Vehicle is not available for booking");
 
             // Fetch location details for pickup and return locations
@@ -177,7 +176,7 @@ public class BookingController : ControllerBase
 
             var bookingTokenDto = new BookingTokenDto
             {
-                TokenId = bookingToken.TokenId,
+                TokenId = bookingToken.Id,
                 CompanyId = bookingToken.CompanyId,
                 CustomerEmail = bookingToken.CustomerEmail,
                 VehicleId = bookingToken.VehicleId,
@@ -276,7 +275,7 @@ public class BookingController : ControllerBase
 
         var bookingTokenDto = new BookingTokenDto
         {
-            TokenId = bookingToken.TokenId,
+            TokenId = bookingToken.Id,
             CompanyId = bookingToken.CompanyId,
             CustomerEmail = bookingToken.CustomerEmail,
             VehicleId = bookingToken.VehicleId,
@@ -412,13 +411,13 @@ public class BookingController : ControllerBase
                 return BadRequest("Payment failed");
 
             // Create reservation
-            var reservationNumber = $"RES-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
+            var bookingNumber = $"BK-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
             var reservation = new Reservation
             {
-                CustomerId = customer.CustomerId,
+                CustomerId = customer.Id,
                 VehicleId = bookingToken.VehicleId,
                 CompanyId = bookingToken.CompanyId,
-                ReservationNumber = reservationNumber,
+                BookingNumber = bookingNumber,
                 PickupDate = bookingToken.BookingData.PickupDate,
                 ReturnDate = bookingToken.BookingData.ReturnDate,
                 PickupLocation = bookingToken.BookingData.PickupLocation,
@@ -430,7 +429,7 @@ public class BookingController : ControllerBase
                 InsuranceAmount = bookingToken.BookingData.InsuranceAmount,
                 AdditionalFees = bookingToken.BookingData.AdditionalFees,
                 TotalAmount = bookingToken.BookingData.TotalAmount,
-                Status = "confirmed",
+                Status = "Confirmed",
                 Notes = processDto.CustomerNotes
             };
 
@@ -440,9 +439,9 @@ public class BookingController : ControllerBase
             // Create payment record
             var payment = new Payment
             {
-                CustomerId = customer.CustomerId,
+                CustomerId = customer.Id,
                 CompanyId = bookingToken.CompanyId,
-                ReservationId = reservation.ReservationId,
+                ReservationId = reservation.Id,
                 Amount = bookingToken.BookingData.TotalAmount,
                 Currency = "USD",
                 PaymentType = "full_payment",
@@ -459,8 +458,8 @@ public class BookingController : ControllerBase
             var confirmationNumber = $"CONF-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
             var bookingConfirmation = new BookingConfirmation
             {
-                BookingTokenId = bookingToken.TokenId,
-                ReservationId = reservation.ReservationId,
+                BookingTokenId = bookingToken.Id,
+                ReservationId = reservation.Id,
                 CustomerEmail = bookingToken.CustomerEmail,
                 ConfirmationNumber = confirmationNumber,
                 BookingDetails = bookingToken.BookingData,
@@ -476,7 +475,7 @@ public class BookingController : ControllerBase
             bookingToken.UsedAt = DateTime.UtcNow;
 
             // Update vehicle status if needed
-            bookingToken.Vehicle.Status = "reserved";
+            bookingToken.Vehicle.Status = VehicleStatus.Rented;
 
             await _context.SaveChangesAsync();
 
@@ -507,7 +506,7 @@ public class BookingController : ControllerBase
 
             var confirmationDto = new BookingConfirmationDto
             {
-                ConfirmationId = bookingConfirmation.ConfirmationId,
+                ConfirmationId = bookingConfirmation.Id,
                 BookingTokenId = bookingConfirmation.BookingTokenId,
                 ReservationId = bookingConfirmation.ReservationId,
                 CustomerEmail = bookingConfirmation.CustomerEmail,
@@ -598,7 +597,7 @@ public class BookingController : ControllerBase
 
         var confirmationDto = new BookingConfirmationDto
         {
-            ConfirmationId = confirmation.ConfirmationId,
+            ConfirmationId = confirmation.Id,
             BookingTokenId = confirmation.BookingTokenId,
             ReservationId = confirmation.ReservationId,
             CustomerEmail = confirmation.CustomerEmail,

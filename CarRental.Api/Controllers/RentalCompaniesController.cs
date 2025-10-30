@@ -50,7 +50,7 @@ public class RentalCompaniesController : ControllerBase
         int page = 1,
         int pageSize = 20)
     {
-        var query = _context.RentalCompanies.AsQueryable();
+        var query = _context.Companies.AsQueryable();
 
         if (!string.IsNullOrEmpty(search))
         {
@@ -68,7 +68,7 @@ public class RentalCompaniesController : ControllerBase
             .Take(pageSize)
             .Select(c => new RentalCompanyDto
             {
-                CompanyId = c.CompanyId,
+                CompanyId = c.Id,
                 CompanyName = c.CompanyName,
                 Email = c.Email,
                 Website = c.Website,
@@ -106,14 +106,14 @@ public class RentalCompaniesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<RentalCompanyDto>> GetRentalCompany(Guid id)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
 
         if (company == null)
             return NotFound();
 
         var companyDto = new RentalCompanyDto
         {
-            CompanyId = company.CompanyId,
+            CompanyId = company.Id,
             CompanyName = company.CompanyName,
             Email = company.Email,
             Website = company.Website,
@@ -150,7 +150,7 @@ public class RentalCompaniesController : ControllerBase
     [HttpGet("email/{email}")]
     public async Task<ActionResult<RentalCompanyDto>> GetRentalCompanyByEmail(string email)
     {
-        var company = await _context.RentalCompanies
+        var company = await _context.Companies
             .FirstOrDefaultAsync(c => c.Email == email);
 
         if (company == null)
@@ -158,7 +158,7 @@ public class RentalCompaniesController : ControllerBase
 
         var companyDto = new RentalCompanyDto
         {
-            CompanyId = company.CompanyId,
+            CompanyId = company.Id,
             CompanyName = company.CompanyName,
             Email = company.Email,
             Website = company.Website,
@@ -196,7 +196,7 @@ public class RentalCompaniesController : ControllerBase
     public async Task<ActionResult<RentalCompanyDto>> CreateRentalCompany(CreateRentalCompanyDto createCompanyDto)
     {
         // Check if company with email already exists
-        var existingCompany = await _context.RentalCompanies
+        var existingCompany = await _context.Companies
             .FirstOrDefaultAsync(c => c.Email == createCompanyDto.Email);
 
         if (existingCompany != null)
@@ -230,7 +230,7 @@ public class RentalCompaniesController : ControllerBase
 
         try
         {
-            _context.RentalCompanies.Add(company);
+            _context.Companies.Add(company);
             await _context.SaveChangesAsync();
 
             // Create Stripe Connect account
@@ -241,7 +241,7 @@ public class RentalCompaniesController : ControllerBase
                     "US"); // Default to US, country can be specified per location
                 
                 company.StripeAccountId = stripeAccount.Id;
-                _context.RentalCompanies.Update(company);
+                _context.Companies.Update(company);
                 await _context.SaveChangesAsync();
             }
             catch (Exception ex)
@@ -252,7 +252,7 @@ public class RentalCompaniesController : ControllerBase
 
             var companyDto = new RentalCompanyDto
             {
-                CompanyId = company.CompanyId,
+                CompanyId = company.Id,
                 CompanyName = company.CompanyName,
                 Email = company.Email,
                 Website = company.Website,
@@ -280,7 +280,7 @@ public class RentalCompaniesController : ControllerBase
                 UpdatedAt = company.UpdatedAt
             };
 
-            return CreatedAtAction(nameof(GetRentalCompany), new { id = company.CompanyId }, companyDto);
+            return CreatedAtAction(nameof(GetRentalCompany), new { id = company.Id }, companyDto);
         }
         catch (Exception ex)
         {
@@ -295,7 +295,7 @@ public class RentalCompaniesController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateRentalCompany(Guid id, UpdateRentalCompanyDto updateCompanyDto)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
 
         if (company == null)
             return NotFound();
@@ -303,8 +303,8 @@ public class RentalCompaniesController : ControllerBase
         // Check if email is being changed and if it already exists
         if (!string.IsNullOrEmpty(updateCompanyDto.Email) && updateCompanyDto.Email != company.Email)
         {
-            var existingCompany = await _context.RentalCompanies
-                .FirstOrDefaultAsync(c => c.Email == updateCompanyDto.Email && c.CompanyId != id);
+            var existingCompany = await _context.Companies
+                .FirstOrDefaultAsync(c => c.Email == updateCompanyDto.Email && c.Id != id);
 
             if (existingCompany != null)
                 return Conflict("Company with this email already exists");
@@ -381,7 +381,7 @@ public class RentalCompaniesController : ControllerBase
 
         try
         {
-            _context.RentalCompanies.Update(company);
+            _context.Companies.Update(company);
             await _context.SaveChangesAsync();
 
             // Update Stripe Connect account if exists
@@ -413,17 +413,17 @@ public class RentalCompaniesController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteRentalCompany(Guid id)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
 
         if (company == null)
             return NotFound();
 
         // Check if company has active vehicles, reservations, or rentals
         var hasActiveVehicles = await _context.Vehicles
-            .AnyAsync(v => v.CompanyId == id && v.IsActive);
+            .AnyAsync(v => v.CompanyId == id && v.Status != VehicleStatus.OutOfService);
 
         var hasActiveReservations = await _context.Reservations
-            .AnyAsync(r => r.CompanyId == id && r.Status == "confirmed");
+            .AnyAsync(r => r.CompanyId == id && r.Status == "Confirmed");
 
         var hasActiveRentals = await _context.Rentals
             .AnyAsync(r => r.CompanyId == id && r.Status == "active");
@@ -433,7 +433,7 @@ public class RentalCompaniesController : ControllerBase
 
         try
         {
-            _context.RentalCompanies.Remove(company);
+            _context.Companies.Remove(company);
             await _context.SaveChangesAsync();
             return NoContent();
         }
@@ -450,7 +450,7 @@ public class RentalCompaniesController : ControllerBase
     [HttpPost("{id}/toggle-status")]
     public async Task<IActionResult> ToggleCompanyStatus(Guid id)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
 
         if (company == null)
             return NotFound();
@@ -460,7 +460,7 @@ public class RentalCompaniesController : ControllerBase
 
         try
         {
-            _context.RentalCompanies.Update(company);
+            _context.Companies.Update(company);
             await _context.SaveChangesAsync();
             return Ok(new { IsActive = company.IsActive });
         }
@@ -477,7 +477,7 @@ public class RentalCompaniesController : ControllerBase
     [HttpGet("{id}/stats")]
     public async Task<ActionResult<object>> GetCompanyStats(Guid id)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
 
         if (company == null)
             return NotFound();
@@ -485,9 +485,9 @@ public class RentalCompaniesController : ControllerBase
         var stats = new
         {
             TotalVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == id),
-            ActiveVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == id && v.IsActive && v.Status == "available"),
+            ActiveVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == id && v.Status == VehicleStatus.Available),
             TotalReservations = await _context.Reservations.CountAsync(r => r.CompanyId == id),
-            ActiveReservations = await _context.Reservations.CountAsync(r => r.CompanyId == id && r.Status == "confirmed"),
+            ActiveReservations = await _context.Reservations.CountAsync(r => r.CompanyId == id && r.Status == "Confirmed"),
             TotalRentals = await _context.Rentals.CountAsync(r => r.CompanyId == id),
             ActiveRentals = await _context.Rentals.CountAsync(r => r.CompanyId == id && r.Status == "active"),
             TotalRevenue = await _context.Payments.Where(p => p.CompanyId == id && p.Status == "succeeded")
@@ -511,30 +511,45 @@ public class RentalCompaniesController : ControllerBase
     public async Task<ActionResult<IEnumerable<VehicleDto>>> GetCompanyVehicles(
         Guid id,
         string? status = null,
-        Guid? categoryId = null,
         int page = 1,
         int pageSize = 20)
     {
         var query = _context.Vehicles
-            .Include(v => v.Category)
             .Where(v => v.CompanyId == id);
 
         if (!string.IsNullOrEmpty(status))
-            query = query.Where(v => v.Status == status);
+            query = query.Where(v => v.Status.ToString() == status);
 
-        if (categoryId.HasValue)
-            query = query.Where(v => v.CategoryId == categoryId);
-
-        var vehicles = await query
+        var vehiclesList = await query
             .OrderBy(v => v.Make)
             .ThenBy(v => v.Model)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(v => new VehicleDto
+            .ToListAsync();
+
+        // Get all models needed for category and fuel type lookup
+        var vehiclesMakeModelYear = vehiclesList.Select(v => new { v.Make, v.Model, v.Year }).Distinct().ToList();
+        var modelsDict = await _context.Models
+            .Include(m => m.Category)
+            .Where(m => vehiclesMakeModelYear.Any(v => 
+                v.Make.ToUpper() == m.Make.ToUpper() && 
+                v.Model.ToUpper() == m.ModelName.ToUpper() && 
+                v.Year == m.Year))
+            .ToListAsync();
+
+        var vehicles = vehiclesList.Select(v =>
+        {
+            var matchingModel = modelsDict.FirstOrDefault(m => 
+                m.Make.ToUpper() == v.Make.ToUpper() && 
+                m.ModelName.ToUpper() == v.Model.ToUpper() && 
+                m.Year == v.Year);
+
+            return new VehicleDto
             {
-                VehicleId = v.VehicleId,
+                VehicleId = v.Id,
                 CompanyId = v.CompanyId,
-                CategoryId = v.CategoryId,
+                CategoryId = matchingModel?.CategoryId,
+                CategoryName = matchingModel?.Category?.CategoryName,
                 Make = v.Make,
                 Model = v.Model,
                 Year = v.Year,
@@ -542,20 +557,18 @@ public class RentalCompaniesController : ControllerBase
                 LicensePlate = v.LicensePlate,
                 Vin = v.Vin,
                 Mileage = v.Mileage,
-                FuelType = v.FuelType,
+                FuelType = matchingModel?.FuelType,
                 Transmission = v.Transmission,
                 Seats = v.Seats,
                 DailyRate = v.DailyRate,
-                Status = v.Status,
+                Status = v.Status.ToString(),
                 Location = v.Location,
                 ImageUrl = v.ImageUrl,
                 Features = v.Features,
-                IsActive = v.IsActive,
                 CreatedAt = v.CreatedAt,
-                UpdatedAt = v.UpdatedAt,
-                CategoryName = v.Category != null ? v.Category.CategoryName : null
-            })
-            .ToListAsync();
+                UpdatedAt = v.UpdatedAt
+            };
+        }).ToList();
 
         return Ok(vehicles);
     }
@@ -572,7 +585,7 @@ public class RentalCompaniesController : ControllerBase
         int page = 1,
         int pageSize = 20)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
         if (company == null)
             return NotFound();
 
@@ -596,11 +609,11 @@ public class RentalCompaniesController : ControllerBase
             .Take(pageSize)
             .Select(r => new ReservationDto
             {
-                ReservationId = r.ReservationId,
+                Id = r.Id,
                 CustomerId = r.CustomerId,
                 VehicleId = r.VehicleId,
                 CompanyId = r.CompanyId,
-                ReservationNumber = r.ReservationNumber,
+                BookingNumber = r.BookingNumber,
                 PickupDate = r.PickupDate,
                 ReturnDate = r.ReturnDate,
                 PickupLocation = r.PickupLocation,
@@ -636,7 +649,7 @@ public class RentalCompaniesController : ControllerBase
         DateTime? fromDate = null,
         DateTime? toDate = null)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
         if (company == null)
             return NotFound();
 
@@ -688,7 +701,7 @@ public class RentalCompaniesController : ControllerBase
     [HttpPost("{id}/stripe/setup")]
     public async Task<ActionResult<object>> SetupStripeAccount(Guid id)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
         if (company == null)
             return NotFound();
 
@@ -702,7 +715,7 @@ public class RentalCompaniesController : ControllerBase
                 "US"); // Default to US - country information now stored in locations
 
             company.StripeAccountId = stripeAccount.Id;
-            _context.RentalCompanies.Update(company);
+            _context.Companies.Update(company);
             await _context.SaveChangesAsync();
 
             return Ok(new
@@ -725,7 +738,7 @@ public class RentalCompaniesController : ControllerBase
     [HttpGet("{id}/stripe/status")]
     public async Task<ActionResult<object>> GetStripeAccountStatus(Guid id)
     {
-        var company = await _context.RentalCompanies.FindAsync(id);
+        var company = await _context.Companies.FindAsync(id);
         if (company == null)
             return NotFound();
 

@@ -18,12 +18,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CarRental.Api.Models;
 
-[Table("rental_companies")]
+[Table("companies")]
 public class RentalCompany
 {
     [Key]
-    [Column("company_id")]
-    public Guid CompanyId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [MaxLength(255)]

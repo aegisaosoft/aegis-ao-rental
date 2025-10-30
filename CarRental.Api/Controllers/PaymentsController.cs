@@ -85,7 +85,7 @@ public class PaymentsController : ControllerBase
             .Take(pageSize)
             .Select(p => new PaymentDto
             {
-                PaymentId = p.PaymentId,
+                PaymentId = p.Id,
                 ReservationId = p.ReservationId,
                 RentalId = p.RentalId,
                 CustomerId = p.CustomerId,
@@ -119,14 +119,14 @@ public class PaymentsController : ControllerBase
             .Include(p => p.Customer)
             .Include(p => p.Company)
             .Include(p => p.Reservation)
-            .FirstOrDefaultAsync(p => p.PaymentId == id);
+            .FirstOrDefaultAsync(p => p.Id == id);
 
         if (payment == null)
             return NotFound();
 
         var paymentDto = new PaymentDto
         {
-            PaymentId = payment.PaymentId,
+            PaymentId = payment.Id,
             ReservationId = payment.ReservationId,
             RentalId = payment.RentalId,
             CustomerId = payment.CustomerId,
@@ -159,7 +159,7 @@ public class PaymentsController : ControllerBase
         if (customer == null)
             return BadRequest("Customer not found");
 
-        var company = await _context.RentalCompanies.FindAsync(createPaymentDto.CompanyId);
+        var company = await _context.Companies.FindAsync(createPaymentDto.CompanyId);
         if (company == null)
             return BadRequest("Company not found");
 
@@ -182,7 +182,7 @@ public class PaymentsController : ControllerBase
 
         var paymentDto = new PaymentDto
         {
-            PaymentId = payment.PaymentId,
+            PaymentId = payment.Id,
             ReservationId = payment.ReservationId,
             RentalId = payment.RentalId,
             CustomerId = payment.CustomerId,
@@ -202,7 +202,7 @@ public class PaymentsController : ControllerBase
             CompanyName = company.CompanyName
         };
 
-        return CreatedAtAction(nameof(GetPayment), new { id = payment.PaymentId }, paymentDto);
+        return CreatedAtAction(nameof(GetPayment), new { id = payment.Id }, paymentDto);
     }
 
     /// <summary>
@@ -251,7 +251,7 @@ public class PaymentsController : ControllerBase
 
             return Ok(new
             {
-                PaymentId = payment.PaymentId,
+                PaymentId = payment.Id,
                 PaymentIntentId = paymentIntent.Id,
                 ClientSecret = paymentIntent.ClientSecret,
                 Status = paymentIntent.Status,
@@ -380,7 +380,7 @@ public class PaymentsController : ControllerBase
                 RefundId = refund.Id,
                 Amount = refund.Amount,
                 Status = refund.Status,
-                PaymentId = refundPayment.PaymentId
+                PaymentId = refundPayment.Id
             });
         }
         catch (Exception ex)
@@ -400,7 +400,7 @@ public class PaymentsController : ControllerBase
             .Where(pm => pm.CustomerId == customerId)
             .Select(pm => new PaymentMethodDto
             {
-                PaymentMethodId = pm.PaymentMethodId,
+                PaymentMethodId = pm.Id,
                 CustomerId = pm.CustomerId,
                 StripePaymentMethodId = pm.StripePaymentMethodId,
                 CardBrand = pm.CardBrand,
@@ -472,7 +472,7 @@ public class PaymentsController : ControllerBase
 
             var paymentMethodDto = new PaymentMethodDto
             {
-                PaymentMethodId = customerPaymentMethod.PaymentMethodId,
+                PaymentMethodId = customerPaymentMethod.Id,
                 CustomerId = customerPaymentMethod.CustomerId,
                 StripePaymentMethodId = customerPaymentMethod.StripePaymentMethodId,
                 CardBrand = customerPaymentMethod.CardBrand,

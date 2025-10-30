@@ -22,8 +22,8 @@ namespace CarRental.Api.Models;
 public class Review
 {
     [Key]
-    [Column("review_id")]
-    public Guid ReviewId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Required]
     [Column("rental_id")]

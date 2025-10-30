@@ -62,7 +62,7 @@ public class EmailService : IEmailService
                 "booking_link",
                 subject,
                 body,
-                bookingToken.TokenId
+                bookingToken.Id
             );
 
             return emailSent;

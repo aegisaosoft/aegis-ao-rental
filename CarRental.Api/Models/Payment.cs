@@ -22,8 +22,8 @@ namespace CarRental.Api.Models;
 public class Payment
 {
     [Key]
-    [Column("payment_id")]
-    public Guid PaymentId { get; set; } = Guid.NewGuid();
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
 
     [Column("reservation_id")]
     public Guid? ReservationId { get; set; }
