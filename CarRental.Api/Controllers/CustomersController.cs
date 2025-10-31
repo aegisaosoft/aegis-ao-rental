@@ -437,4 +437,155 @@ public class CustomersController : ControllerBase
 
         return Ok(stats);
     }
+
+    /// <summary>
+    /// Get customer license
+    /// </summary>
+    [HttpGet("{id}/license")]
+    public async Task<ActionResult<CustomerLicenseDto>> GetCustomerLicense(Guid id)
+    {
+        var customer = await _context.Customers.FindAsync(id);
+        if (customer == null)
+            return NotFound();
+
+        var license = await _context.CustomerLicenses
+            .FirstOrDefaultAsync(cl => cl.CustomerId == id);
+
+        if (license == null)
+            return NotFound("Customer license not found");
+
+        var licenseDto = new CustomerLicenseDto
+        {
+            Id = license.Id,
+            CustomerId = license.CustomerId,
+            LicenseNumber = license.LicenseNumber,
+            StateIssued = license.StateIssued,
+            CountryIssued = license.CountryIssued,
+            Sex = license.Sex,
+            Height = license.Height,
+            EyeColor = license.EyeColor,
+            MiddleName = license.MiddleName,
+            IssueDate = license.IssueDate,
+            ExpirationDate = license.ExpirationDate,
+            LicenseAddress = license.LicenseAddress,
+            LicenseCity = license.LicenseCity,
+            LicenseState = license.LicenseState,
+            LicensePostalCode = license.LicensePostalCode,
+            LicenseCountry = license.LicenseCountry,
+            RestrictionCode = license.RestrictionCode,
+            Endorsements = license.Endorsements,
+            IsVerified = license.IsVerified,
+            CreatedAt = license.CreatedAt,
+            UpdatedAt = license.UpdatedAt
+        };
+
+        return Ok(licenseDto);
+    }
+
+    /// <summary>
+    /// Create or update customer license
+    /// </summary>
+    [HttpPost("{id}/license")]
+    public async Task<ActionResult<CustomerLicenseDto>> UpsertCustomerLicense(Guid id, CreateCustomerLicenseDto createLicenseDto)
+    {
+        var customer = await _context.Customers.FindAsync(id);
+        if (customer == null)
+            return NotFound("Customer not found");
+
+        // Check if license already exists
+        var existingLicense = await _context.CustomerLicenses
+            .FirstOrDefaultAsync(cl => cl.CustomerId == id);
+
+        CustomerLicense license;
+        if (existingLicense != null)
+        {
+            // Update existing license
+            existingLicense.LicenseNumber = createLicenseDto.LicenseNumber;
+            existingLicense.StateIssued = createLicenseDto.StateIssued;
+            existingLicense.CountryIssued = createLicenseDto.CountryIssued ?? "US";
+            existingLicense.Sex = createLicenseDto.Sex;
+            existingLicense.Height = createLicenseDto.Height;
+            existingLicense.EyeColor = createLicenseDto.EyeColor;
+            existingLicense.MiddleName = createLicenseDto.MiddleName;
+            existingLicense.IssueDate = createLicenseDto.IssueDate;
+            existingLicense.ExpirationDate = createLicenseDto.ExpirationDate;
+            existingLicense.LicenseAddress = createLicenseDto.LicenseAddress;
+            existingLicense.LicenseCity = createLicenseDto.LicenseCity;
+            existingLicense.LicenseState = createLicenseDto.LicenseState;
+            existingLicense.LicensePostalCode = createLicenseDto.LicensePostalCode;
+            existingLicense.LicenseCountry = createLicenseDto.LicenseCountry;
+            existingLicense.RestrictionCode = createLicenseDto.RestrictionCode;
+            existingLicense.Endorsements = createLicenseDto.Endorsements;
+            existingLicense.UpdatedAt = DateTime.UtcNow;
+
+            license = existingLicense;
+            _context.CustomerLicenses.Update(license);
+        }
+        else
+        {
+            // Create new license
+            license = new CustomerLicense
+            {
+                CustomerId = id,
+                LicenseNumber = createLicenseDto.LicenseNumber,
+                StateIssued = createLicenseDto.StateIssued,
+                CountryIssued = createLicenseDto.CountryIssued ?? "US",
+                Sex = createLicenseDto.Sex,
+                Height = createLicenseDto.Height,
+                EyeColor = createLicenseDto.EyeColor,
+                MiddleName = createLicenseDto.MiddleName,
+                IssueDate = createLicenseDto.IssueDate,
+                ExpirationDate = createLicenseDto.ExpirationDate,
+                LicenseAddress = createLicenseDto.LicenseAddress,
+                LicenseCity = createLicenseDto.LicenseCity,
+                LicenseState = createLicenseDto.LicenseState,
+                LicensePostalCode = createLicenseDto.LicensePostalCode,
+                LicenseCountry = createLicenseDto.LicenseCountry,
+                RestrictionCode = createLicenseDto.RestrictionCode,
+                Endorsements = createLicenseDto.Endorsements,
+                IsVerified = true,
+                VerificationDate = DateTime.UtcNow,
+                VerificationMethod = "manual_entry"
+            };
+
+            _context.CustomerLicenses.Add(license);
+        }
+
+        try
+        {
+            await _context.SaveChangesAsync();
+
+            var licenseDto = new CustomerLicenseDto
+            {
+                Id = license.Id,
+                CustomerId = license.CustomerId,
+                LicenseNumber = license.LicenseNumber,
+                StateIssued = license.StateIssued,
+                CountryIssued = license.CountryIssued,
+                Sex = license.Sex,
+                Height = license.Height,
+                EyeColor = license.EyeColor,
+                MiddleName = license.MiddleName,
+                IssueDate = license.IssueDate,
+                ExpirationDate = license.ExpirationDate,
+                LicenseAddress = license.LicenseAddress,
+                LicenseCity = license.LicenseCity,
+                LicenseState = license.LicenseState,
+                LicensePostalCode = license.LicensePostalCode,
+                LicenseCountry = license.LicenseCountry,
+                RestrictionCode = license.RestrictionCode,
+                Endorsements = license.Endorsements,
+                IsVerified = license.IsVerified,
+                CreatedAt = license.CreatedAt,
+                UpdatedAt = license.UpdatedAt
+            };
+
+            return Ok(licenseDto);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error saving customer license for customer {CustomerId}", id);
+            return BadRequest("Error saving customer license");
+        }
+    }
 }
