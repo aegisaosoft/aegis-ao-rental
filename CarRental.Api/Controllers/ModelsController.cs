@@ -151,6 +151,13 @@ public class ModelsController : ControllerBase
             _logger.LogInformation("Getting rates for {Count} models", modelIds.Count);
             Dictionary<Guid, decimal?> modelRatesDict = new();
             
+            // Early return if no models found
+            if (!modelIds.Any())
+            {
+                _logger.LogWarning("No models found to get rates for");
+                return Ok(new List<ModelsGroupedByCategoryDto>());
+            }
+            
             // Always use catalog rates from vehicle_model filtered by company
             IQueryable<VehicleModel> vehicleModelQuery = _context.VehicleModels.Where(vm => modelIds.Contains(vm.ModelId));
             
@@ -160,7 +167,12 @@ public class ModelsController : ControllerBase
                 _logger.LogInformation("Filtering vehicle_model by companyId: {CompanyId}", companyId.Value);
             }
             
-            var vehicleModelsDict = await vehicleModelQuery.ToDictionaryAsync(vm => vm.ModelId, vm => vm.DailyRate);
+            // Group by ModelId to handle potential duplicates, then take the first one (ordered by CreatedAt)
+            var vehicleModelsDict = await vehicleModelQuery
+                .OrderBy(vm => vm.CreatedAt) // Order by creation date to get the most recent entry
+                .GroupBy(vm => vm.ModelId)
+                .Select(g => new { ModelId = g.Key, DailyRate = g.First().DailyRate })
+                .ToDictionaryAsync(x => x.ModelId, x => x.DailyRate);
             
             _logger.LogInformation("Found rates for {Count} vehicle_model entries", vehicleModelsDict.Count);
             modelRatesDict = vehicleModelsDict;
@@ -253,8 +265,13 @@ public class ModelsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error fetching models grouped by category");
-            return StatusCode(500, "An error occurred while fetching models");
+            _logger.LogError(ex, "Error fetching models grouped by category. Exception: {ExceptionType}, Message: {Message}, StackTrace: {StackTrace}", 
+                ex.GetType().Name, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { 
+                message = "An error occurred while fetching models",
+                error = ex.Message,
+                exceptionType = ex.GetType().Name
+            });
         }
     }
 
@@ -401,7 +418,12 @@ public class ModelsController : ControllerBase
                 _logger.LogInformation("GetModels: Filtering vehicle_model by companyId: {CompanyId}", companyId.Value);
             }
             
-            var vehicleModelsDict = await vehicleModelQuery2.ToDictionaryAsync(vm => vm.ModelId);
+            // Group by ModelId to handle potential duplicates, then take the first one (ordered by CreatedAt)
+            var vehicleModelsDict = await vehicleModelQuery2
+                .OrderBy(vm => vm.CreatedAt) // Order by creation date to get the most recent entry
+                .GroupBy(vm => vm.ModelId)
+                .Select(g => g.First())
+                .ToDictionaryAsync(vm => vm.ModelId);
             _logger.LogInformation("GetModels: Found rates for {Count} vehicle_model entries", vehicleModelsDict.Count);
 
             // Get vehicle counts per model
