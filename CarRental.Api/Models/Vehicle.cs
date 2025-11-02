@@ -29,20 +29,6 @@ public class Vehicle
     [Column("company_id")]
     public Guid CompanyId { get; set; }
 
-    [Required]
-    [MaxLength(100)]
-    [Column("make")]
-    public string Make { get; set; } = string.Empty;
-
-    [Required]
-    [MaxLength(100)]
-    [Column("model")]
-    public string Model { get; set; } = string.Empty;
-
-    [Required]
-    [Column("year")]
-    public int Year { get; set; }
-
     [MaxLength(50)]
     [Column("color")]
     public string? Color { get; set; }
@@ -66,10 +52,6 @@ public class Vehicle
     [Column("seats")]
     public int? Seats { get; set; }
 
-    [Required]
-    [Column("daily_rate", TypeName = "decimal(10,2)")]
-    public decimal DailyRate { get; set; }
-
     [Column("status")]
     public VehicleStatus Status { get; set; } = VehicleStatus.Available;
 
@@ -84,6 +66,9 @@ public class Vehicle
     [Column("location_id")]
     public Guid? LocationId { get; set; }
 
+    [Column("current_location_id")]
+    public Guid? CurrentLocationId { get; set; }
+
     [Column("image_url")]
     public string? ImageUrl { get; set; }
 
@@ -96,14 +81,24 @@ public class Vehicle
     [Column("updated_at")]
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    [Column("vehicle_model_id")]
+    public Guid? VehicleModelId { get; set; }
+
     // Navigation properties
     [ForeignKey("CompanyId")]
     public virtual RentalCompany Company { get; set; } = null!;
 
     [ForeignKey("LocationId")]
-    public virtual Location? LocationDetails { get; set; }
+    public virtual CompanyLocation? LocationDetails { get; set; }
+
+    [ForeignKey("CurrentLocationId")]
+    public virtual Location? CurrentLocation { get; set; }
 
     public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();
     public virtual ICollection<Review> Reviews { get; set; } = new List<Review>();
+    
+    // Navigation to vehicle_model catalog for model information
+    [ForeignKey("VehicleModelId")]
+    public virtual VehicleModel? VehicleModel { get; set; }
 }

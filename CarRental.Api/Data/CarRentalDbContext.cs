@@ -29,6 +29,7 @@ public class CarRentalDbContext : DbContext
     public DbSet<VehicleCategory> VehicleCategories { get; set; }
     public DbSet<Vehicle> Vehicles { get; set; }
     public DbSet<Location> Locations { get; set; }
+    public DbSet<CompanyLocation> CompanyLocations { get; set; }
     public DbSet<Reservation> Reservations { get; set; }
     public DbSet<Rental> Rentals { get; set; }
     public DbSet<Payment> Payments { get; set; }
@@ -43,6 +44,7 @@ public class CarRentalDbContext : DbContext
     public DbSet<BookingService> BookingServices { get; set; }
     public DbSet<CustomerLicense> CustomerLicenses { get; set; }
     public DbSet<Model> Models { get; set; }
+    public DbSet<VehicleModel> VehicleModels { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -66,6 +68,10 @@ public class CarRentalDbContext : DbContext
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Location>()
+            .Property(e => e.Id)
+            .HasDefaultValueSql("uuid_generate_v4()");
+
+        modelBuilder.Entity<CompanyLocation>()
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
@@ -97,17 +103,50 @@ public class CarRentalDbContext : DbContext
             .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
+        // Configure Vehicle.LocationDetails relationship (links to CompanyLocation via location_id)
         modelBuilder.Entity<Vehicle>()
             .HasOne(v => v.LocationDetails)
-            .WithMany(l => l.Vehicles)
+            .WithMany(cl => cl.Vehicles)
             .HasForeignKey(v => v.LocationId)
+            .HasPrincipalKey(cl => cl.Id)
+            .OnDelete(DeleteBehavior.SetNull);
+        
+        // Explicitly map LocationId property to prevent shadow property creation
+        modelBuilder.Entity<Vehicle>()
+            .Property(v => v.LocationId)
+            .HasColumnName("location_id");
+
+        // Configure Vehicle.CurrentLocation relationship (links to Location via current_location_id)
+        modelBuilder.Entity<Vehicle>()
+            .HasOne(v => v.CurrentLocation)
+            .WithMany(l => l.Vehicles)
+            .HasForeignKey(v => v.CurrentLocationId)
             .HasPrincipalKey(l => l.Id)
+            .OnDelete(DeleteBehavior.SetNull);
+        
+        // Explicitly map CurrentLocationId property to prevent shadow property creation
+        modelBuilder.Entity<Vehicle>()
+            .Property(v => v.CurrentLocationId)
+            .HasColumnName("current_location_id");
+
+        // Configure Vehicle.VehicleModel relationship (many-to-one)
+        modelBuilder.Entity<Vehicle>()
+            .HasOne(v => v.VehicleModel)
+            .WithMany()
+            .HasForeignKey(v => v.VehicleModelId)
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<Location>()
             .HasOne(l => l.Company)
             .WithMany(c => c.Locations)
             .HasForeignKey(l => l.CompanyId)
+            .HasPrincipalKey(c => c.Id)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<CompanyLocation>()
+            .HasOne(cl => cl.Company)
+            .WithMany()
+            .HasForeignKey(cl => cl.CompanyId)
             .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
@@ -250,10 +289,7 @@ public class CarRentalDbContext : DbContext
                 v => v
             );
 
-        // Configure DailyRate precision
-        modelBuilder.Entity<Model>()
-            .Property(e => e.DailyRate)
-            .HasPrecision(10, 2);
+        // DailyRate has been moved to VehicleModel table
 
         // Configure Features array
         modelBuilder.Entity<Model>()
@@ -271,6 +307,26 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<Model>()
             .HasIndex(m => m.CategoryId);
 
+        // Configure VehicleModel (catalog - primary key is id)
+        modelBuilder.Entity<VehicleModel>(entity =>
+        {
+            entity.HasKey(e => e.Id); // Primary key is id
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.DailyRate).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+                
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .HasPrincipalKey(c => c.Id)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Model)
+                .WithMany()
+                .HasForeignKey(e => e.ModelId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // Configure indexes
         modelBuilder.Entity<Vehicle>()
             .HasIndex(v => v.CompanyId);
@@ -280,6 +336,9 @@ public class CarRentalDbContext : DbContext
 
         modelBuilder.Entity<Vehicle>()
             .HasIndex(v => v.LocationId);
+
+        modelBuilder.Entity<Vehicle>()
+            .HasIndex(v => v.CurrentLocationId);
 
         modelBuilder.Entity<Location>()
             .HasIndex(l => l.CompanyId);
@@ -292,6 +351,18 @@ public class CarRentalDbContext : DbContext
 
         modelBuilder.Entity<Location>()
             .HasIndex(l => l.IsReturnLocation);
+
+        modelBuilder.Entity<CompanyLocation>()
+            .HasIndex(cl => cl.CompanyId);
+
+        modelBuilder.Entity<CompanyLocation>()
+            .HasIndex(cl => cl.IsActive);
+
+        modelBuilder.Entity<CompanyLocation>()
+            .HasIndex(cl => cl.IsPickupLocation);
+
+        modelBuilder.Entity<CompanyLocation>()
+            .HasIndex(cl => cl.IsReturnLocation);
 
         modelBuilder.Entity<Reservation>()
             .HasIndex(r => r.CustomerId);
@@ -412,6 +483,14 @@ public class CarRentalDbContext : DbContext
             .Property(l => l.Longitude)
             .HasPrecision(11, 8);
 
+        modelBuilder.Entity<CompanyLocation>()
+            .Property(cl => cl.Latitude)
+            .HasPrecision(10, 8);
+
+        modelBuilder.Entity<CompanyLocation>()
+            .Property(cl => cl.Longitude)
+            .HasPrecision(11, 8);
+
         // Configure BookingToken entity
         modelBuilder.Entity<BookingToken>(entity =>
         {
@@ -530,6 +609,8 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<CompanyService>(entity =>
         {
             entity.HasKey(e => new { e.CompanyId, e.AdditionalServiceId });
+            entity.Property(e => e.Price).HasPrecision(10, 2);
+            entity.Property(e => e.IsMandatory);
             entity.Property(e => e.IsActive).HasDefaultValue(true);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             

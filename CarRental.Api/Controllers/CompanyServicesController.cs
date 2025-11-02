@@ -62,14 +62,16 @@ public class CompanyServicesController : ControllerBase
                 {
                     CompanyId = cs.CompanyId,
                     AdditionalServiceId = cs.AdditionalServiceId,
+                    Price = cs.Price,
+                    IsMandatory = cs.IsMandatory,
                     IsActive = cs.IsActive,
                     CreatedAt = cs.CreatedAt,
                     CompanyName = cs.Company.CompanyName,
                     ServiceName = cs.AdditionalService.Name,
                     ServiceDescription = cs.AdditionalService.Description,
-                    ServicePrice = cs.AdditionalService.Price,
+                    ServicePrice = cs.Price ?? cs.AdditionalService.Price, // Use custom price if set, otherwise use service price
                     ServiceType = cs.AdditionalService.ServiceType,
-                    ServiceIsMandatory = cs.AdditionalService.IsMandatory,
+                    ServiceIsMandatory = cs.IsMandatory ?? cs.AdditionalService.IsMandatory, // Use custom mandatory if set, otherwise use service mandatory
                     ServiceMaxQuantity = cs.AdditionalService.MaxQuantity
                 })
                 .ToListAsync();
@@ -108,14 +110,16 @@ public class CompanyServicesController : ControllerBase
                 {
                     CompanyId = cs.CompanyId,
                     AdditionalServiceId = cs.AdditionalServiceId,
+                    Price = cs.Price,
+                    IsMandatory = cs.IsMandatory,
                     IsActive = cs.IsActive,
                     CreatedAt = cs.CreatedAt,
                     CompanyName = cs.Company.CompanyName,
                     ServiceName = cs.AdditionalService.Name,
                     ServiceDescription = cs.AdditionalService.Description,
-                    ServicePrice = cs.AdditionalService.Price,
+                    ServicePrice = cs.Price ?? cs.AdditionalService.Price, // Use custom price if set, otherwise use service price
                     ServiceType = cs.AdditionalService.ServiceType,
-                    ServiceIsMandatory = cs.AdditionalService.IsMandatory,
+                    ServiceIsMandatory = cs.IsMandatory ?? cs.AdditionalService.IsMandatory, // Use custom mandatory if set, otherwise use service mandatory
                     ServiceMaxQuantity = cs.AdditionalService.MaxQuantity
                 })
                 .ToListAsync();
@@ -151,14 +155,16 @@ public class CompanyServicesController : ControllerBase
             {
                 CompanyId = companyService.CompanyId,
                 AdditionalServiceId = companyService.AdditionalServiceId,
+                Price = companyService.Price,
+                IsMandatory = companyService.IsMandatory,
                 IsActive = companyService.IsActive,
                 CreatedAt = companyService.CreatedAt,
                 CompanyName = companyService.Company.CompanyName,
                 ServiceName = companyService.AdditionalService.Name,
                 ServiceDescription = companyService.AdditionalService.Description,
-                ServicePrice = companyService.AdditionalService.Price,
+                ServicePrice = companyService.Price ?? companyService.AdditionalService.Price, // Use custom price if set, otherwise use service price
                 ServiceType = companyService.AdditionalService.ServiceType,
-                ServiceIsMandatory = companyService.AdditionalService.IsMandatory,
+                ServiceIsMandatory = companyService.IsMandatory ?? companyService.AdditionalService.IsMandatory, // Use custom mandatory if set, otherwise use service mandatory
                 ServiceMaxQuantity = companyService.AdditionalService.MaxQuantity
             };
 
@@ -211,6 +217,8 @@ public class CompanyServicesController : ControllerBase
             {
                 CompanyId = createDto.CompanyId,
                 AdditionalServiceId = createDto.AdditionalServiceId,
+                Price = createDto.Price,
+                IsMandatory = createDto.IsMandatory,
                 IsActive = createDto.IsActive
             };
 
@@ -229,14 +237,16 @@ public class CompanyServicesController : ControllerBase
             {
                 CompanyId = companyService.CompanyId,
                 AdditionalServiceId = companyService.AdditionalServiceId,
+                Price = companyService.Price,
+                IsMandatory = companyService.IsMandatory,
                 IsActive = companyService.IsActive,
                 CreatedAt = companyService.CreatedAt,
                 CompanyName = companyService.Company.CompanyName,
                 ServiceName = companyService.AdditionalService.Name,
                 ServiceDescription = companyService.AdditionalService.Description,
-                ServicePrice = companyService.AdditionalService.Price,
+                ServicePrice = companyService.Price ?? companyService.AdditionalService.Price, // Use custom price if set, otherwise use service price
                 ServiceType = companyService.AdditionalService.ServiceType,
-                ServiceIsMandatory = companyService.AdditionalService.IsMandatory,
+                ServiceIsMandatory = companyService.IsMandatory ?? companyService.AdditionalService.IsMandatory, // Use custom mandatory if set, otherwise use service mandatory
                 ServiceMaxQuantity = companyService.AdditionalService.MaxQuantity
             };
 
@@ -277,6 +287,12 @@ public class CompanyServicesController : ControllerBase
             if (companyService == null)
                 return NotFound();
 
+            if (updateDto.Price.HasValue)
+                companyService.Price = updateDto.Price.Value;
+
+            if (updateDto.IsMandatory.HasValue)
+                companyService.IsMandatory = updateDto.IsMandatory.Value;
+
             if (updateDto.IsActive.HasValue)
                 companyService.IsActive = updateDto.IsActive.Value;
 
@@ -286,14 +302,16 @@ public class CompanyServicesController : ControllerBase
             {
                 CompanyId = companyService.CompanyId,
                 AdditionalServiceId = companyService.AdditionalServiceId,
+                Price = companyService.Price,
+                IsMandatory = companyService.IsMandatory,
                 IsActive = companyService.IsActive,
                 CreatedAt = companyService.CreatedAt,
                 CompanyName = companyService.Company.CompanyName,
                 ServiceName = companyService.AdditionalService.Name,
                 ServiceDescription = companyService.AdditionalService.Description,
-                ServicePrice = companyService.AdditionalService.Price,
+                ServicePrice = companyService.Price ?? companyService.AdditionalService.Price, // Use custom price if set, otherwise use service price
                 ServiceType = companyService.AdditionalService.ServiceType,
-                ServiceIsMandatory = companyService.AdditionalService.IsMandatory,
+                ServiceIsMandatory = companyService.IsMandatory ?? companyService.AdditionalService.IsMandatory, // Use custom mandatory if set, otherwise use service mandatory
                 ServiceMaxQuantity = companyService.AdditionalService.MaxQuantity
             };
 

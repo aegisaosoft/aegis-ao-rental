@@ -137,25 +137,34 @@ public class CompanyManagementService : ICompanyManagementService
         try
         {
             var query = _context.Vehicles
+                .Include(v => v.VehicleModel)
+                    .ThenInclude(vm => vm.Model)
+                        .ThenInclude(m => m.Category)
                 .Where(v => v.CompanyId == companyId);
 
             if (!string.IsNullOrEmpty(searchDto.Make))
-                query = query.Where(v => v.Make.Contains(searchDto.Make));
+                query = query.Where(v => v.VehicleModel != null && v.VehicleModel.Model != null && 
+                    v.VehicleModel.Model.Make.Contains(searchDto.Make));
 
             if (!string.IsNullOrEmpty(searchDto.Model))
-                query = query.Where(v => v.Model.Contains(searchDto.Model));
+                query = query.Where(v => v.VehicleModel != null && v.VehicleModel.Model != null && 
+                    v.VehicleModel.Model.ModelName.Contains(searchDto.Model));
 
             if (searchDto.MinYear.HasValue)
-                query = query.Where(v => v.Year >= searchDto.MinYear.Value);
+                query = query.Where(v => v.VehicleModel != null && v.VehicleModel.Model != null && 
+                    v.VehicleModel.Model.Year >= searchDto.MinYear.Value);
 
             if (searchDto.MaxYear.HasValue)
-                query = query.Where(v => v.Year <= searchDto.MaxYear.Value);
+                query = query.Where(v => v.VehicleModel != null && v.VehicleModel.Model != null && 
+                    v.VehicleModel.Model.Year <= searchDto.MaxYear.Value);
 
             if (searchDto.MinDailyRate.HasValue)
-                query = query.Where(v => v.DailyRate >= searchDto.MinDailyRate.Value);
+                query = query.Where(v => v.VehicleModel != null && 
+                    v.VehicleModel.DailyRate >= searchDto.MinDailyRate.Value);
 
             if (searchDto.MaxDailyRate.HasValue)
-                query = query.Where(v => v.DailyRate <= searchDto.MaxDailyRate.Value);
+                query = query.Where(v => v.VehicleModel != null && 
+                    v.VehicleModel.DailyRate <= searchDto.MaxDailyRate.Value);
 
             if (!string.IsNullOrEmpty(searchDto.Transmission))
                 query = query.Where(v => v.Transmission == searchDto.Transmission);
@@ -170,28 +179,16 @@ public class CompanyManagementService : ICompanyManagementService
             // Use Status filter instead
 
             var vehicles = await query
-                .OrderBy(v => v.Make)
-                .ThenBy(v => v.Model)
+                .OrderBy(v => v.VehicleModel != null ? v.VehicleModel.Model.Make : "")
+                .ThenBy(v => v.VehicleModel != null ? v.VehicleModel.Model.ModelName : "")
                 .Skip((searchDto.Page - 1) * searchDto.PageSize)
                 .Take(searchDto.PageSize)
                 .ToListAsync();
 
-            // Get all models needed for category and fuel type lookup
-            var vehiclesMakeModelYear = vehicles.Select(v => new { v.Make, v.Model, v.Year }).Distinct().ToList();
-            var modelsDict = await _context.Models
-                .Include(m => m.Category)
-                .Where(m => vehiclesMakeModelYear.Any(v => 
-                    v.Make.ToUpper() == m.Make.ToUpper() && 
-                    v.Model.ToUpper() == m.ModelName.ToUpper() && 
-                    v.Year == m.Year))
-                .ToListAsync();
-
             return vehicles.Select(v =>
             {
-                var matchingModel = modelsDict.FirstOrDefault(m => 
-                    m.Make.ToUpper() == v.Make.ToUpper() && 
-                    m.ModelName.ToUpper() == v.Model.ToUpper() && 
-                    m.Year == v.Year);
+                var vm = v.VehicleModel;
+                var matchingModel = vm?.Model;
 
                 return new VehicleDto
                 {
@@ -199,9 +196,9 @@ public class CompanyManagementService : ICompanyManagementService
                     CompanyId = v.CompanyId,
                     CategoryId = matchingModel?.CategoryId,
                     CategoryName = matchingModel?.Category?.CategoryName,
-                    Make = v.Make,
-                    Model = v.Model,
-                    Year = v.Year,
+                    Make = matchingModel?.Make ?? "",
+                    Model = matchingModel?.ModelName ?? "",
+                    Year = matchingModel?.Year ?? 0,
                     Color = v.Color,
                     LicensePlate = v.LicensePlate,
                     Vin = v.Vin,
@@ -209,7 +206,7 @@ public class CompanyManagementService : ICompanyManagementService
                     FuelType = matchingModel?.FuelType,
                     Transmission = v.Transmission,
                     Seats = v.Seats,
-                    DailyRate = v.DailyRate,
+                    DailyRate = vm?.DailyRate ?? 0, // Rate from catalog
                     Status = v.Status.ToString(),
                     Location = v.Location,
                     ImageUrl = v.ImageUrl,
@@ -233,6 +230,7 @@ public class CompanyManagementService : ICompanyManagementService
             var query = _context.Reservations
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
+                    .ThenInclude(v => v.VehicleModel)
                 .Where(r => r.CompanyId == companyId);
 
             if (searchDto.CustomerId.HasValue)
@@ -265,39 +263,50 @@ public class CompanyManagementService : ICompanyManagementService
             if (searchDto.CreatedTo.HasValue)
                 query = query.Where(r => r.CreatedAt <= searchDto.CreatedTo.Value);
 
-            var reservations = await query
+            var allReservations = await query
                 .OrderByDescending(r => r.CreatedAt)
                 .Skip((searchDto.Page - 1) * searchDto.PageSize)
                 .Take(searchDto.PageSize)
-                .Select(r => new ReservationDto
-                {
-                    Id = r.Id,
-                    CustomerId = r.CustomerId,
-                    VehicleId = r.VehicleId,
-                    CompanyId = r.CompanyId,
-                    BookingNumber = r.BookingNumber,
-                    AltBookingNumber = r.AltBookingNumber,
-                    PickupDate = r.PickupDate,
-                    ReturnDate = r.ReturnDate,
-                    PickupLocation = r.PickupLocation,
-                    ReturnLocation = r.ReturnLocation,
-                    DailyRate = r.DailyRate,
-                    TotalDays = r.TotalDays,
-                    Subtotal = r.Subtotal,
-                    TaxAmount = r.TaxAmount,
-                    InsuranceAmount = r.InsuranceAmount,
-                    AdditionalFees = r.AdditionalFees,
-                    TotalAmount = r.TotalAmount,
-                    Status = r.Status,
-                    Notes = r.Notes,
-                    CreatedAt = r.CreatedAt,
-                    UpdatedAt = r.UpdatedAt,
-                    CustomerName = r.Customer.FirstName + " " + r.Customer.LastName,
-                    CustomerEmail = r.Customer.Email,
-                    VehicleName = r.Vehicle.Make + " " + r.Vehicle.Model + " (" + r.Vehicle.Year + ")",
-                    LicensePlate = r.Vehicle.LicensePlate
-                })
                 .ToListAsync();
+            
+            // Load Model for each VehicleModel that has one
+            foreach (var reservation in allReservations.Where(r => r.Vehicle?.VehicleModel != null))
+            {
+                await _context.Entry(reservation.Vehicle.VehicleModel!)
+                    .Reference(vm => vm.Model)
+                    .LoadAsync();
+            }
+            
+            var reservations = allReservations.Select(r => new ReservationDto
+            {
+                Id = r.Id,
+                CustomerId = r.CustomerId,
+                VehicleId = r.VehicleId,
+                CompanyId = r.CompanyId,
+                BookingNumber = r.BookingNumber,
+                AltBookingNumber = r.AltBookingNumber,
+                PickupDate = r.PickupDate,
+                ReturnDate = r.ReturnDate,
+                PickupLocation = r.PickupLocation,
+                ReturnLocation = r.ReturnLocation,
+                DailyRate = r.DailyRate,
+                TotalDays = r.TotalDays,
+                Subtotal = r.Subtotal,
+                TaxAmount = r.TaxAmount,
+                InsuranceAmount = r.InsuranceAmount,
+                AdditionalFees = r.AdditionalFees,
+                TotalAmount = r.TotalAmount,
+                Status = r.Status,
+                Notes = r.Notes,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt,
+                CustomerName = r.Customer.FirstName + " " + r.Customer.LastName,
+                CustomerEmail = r.Customer.Email,
+                VehicleName = (r.Vehicle?.VehicleModel?.Model != null) ? 
+                    r.Vehicle.VehicleModel.Model.Make + " " + r.Vehicle.VehicleModel.Model.ModelName + " (" + r.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = r.Vehicle?.LicensePlate ?? ""
+            }).ToList();
 
             return reservations;
         }

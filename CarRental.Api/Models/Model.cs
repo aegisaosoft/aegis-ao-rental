@@ -50,9 +50,6 @@ public class Model
     [Column("seats")]
     public int? Seats { get; set; }
 
-    [Column("daily_rate", TypeName = "decimal(10,2)")]
-    public decimal? DailyRate { get; set; }
-
     [Column("features")]
     public string[]? Features { get; set; }
 

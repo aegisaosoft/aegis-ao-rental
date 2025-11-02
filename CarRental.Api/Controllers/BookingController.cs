@@ -60,7 +60,15 @@ public class BookingController : ControllerBase
 
             var vehicle = await _context.Vehicles
                 .Include(v => v.Company)
+                .Include(v => v.VehicleModel)
                 .FirstOrDefaultAsync(v => v.Id == createDto.VehicleId && v.CompanyId == createDto.CompanyId);
+            
+            if (vehicle?.VehicleModel != null)
+            {
+                await _context.Entry(vehicle.VehicleModel)
+                    .Reference(vm => vm.Model)
+                    .LoadAsync();
+            }
 
             if (vehicle == null)
                 return NotFound("Vehicle not found or not available");
@@ -147,9 +155,9 @@ public class BookingController : ControllerBase
                     TotalAmount = createDto.BookingData.TotalAmount,
                     VehicleInfo = new VehicleInfo
                     {
-                        Make = vehicle.Make,
-                        Model = vehicle.Model,
-                        Year = vehicle.Year,
+                        Make = vehicle.VehicleModel?.Model?.Make ?? "",
+                        Model = vehicle.VehicleModel?.Model?.ModelName ?? "",
+                        Year = vehicle.VehicleModel?.Model?.Year ?? 0,
                         Color = vehicle.Color,
                         LicensePlate = vehicle.LicensePlate,
                         ImageUrl = vehicle.ImageUrl,
@@ -241,7 +249,7 @@ public class BookingController : ControllerBase
                 CreatedAt = bookingToken.CreatedAt,
                 UpdatedAt = bookingToken.UpdatedAt,
                 CompanyName = company.CompanyName,
-                VehicleName = $"{vehicle.Make} {vehicle.Model} ({vehicle.Year})"
+                VehicleName = $"{vehicle.VehicleModel?.Model?.Make ?? ""} {vehicle.VehicleModel?.Model?.ModelName ?? ""} ({vehicle.VehicleModel?.Model?.Year ?? 0})"
             };
 
             return CreatedAtAction(nameof(GetBookingToken), new { token = bookingToken.Token }, bookingTokenDto);
@@ -262,10 +270,18 @@ public class BookingController : ControllerBase
         var bookingToken = await _context.BookingTokens
             .Include(bt => bt.Company)
             .Include(bt => bt.Vehicle)
+                .ThenInclude(v => v.VehicleModel)
             .FirstOrDefaultAsync(bt => bt.Token == token);
 
         if (bookingToken == null)
             return NotFound("Booking token not found");
+        
+        if (bookingToken.Vehicle?.VehicleModel != null)
+        {
+            await _context.Entry(bookingToken.Vehicle.VehicleModel)
+                .Reference(vm => vm.Model)
+                .LoadAsync();
+        }
 
         if (bookingToken.IsUsed)
             return BadRequest("Booking token has already been used");
@@ -340,7 +356,9 @@ public class BookingController : ControllerBase
             CreatedAt = bookingToken.CreatedAt,
             UpdatedAt = bookingToken.UpdatedAt,
             CompanyName = bookingToken.Company.CompanyName,
-            VehicleName = $"{bookingToken.Vehicle.Make} {bookingToken.Vehicle.Model} ({bookingToken.Vehicle.Year})"
+            VehicleName = (bookingToken.Vehicle?.VehicleModel?.Model != null) ? 
+                $"{bookingToken.Vehicle.VehicleModel.Model.Make} {bookingToken.Vehicle.VehicleModel.Model.ModelName} ({bookingToken.Vehicle.VehicleModel.Model.Year})" : 
+                "Unknown Vehicle"
         };
 
         return Ok(bookingTokenDto);

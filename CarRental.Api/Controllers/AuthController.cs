@@ -53,8 +53,8 @@ public class AuthController : ControllerBase
     [ProducesResponseType(400)]
     public async Task<ActionResult<object>> Register([FromBody] RegisterDto dto)
     {
-        // Check if email already exists
-        if (await _context.Customers.AnyAsync(c => c.Email == dto.Email))
+        // Check if email already exists (case-insensitive)
+        if (await _context.Customers.AnyAsync(c => EF.Functions.ILike(c.Email, dto.Email)))
         {
             return BadRequest(new { message = "Email already registered" });
         }
@@ -78,18 +78,45 @@ public class AuthController : ControllerBase
         // Generate JWT token
         var token = _jwtService.GenerateToken(customer.Id.ToString(), "user");
 
-        return CreatedAtAction(nameof(Register), new
+        // Store customer session information
+        var session = new CustomerSession
         {
-            token,
-            user = new
+            CustomerId = customer.Id.ToString(),
+            Email = customer.Email,
+            FirstName = customer.FirstName,
+            LastName = customer.LastName,
+            Role = "user",
+            CompanyId = customer.CompanyId?.ToString(),
+            CompanyName = customer.Company?.CompanyName,
+            LoginTime = DateTime.UtcNow,
+            LastActivity = DateTime.UtcNow,
+            IsActive = true
+        };
+        _sessionService.SetCustomerSession(token, session);
+
+        return CreatedAtAction(nameof(Register), new LoginResponseDto
+        {
+            Result = new LoginResultDto
             {
-                customerId = customer.Id,
-                email = customer.Email,
-                firstName = customer.FirstName,
-                lastName = customer.LastName,
-                phone = customer.Phone,
-                isVerified = customer.IsVerified
-            }
+                Token = token,
+                User = new
+                {
+                    customerId = customer.Id,
+                    email = customer.Email,
+                    firstName = customer.FirstName,
+                    lastName = customer.LastName,
+                    phone = customer.Phone,
+                    role = "user",
+                    companyId = customer.CompanyId,
+                    companyName = customer.Company?.CompanyName,
+                    isVerified = customer.IsVerified,
+                    isActive = customer.IsActive,
+                    lastLogin = customer.LastLogin
+                }
+            },
+            Reason = 0,
+            Message = null,
+            StackTrace = null
         });
     }
 
@@ -103,10 +130,33 @@ public class AuthController : ControllerBase
     {
         var customer = await _context.Customers
             .Include(c => c.Company)
-            .FirstOrDefaultAsync(c => c.Email == dto.Email);
+            .FirstOrDefaultAsync(c => EF.Functions.ILike(c.Email, dto.Email));
 
-        if (customer == null || customer.PasswordHash == null || !customer.IsActive || !BCrypt.Net.BCrypt.Verify(dto.Password, customer.PasswordHash))
+        // Check if customer exists
+        if (customer == null)
         {
+            _logger.LogWarning("Login attempt with non-existent email: {Email}", dto.Email);
+            return Unauthorized(new { message = "Invalid email or password" });
+        }
+
+        // Check if password hash exists
+        if (customer.PasswordHash == null)
+        {
+            _logger.LogWarning("Login attempt for customer {Email} with no password hash", dto.Email);
+            return Unauthorized(new { message = "Invalid email or password" });
+        }
+
+        // Check if account is active
+        if (!customer.IsActive)
+        {
+            _logger.LogWarning("Login attempt for inactive account: {Email}", dto.Email);
+            return Unauthorized(new { message = "Your account has been deactivated. Please contact support." });
+        }
+
+        // Verify password
+        if (!BCrypt.Net.BCrypt.Verify(dto.Password, customer.PasswordHash))
+        {
+            _logger.LogWarning("Login attempt with incorrect password for: {Email}", dto.Email);
             return Unauthorized(new { message = "Invalid email or password" });
         }
 
@@ -138,23 +188,29 @@ public class AuthController : ControllerBase
         };
         _sessionService.SetCustomerSession(token, session);
 
-        return Ok(new
+        return Ok(new LoginResponseDto
         {
-            token,
-            user = new
+            Result = new LoginResultDto
             {
-                customerId = customer.Id,
-                email = customer.Email,
-                firstName = customer.FirstName,
-                lastName = customer.LastName,
-                phone = customer.Phone,
-                role = customer.Role,
-                companyId = customer.CompanyId,
-                companyName = customer.Company?.CompanyName,
-                isVerified = customer.IsVerified,
-                isActive = customer.IsActive,
-                lastLogin = customer.LastLogin
-            }
+                Token = token,
+                User = new
+                {
+                    customerId = customer.Id,
+                    email = customer.Email,
+                    firstName = customer.FirstName,
+                    lastName = customer.LastName,
+                    phone = customer.Phone,
+                    role = customer.Role,
+                    companyId = customer.CompanyId,
+                    companyName = customer.Company?.CompanyName,
+                    isVerified = customer.IsVerified,
+                    isActive = customer.IsActive,
+                    lastLogin = customer.LastLogin
+                }
+            },
+            Reason = 0,
+            Message = null,
+            StackTrace = null
         });
     }
 

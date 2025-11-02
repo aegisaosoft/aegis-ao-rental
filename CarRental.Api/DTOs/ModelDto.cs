@@ -13,6 +13,8 @@
  *
  */
 
+using System.ComponentModel.DataAnnotations;
+
 namespace CarRental.Api.DTOs;
 
 public class ModelDto
@@ -29,6 +31,8 @@ public class ModelDto
     public string? Description { get; set; }
     public Guid? CategoryId { get; set; }
     public string? CategoryName { get; set; }
+    public int VehicleCount { get; set; } // Total number of vehicles for this model
+    public int AvailableCount { get; set; } // Number of available vehicles for this model
 }
 
 public class ModelsGroupedByCategoryDto
@@ -37,5 +41,21 @@ public class ModelsGroupedByCategoryDto
     public string CategoryName { get; set; } = string.Empty;
     public string? CategoryDescription { get; set; }
     public List<ModelDto> Models { get; set; } = new();
+}
+
+public class BulkUpdateModelDailyRateDto
+{
+    [Required]
+    public decimal DailyRate { get; set; }
+    
+    public Guid? CategoryId { get; set; }
+    
+    public string? Make { get; set; }
+    
+    public string? ModelName { get; set; }
+    
+    public int? Year { get; set; }
+    
+    public Guid? CompanyId { get; set; } // Filter to only update models for vehicles of this company
 }
 

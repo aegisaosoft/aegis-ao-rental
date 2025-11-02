@@ -188,3 +188,19 @@ public class VehicleSearchDto
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 20;
 }
+
+public class BulkUpdateDailyRateDto
+{
+    [Required]
+    public decimal DailyRate { get; set; }
+    
+    public Guid? CompanyId { get; set; }
+    
+    public Guid? CategoryId { get; set; }
+    
+    public string? Make { get; set; }
+    
+    public string? Model { get; set; }
+    
+    public int? Year { get; set; }
+}

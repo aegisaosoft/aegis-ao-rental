@@ -60,6 +60,7 @@ public class ReservationsController : ControllerBase
             var query = _context.Reservations
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
+                    .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
                 .AsQueryable();
 
@@ -74,40 +75,51 @@ public class ReservationsController : ControllerBase
 
             var totalCount = await query.CountAsync();
 
-            var reservations = await query
+            var allReservations = await query
                 .OrderByDescending(r => r.CreatedAt)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(r => new ReservationDto
-                {
-                    Id = r.Id,
-                    CustomerId = r.CustomerId,
-                    CustomerName = r.Customer.FirstName + " " + r.Customer.LastName,
-                    CustomerEmail = r.Customer.Email,
-                    VehicleId = r.VehicleId,
-                    VehicleName = r.Vehicle.Make + " " + r.Vehicle.Model + " (" + r.Vehicle.Year + ")",
-                    LicensePlate = r.Vehicle.LicensePlate,
-                    CompanyId = r.CompanyId,
-                    CompanyName = r.Company.CompanyName,
-                    BookingNumber = r.BookingNumber,
-                    AltBookingNumber = r.AltBookingNumber,
-                    PickupDate = r.PickupDate,
-                    ReturnDate = r.ReturnDate,
-                    PickupLocation = r.PickupLocation,
-                    ReturnLocation = r.ReturnLocation,
-                    DailyRate = r.DailyRate,
-                    TotalDays = r.TotalDays,
-                    Subtotal = r.Subtotal,
-                    TaxAmount = r.TaxAmount,
-                    InsuranceAmount = r.InsuranceAmount,
-                    AdditionalFees = r.AdditionalFees,
-                    TotalAmount = r.TotalAmount,
-                    Status = r.Status,
-                    Notes = r.Notes,
-                    CreatedAt = r.CreatedAt,
-                    UpdatedAt = r.UpdatedAt
-                })
                 .ToListAsync();
+            
+            // Load Model for each VehicleModel that has one
+            foreach (var reservation in allReservations.Where(r => r.Vehicle?.VehicleModel != null))
+            {
+                await _context.Entry(reservation.Vehicle.VehicleModel!)
+                    .Reference(vm => vm.Model)
+                    .LoadAsync();
+            }
+            
+            var reservations = allReservations.Select(r => new ReservationDto
+            {
+                Id = r.Id,
+                CustomerId = r.CustomerId,
+                CustomerName = r.Customer.FirstName + " " + r.Customer.LastName,
+                CustomerEmail = r.Customer.Email,
+                VehicleId = r.VehicleId,
+                VehicleName = (r.Vehicle?.VehicleModel?.Model != null) ? 
+                    r.Vehicle.VehicleModel.Model.Make + " " + r.Vehicle.VehicleModel.Model.ModelName + " (" + r.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = r.Vehicle?.LicensePlate ?? "",
+                CompanyId = r.CompanyId,
+                CompanyName = r.Company.CompanyName,
+                BookingNumber = r.BookingNumber,
+                AltBookingNumber = r.AltBookingNumber,
+                PickupDate = r.PickupDate,
+                ReturnDate = r.ReturnDate,
+                PickupLocation = r.PickupLocation,
+                ReturnLocation = r.ReturnLocation,
+                DailyRate = r.DailyRate,
+                TotalDays = r.TotalDays,
+                Subtotal = r.Subtotal,
+                TaxAmount = r.TaxAmount,
+                InsuranceAmount = r.InsuranceAmount,
+                AdditionalFees = r.AdditionalFees,
+                TotalAmount = r.TotalAmount,
+                Status = r.Status,
+                Notes = r.Notes,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt
+            }).ToList();
 
             return Ok(new
             {
@@ -141,11 +153,20 @@ public class ReservationsController : ControllerBase
             var reservation = await _context.Reservations
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
+                    .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (reservation == null)
                 return NotFound();
+            
+            // Load Model for VehicleModel if it has one
+            if (reservation.Vehicle?.VehicleModel != null)
+            {
+                await _context.Entry(reservation.Vehicle.VehicleModel)
+                    .Reference(vm => vm.Model)
+                    .LoadAsync();
+            }
 
             var reservationDto = new ReservationDto
             {
@@ -154,8 +175,10 @@ public class ReservationsController : ControllerBase
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
                 VehicleId = reservation.VehicleId,
-                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
-                LicensePlate = reservation.Vehicle.LicensePlate,
+                VehicleName = (reservation.Vehicle?.VehicleModel?.Model != null) ? 
+                    reservation.Vehicle.VehicleModel.Model.Make + " " + reservation.Vehicle.VehicleModel.Model.ModelName + " (" + reservation.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
                 BookingNumber = reservation.BookingNumber,
@@ -270,8 +293,10 @@ public class ReservationsController : ControllerBase
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
                 VehicleId = reservation.VehicleId,
-                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
-                LicensePlate = reservation.Vehicle.LicensePlate,
+                VehicleName = (reservation.Vehicle?.VehicleModel?.Model != null) ? 
+                    reservation.Vehicle.VehicleModel.Model.Make + " " + reservation.Vehicle.VehicleModel.Model.ModelName + " (" + reservation.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
                 BookingNumber = reservation.BookingNumber,
@@ -323,11 +348,20 @@ public class ReservationsController : ControllerBase
             var reservation = await _context.Reservations
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
+                    .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (reservation == null)
                 return NotFound();
+            
+            // Load Model for VehicleModel if it has one
+            if (reservation.Vehicle?.VehicleModel != null)
+            {
+                await _context.Entry(reservation.Vehicle.VehicleModel)
+                    .Reference(vm => vm.Model)
+                    .LoadAsync();
+            }
 
             // Update fields if provided
             if (!string.IsNullOrEmpty(updateReservationDto.AltBookingNumber))
@@ -382,8 +416,10 @@ public class ReservationsController : ControllerBase
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
                 VehicleId = reservation.VehicleId,
-                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
-                LicensePlate = reservation.Vehicle.LicensePlate,
+                VehicleName = (reservation.Vehicle?.VehicleModel?.Model != null) ? 
+                    reservation.Vehicle.VehicleModel.Model.Make + " " + reservation.Vehicle.VehicleModel.Model.ModelName + " (" + reservation.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
                 BookingNumber = reservation.BookingNumber,
@@ -436,11 +472,20 @@ public class ReservationsController : ControllerBase
             var reservation = await _context.Reservations
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
+                    .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (reservation == null)
                 return NotFound();
+            
+            // Load Model for VehicleModel if it has one
+            if (reservation.Vehicle?.VehicleModel != null)
+            {
+                await _context.Entry(reservation.Vehicle.VehicleModel)
+                    .Reference(vm => vm.Model)
+                    .LoadAsync();
+            }
 
             reservation.Status = status;
             reservation.UpdatedAt = DateTime.UtcNow;
@@ -468,8 +513,10 @@ public class ReservationsController : ControllerBase
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
                 VehicleId = reservation.VehicleId,
-                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
-                LicensePlate = reservation.Vehicle.LicensePlate,
+                VehicleName = (reservation.Vehicle?.VehicleModel?.Model != null) ? 
+                    reservation.Vehicle.VehicleModel.Model.Make + " " + reservation.Vehicle.VehicleModel.Model.ModelName + " (" + reservation.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
                 BookingNumber = reservation.BookingNumber,
@@ -516,11 +563,20 @@ public class ReservationsController : ControllerBase
             var reservation = await _context.Reservations
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
+                    .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (reservation == null)
                 return NotFound();
+            
+            // Load Model for VehicleModel if it has one
+            if (reservation.Vehicle?.VehicleModel != null)
+            {
+                await _context.Entry(reservation.Vehicle.VehicleModel)
+                    .Reference(vm => vm.Model)
+                    .LoadAsync();
+            }
 
             reservation.Status = "Cancelled";
             reservation.UpdatedAt = DateTime.UtcNow;
@@ -539,8 +595,10 @@ public class ReservationsController : ControllerBase
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
                 VehicleId = reservation.VehicleId,
-                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
-                LicensePlate = reservation.Vehicle.LicensePlate,
+                VehicleName = (reservation.Vehicle?.VehicleModel?.Model != null) ? 
+                    reservation.Vehicle.VehicleModel.Model.Make + " " + reservation.Vehicle.VehicleModel.Model.ModelName + " (" + reservation.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
                 BookingNumber = reservation.BookingNumber,
@@ -600,8 +658,10 @@ public class ReservationsController : ControllerBase
                 CustomerName = reservation.Customer.FirstName + " " + reservation.Customer.LastName,
                 CustomerEmail = reservation.Customer.Email,
                 VehicleId = reservation.VehicleId,
-                VehicleName = reservation.Vehicle.Make + " " + reservation.Vehicle.Model + " (" + reservation.Vehicle.Year + ")",
-                LicensePlate = reservation.Vehicle.LicensePlate,
+                VehicleName = (reservation.Vehicle?.VehicleModel?.Model != null) ? 
+                    reservation.Vehicle.VehicleModel.Model.Make + " " + reservation.Vehicle.VehicleModel.Model.ModelName + " (" + reservation.Vehicle.VehicleModel.Model.Year + ")" : 
+                    "Unknown Vehicle",
+                LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
                 CompanyName = reservation.Company.CompanyName,
                 BookingNumber = reservation.BookingNumber,

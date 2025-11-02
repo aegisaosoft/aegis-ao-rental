@@ -21,6 +21,8 @@ public class CompanyServiceDto
 {
     public Guid CompanyId { get; set; }
     public Guid AdditionalServiceId { get; set; }
+    public decimal? Price { get; set; }
+    public bool? IsMandatory { get; set; }
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     
@@ -42,11 +44,21 @@ public class CreateCompanyServiceDto
     [Required]
     public Guid AdditionalServiceId { get; set; }
     
+    [Range(0, double.MaxValue)]
+    public decimal? Price { get; set; }
+    
+    public bool? IsMandatory { get; set; }
+    
     public bool IsActive { get; set; } = true;
 }
 
 public class UpdateCompanyServiceDto
 {
+    [Range(0, double.MaxValue)]
+    public decimal? Price { get; set; }
+    
+    public bool? IsMandatory { get; set; }
+    
     public bool? IsActive { get; set; }
 }
 

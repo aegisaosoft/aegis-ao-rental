@@ -19,6 +19,8 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
+using CarRental.Api.Filters;
+using CarRental.Api.Middleware;
 
 // Enable legacy timestamp behavior for Npgsql to handle DateTimes
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -26,7 +28,11 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Add standardized response filter to wrap all responses
+    options.Filters.Add<StandardizedResponseFilter>();
+});
 
 // Configure file upload limits
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
@@ -193,20 +199,23 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline in correct order
-// 1. HTTPS Redirection (early in pipeline)
+// 1. Exception handling middleware (first to catch all exceptions)
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+// 2. HTTPS Redirection (early in pipeline)
 app.UseHttpsRedirection();
 
-// 2. Static files for uploads
+// 3. Static files for uploads
 app.UseStaticFiles();
 
-// 3. CORS (before authentication)
+// 4. CORS (before authentication)
 app.UseCors("AllowAll");
 
-// 4. Authentication & Authorization
+// 5. Authentication & Authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
-// 5. Swagger (only in Development - file uploads cause issues in production)
+// 6. Swagger (only in Development - file uploads cause issues in production)
 if (app.Environment.IsDevelopment())
 {
     try
@@ -225,7 +234,7 @@ if (app.Environment.IsDevelopment())
     }
 }
 
-// 6. Map Controllers (always last)
+// 7. Map Controllers (always last)
 app.MapControllers();
 
 app.Run();

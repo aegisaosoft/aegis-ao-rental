@@ -18,36 +18,30 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CarRental.Api.Models;
 
-[Table("company_services")]
-public class CompanyService
+[Table("vehicle_model")]
+public class VehicleModel
 {
-    [Required]
+    [Key]
+    [Column("id")]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
     [Column("company_id")]
     public Guid CompanyId { get; set; }
 
-    [Required]
-    [Column("additional_service_id")]
-    public Guid AdditionalServiceId { get; set; }
+    [Column("model_id")]
+    public Guid ModelId { get; set; }
 
-    [Column("price", TypeName = "decimal(10,2)")]
-    public decimal? Price { get; set; }
+    [Column("daily_rate", TypeName = "decimal(10,2)")]
+    public decimal? DailyRate { get; set; }
 
-    [Column("is_mandatory")]
-    public bool? IsMandatory { get; set; }
-
-    [Required]
-    [Column("is_active")]
-    public bool IsActive { get; set; } = true;
-
-    [Required]
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public RentalCompany Company { get; set; } = null!;
+    public virtual RentalCompany Company { get; set; } = null!;
 
-    [ForeignKey("AdditionalServiceId")]
-    public AdditionalService AdditionalService { get; set; } = null!;
+    [ForeignKey("ModelId")]
+    public virtual Model Model { get; set; } = null!;
 }
 

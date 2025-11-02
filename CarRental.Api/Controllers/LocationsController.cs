@@ -15,6 +15,8 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 using CarRental.Api.Data;
 using CarRental.Api.Models;
 
@@ -31,6 +33,37 @@ public class LocationsController : ControllerBase
     {
         _context = context;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Check if the current user has admin privileges (admin or mainadmin role)
+    /// </summary>
+    /// <returns>True if user has admin privileges</returns>
+    private bool HasAdminPrivileges()
+    {
+        var role = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+        return role == "admin" || role == "mainadmin";
+    }
+
+    /// <summary>
+    /// Check if the current user can edit locations for a specific company
+    /// </summary>
+    /// <param name="companyId">Company ID to check</param>
+    /// <returns>True if user can edit locations for this company</returns>
+    private bool CanEditCompanyLocations(Guid companyId)
+    {
+        var role = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+        var userCompanyId = User.FindFirst("company_id")?.Value;
+
+        // Mainadmin can edit all locations
+        if (role == "mainadmin")
+            return true;
+
+        // Admin can only edit locations from their own company
+        if (role == "admin" && userCompanyId != null)
+            return Guid.TryParse(userCompanyId, out var parsedCompanyId) && parsedCompanyId == companyId;
+
+        return false;
     }
 
     // GET: api/Locations
@@ -90,7 +123,7 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving locations");
-            return StatusCode(500, "Internal server error while retrieving locations");
+            return StatusCode(500, new { message = "Internal server error while retrieving locations" });
         }
     }
 
@@ -107,7 +140,7 @@ public class LocationsController : ControllerBase
 
             if (location == null)
             {
-                return NotFound($"Location with ID {id} not found");
+                return NotFound(new { message = $"Location with ID {id} not found" });
             }
 
             return Ok(location);
@@ -115,7 +148,7 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving location {LocationId}", id);
-            return StatusCode(500, "Internal server error while retrieving location");
+            return StatusCode(500, new { message = "Internal server error while retrieving location" });
         }
     }
 
@@ -135,7 +168,7 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving locations for company {CompanyId}", companyId);
-            return StatusCode(500, "Internal server error while retrieving company locations");
+            return StatusCode(500, new { message = "Internal server error while retrieving company locations" });
         }
     }
 
@@ -160,7 +193,7 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving pickup locations");
-            return StatusCode(500, "Internal server error while retrieving pickup locations");
+            return StatusCode(500, new { message = "Internal server error while retrieving pickup locations" });
         }
     }
 
@@ -185,21 +218,30 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving return locations");
-            return StatusCode(500, "Internal server error while retrieving return locations");
+            return StatusCode(500, new { message = "Internal server error while retrieving return locations" });
         }
     }
 
     // POST: api/Locations
     [HttpPost]
+    [Authorize]
     public async Task<ActionResult<Location>> CreateLocation([FromBody] Location location)
     {
         try
         {
+            // Check if user has admin privileges
+            if (!HasAdminPrivileges())
+                return Forbid();
+
+            // Check if user can edit locations for this company
+            if (!CanEditCompanyLocations(location.CompanyId))
+                return Forbid();
+
             // Validate company exists
             var company = await _context.Companies.FindAsync(location.CompanyId);
             if (company == null)
             {
-                return BadRequest($"Company with ID {location.CompanyId} not found");
+                return BadRequest(new { message = $"Company with ID {location.CompanyId} not found" });
             }
 
             // Set timestamps
@@ -218,26 +260,35 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating location");
-            return StatusCode(500, "Internal server error while creating location");
+            return StatusCode(500, new { message = "Internal server error while creating location" });
         }
     }
 
     // PUT: api/Locations/{id}
     [HttpPut("{id}")]
+    [Authorize]
     public async Task<IActionResult> UpdateLocation(Guid id, [FromBody] Location location)
     {
         if (id != location.Id)
         {
-            return BadRequest("Location ID mismatch");
+            return BadRequest(new { message = "Location ID mismatch" });
         }
 
         try
         {
+            // Check if user has admin privileges
+            if (!HasAdminPrivileges())
+                return Forbid();
+
             var existingLocation = await _context.Locations.FindAsync(id);
             if (existingLocation == null)
             {
-                return NotFound($"Location with ID {id} not found");
+                return NotFound(new { message = $"Location with ID {id} not found" });
             }
+
+            // Check if user can edit locations for this company
+            if (!CanEditCompanyLocations(existingLocation.CompanyId))
+                return Forbid();
 
             // Validate company exists if it's being changed
             if (existingLocation.CompanyId != location.CompanyId)
@@ -245,7 +296,7 @@ public class LocationsController : ControllerBase
                 var company = await _context.Companies.FindAsync(location.CompanyId);
                 if (company == null)
                 {
-                    return BadRequest($"Company with ID {location.CompanyId} not found");
+                    return BadRequest(new { message = $"Company with ID {location.CompanyId} not found" });
                 }
             }
 
@@ -277,64 +328,81 @@ public class LocationsController : ControllerBase
         {
             if (!await LocationExists(id))
             {
-                return NotFound($"Location with ID {id} not found");
+                return NotFound(new { message = $"Location with ID {id} not found" });
             }
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating location {LocationId}", id);
-            return StatusCode(500, "Internal server error while updating location");
+            return StatusCode(500, new { message = "Internal server error while updating location" });
         }
     }
 
     // DELETE: api/Locations/{id}
     [HttpDelete("{id}")]
+    [Authorize]
     public async Task<IActionResult> DeleteLocation(Guid id)
     {
         try
         {
+            // Check if user has admin privileges
+            if (!HasAdminPrivileges())
+                return Forbid();
+
             var location = await _context.Locations
                 .Include(l => l.Vehicles)
                 .FirstOrDefaultAsync(l => l.Id == id);
 
             if (location == null)
             {
-                return NotFound($"Location with ID {id} not found");
+                return NotFound(new { message = $"Location with ID {id} not found" });
             }
 
-            // Check if location has vehicles
-            if (location.Vehicles.Any())
-            {
-                return BadRequest($"Cannot delete location. {location.Vehicles.Count} vehicle(s) are assigned to this location. " +
-                    "Please reassign vehicles before deleting.");
-            }
+            // Check if user can edit locations for this company
+            if (!CanEditCompanyLocations(location.CompanyId))
+                return Forbid();
 
+            // Count vehicles that will be affected (for logging)
+            var vehicleCount = location.Vehicles.Count();
+            _logger.LogInformation("Deleting location {LocationId} with {VehicleCount} vehicles assigned", id, vehicleCount);
+
+            // Delete the location - database will automatically set vehicles.current_location_id to NULL
+            // due to OnDelete(DeleteBehavior.SetNull) foreign key constraint
             _context.Locations.Remove(location);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Deleted location {LocationId}", id);
+            _logger.LogInformation("Deleted location {LocationId}, {VehicleCount} vehicles updated (current_location_id set to NULL)", id, vehicleCount);
 
             return NoContent();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting location {LocationId}", id);
-            return StatusCode(500, "Internal server error while deleting location");
+            return StatusCode(500, new { message = "Internal server error while deleting location" });
         }
     }
 
     // PATCH: api/Locations/{id}/deactivate
     [HttpPatch("{id}/deactivate")]
+    [Authorize]
     public async Task<IActionResult> DeactivateLocation(Guid id)
     {
         try
         {
+            // Check if user has admin privileges
+            if (!HasAdminPrivileges())
+                return Forbid();
+
             var location = await _context.Locations.FindAsync(id);
             if (location == null)
             {
-                return NotFound($"Location with ID {id} not found");
+                return NotFound(new { message = $"Location with ID {id} not found" });
             }
+
+            // Check if user can edit locations for this company
+            if (!CanEditCompanyLocations(location.CompanyId))
+                return Forbid();
 
             location.IsActive = false;
             location.UpdatedAt = DateTime.UtcNow;
@@ -348,21 +416,30 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deactivating location {LocationId}", id);
-            return StatusCode(500, "Internal server error while deactivating location");
+            return StatusCode(500, new { message = "Internal server error while deactivating location" });
         }
     }
 
     // PATCH: api/Locations/{id}/activate
     [HttpPatch("{id}/activate")]
+    [Authorize]
     public async Task<IActionResult> ActivateLocation(Guid id)
     {
         try
         {
+            // Check if user has admin privileges
+            if (!HasAdminPrivileges())
+                return Forbid();
+
             var location = await _context.Locations.FindAsync(id);
             if (location == null)
             {
-                return NotFound($"Location with ID {id} not found");
+                return NotFound(new { message = $"Location with ID {id} not found" });
             }
+
+            // Check if user can edit locations for this company
+            if (!CanEditCompanyLocations(location.CompanyId))
+                return Forbid();
 
             location.IsActive = true;
             location.UpdatedAt = DateTime.UtcNow;
@@ -376,7 +453,7 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error activating location {LocationId}", id);
-            return StatusCode(500, "Internal server error while activating location");
+            return StatusCode(500, new { message = "Internal server error while activating location" });
         }
     }
 
@@ -402,7 +479,7 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving states");
-            return StatusCode(500, "Internal server error while retrieving states");
+            return StatusCode(500, new { message = "Internal server error while retrieving states" });
         }
     }
 
@@ -433,7 +510,7 @@ public class LocationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving cities");
-            return StatusCode(500, "Internal server error while retrieving cities");
+            return StatusCode(500, new { message = "Internal server error while retrieving cities" });
         }
     }
 
