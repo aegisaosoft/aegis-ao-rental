@@ -19,6 +19,7 @@ using CarRental.Api.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 
 namespace CarRental.Api.Middleware
 {
@@ -26,11 +27,13 @@ namespace CarRental.Api.Middleware
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<CompanyMiddleware> _logger;
+        private readonly IWebHostEnvironment _environment;
 
-        public CompanyMiddleware(RequestDelegate next, ILogger<CompanyMiddleware> logger)
+        public CompanyMiddleware(RequestDelegate next, ILogger<CompanyMiddleware> logger, IWebHostEnvironment environment)
         {
             _next = next;
             _logger = logger;
+            _environment = environment;
         }
 
         public async Task InvokeAsync(HttpContext context, ICompanyService companyService)
@@ -129,6 +132,23 @@ namespace CarRental.Api.Middleware
                             _logger.LogWarning(
                                 "Could not resolve company from hostname {Hostname}",
                                 hostname
+                            );
+                        }
+                    }
+                    // Development fallback: Use miamilifecars as default company in development
+                    else if (string.IsNullOrEmpty(companyId) && 
+                             (hostname == "localhost" || hostname == "127.0.0.1") &&
+                             _environment.IsDevelopment())
+                    {
+                        var defaultCompany = await companyService.GetCompanyBySubdomainAsync("miamilifecars");
+                        if (defaultCompany != null)
+                        {
+                            companyId = defaultCompany.Id.ToString();
+                            source = "dev-default";
+                            _logger.LogInformation(
+                                "Development mode: Using default company {CompanyId} ({CompanyName}) for localhost",
+                                companyId,
+                                defaultCompany.CompanyName
                             );
                         }
                     }
