@@ -87,10 +87,21 @@ namespace CarRental.Api.Middleware
                 // Priority 3: Try to determine from hostname (if request directly to API)
                 else
                 {
-                    var hostname = context.Request.Host.Host.ToLowerInvariant();
+                    // Check X-Forwarded-Host first (for proxy requests), then Host header
+                    var forwardedHost = context.Request.Headers["X-Forwarded-Host"].ToString();
+                    var hostname = !string.IsNullOrEmpty(forwardedHost) 
+                        ? forwardedHost.Split(',')[0].Trim().ToLowerInvariant().Split(':')[0] // Take first host, remove port
+                        : context.Request.Host.Host.ToLowerInvariant();
+                    
+                    _logger.LogDebug(
+                        "CompanyMiddleware: Trying hostname resolution. X-Forwarded-Host: {ForwardedHost}, Host: {Host}, Using: {Hostname}",
+                        forwardedHost,
+                        context.Request.Host.Host,
+                        hostname
+                    );
                     
                     // Skip resolution for localhost
-                    if (hostname != "localhost" && hostname != "127.0.0.1")
+                    if (hostname != "localhost" && hostname != "127.0.0.1" && !hostname.Contains("azurewebsites.net"))
                     {
                         var company = await companyService.GetCompanyByFullDomainAsync(hostname);
                         
@@ -98,10 +109,17 @@ namespace CarRental.Api.Middleware
                         {
                             companyId = company.Id.ToString();
                             source = "hostname";
-                            _logger.LogDebug(
+                            _logger.LogInformation(
                                 "Resolved company {CompanyId} ({CompanyName}) from hostname {Hostname}",
                                 companyId,
                                 company.CompanyName,
+                                hostname
+                            );
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "Could not resolve company from hostname {Hostname}",
                                 hostname
                             );
                         }
