@@ -68,6 +68,10 @@ namespace CarRental.Api.Middleware
                 {
                     companyId = queryCompanyId.ToString();
                     source = "query";
+                    _logger.LogInformation(
+                        "CompanyMiddleware: Found company ID {CompanyId} from query parameter",
+                        companyId
+                    );
                 }
                 // Priority 3: Try to determine from hostname (if request directly to API)
                 else
