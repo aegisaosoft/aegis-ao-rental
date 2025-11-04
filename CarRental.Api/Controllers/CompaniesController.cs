@@ -478,10 +478,28 @@ public class CompaniesController : ControllerBase
         try
         {
             var companyId = HttpContext.GetCompanyIdAsGuid();
+            var hostname = HttpContext.Request.Headers["X-Forwarded-Host"].ToString();
+            if (string.IsNullOrEmpty(hostname))
+            {
+                hostname = HttpContext.Request.Host.Host;
+            }
+            
+            _logger.LogInformation(
+                "GetCurrentCompanyConfig: CompanyId={CompanyId}, Hostname={Hostname}, X-Forwarded-Host={ForwardedHost}, Host={Host}",
+                companyId,
+                hostname,
+                HttpContext.Request.Headers["X-Forwarded-Host"].ToString(),
+                HttpContext.Request.Host.Host
+            );
             
             if (!companyId.HasValue)
             {
-                return BadRequest(new { error = "Company ID is required. Domain-based company resolution failed." });
+                _logger.LogWarning(
+                    "GetCurrentCompanyConfig: No company ID found. Hostname={Hostname}, Headers={Headers}",
+                    hostname,
+                    string.Join(", ", HttpContext.Request.Headers.Select(h => $"{h.Key}={h.Value}"))
+                );
+                return BadRequest(new { error = "Company ID is required. Domain-based company resolution failed.", hostname = hostname });
             }
 
             var company = await _companyService.GetCompanyByIdAsync(companyId.Value);
