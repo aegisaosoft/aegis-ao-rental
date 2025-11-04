@@ -66,7 +66,18 @@ namespace CarRental.Api.Middleware
                 else if (context.Request.Query.TryGetValue("companyId", out var queryCompanyId) &&
                          !string.IsNullOrWhiteSpace(queryCompanyId))
                 {
-                    companyId = queryCompanyId.ToString();
+                    // Handle case where query parameter might be duplicated (take first value)
+                    var queryValue = queryCompanyId.ToString();
+                    // If comma-separated, take the first one
+                    if (queryValue.Contains(','))
+                    {
+                        queryValue = queryValue.Split(',')[0].Trim();
+                        _logger.LogWarning(
+                            "CompanyMiddleware: Duplicate companyId in query, using first value: {CompanyId}",
+                            queryValue
+                        );
+                    }
+                    companyId = queryValue;
                     source = "query";
                     _logger.LogInformation(
                         "CompanyMiddleware: Found company ID {CompanyId} from query parameter",
