@@ -80,8 +80,9 @@ public class DriverLicenseController : ControllerBase
                 return BadRequest(new { message = "File size exceeds maximum limit of 10MB" });
             }
 
-            // Create directory structure: public/<company id>/<user id>/
-            var publicDir = Path.Combine(_env.WebRootPath ?? _env.ContentRootPath, "public");
+            // Create directory structure: wwwroot/public/<company id>/<user id>/
+            // Match the static file serving path configured in Program.cs
+            var publicDir = Path.Combine(_env.ContentRootPath, "wwwroot", "public");
             var companyDir = Path.Combine(publicDir, companyId.Value.ToString());
             var userDir = Path.Combine(companyDir, userId.ToString());
 
