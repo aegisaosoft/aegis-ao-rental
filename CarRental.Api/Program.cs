@@ -103,6 +103,10 @@ builder.Services.AddDbContext<CarRentalDbContext>((serviceProvider, options) =>
             errorCodesToAdd: null);
     });
 
+    // Explicitly disable compiled model detection to prevent "Token not valid Type token" errors
+    // This forces EF Core to build the model at runtime instead of using potentially corrupted compiled models
+    options.UseModel(null);
+
     if (dbSettings.EnableSensitiveDataLogging)
     {
         options.EnableSensitiveDataLogging();
