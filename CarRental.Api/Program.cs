@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.FileProviders;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
 using CarRental.Api.Filters;
@@ -225,8 +226,17 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 // 2. HTTPS Redirection (early in pipeline)
 app.UseHttpsRedirection();
 
-// 3. Static files for uploads
-app.UseStaticFiles();
+// 3. Static files for uploads (serve from wwwroot/public)
+var publicPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "public");
+if (!Directory.Exists(publicPath))
+{
+    Directory.CreateDirectory(publicPath);
+}
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(publicPath),
+    RequestPath = "/public"
+});
 
 // 4. CORS (before authentication)
 app.UseCors("AllowAll");
