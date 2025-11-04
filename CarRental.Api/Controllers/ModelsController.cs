@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
+using CarRental.Api.Extensions;
 
 namespace CarRental.Api.Controllers;
 
@@ -47,13 +48,23 @@ public class ModelsController : ControllerBase
     /// <summary>
     /// Get all models grouped by category
     /// </summary>
-    /// <param name="companyId">Optional company ID to filter models by vehicles in company fleet</param>
+    /// <param name="companyId">Optional company ID to filter models by vehicles in company fleet. If not provided, uses company from domain context.</param>
     [HttpGet("grouped-by-category")]
     [ProducesResponseType(typeof(IEnumerable<ModelsGroupedByCategoryDto>), 200)]
     public async Task<IActionResult> GetModelsGroupedByCategory([FromQuery] Guid? companyId = null)
     {
         try
         {
+            // If companyId not provided, try to get from HttpContext (set by CompanyMiddleware)
+            if (!companyId.HasValue)
+            {
+                companyId = HttpContext.GetCompanyIdAsGuid();
+                if (companyId.HasValue)
+                {
+                    _logger.LogInformation("GetModelsGroupedByCategory: Using company ID from domain context: {CompanyId}", companyId);
+                }
+            }
+            
             _logger.LogInformation("GetModelsGroupedByCategory called with companyId={CompanyId}", companyId);
             
             var query = _context.Models
