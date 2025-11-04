@@ -149,9 +149,35 @@ namespace CarRental.Api.Middleware
                     }
                 }
             }
+            catch (System.ArgumentException ex) when (ex.Message.Contains("not a valid Type token") || ex.Message.Contains("metadataToken"))
+            {
+                // This is a critical EF Core deployment issue - compiled models are corrupted
+                _logger.LogCritical(
+                    ex,
+                    "CRITICAL: Entity Framework model resolution failed. This indicates a deployment/build issue. " +
+                    "The deployed assemblies are corrupted or mismatched. " +
+                    "Company resolution disabled. Please rebuild and redeploy the application. " +
+                    "Error: {ErrorMessage}",
+                    ex.Message
+                );
+                // Don't throw - continue processing even if company resolution fails
+            }
+            catch (System.BadImageFormatException ex)
+            {
+                // This indicates corrupted DLLs in deployment
+                _logger.LogCritical(
+                    ex,
+                    "CRITICAL: BadImageFormatException in CompanyMiddleware. " +
+                    "The deployed assemblies are corrupted. " +
+                    "Company resolution disabled. Please rebuild and redeploy the application. " +
+                    "Error: {ErrorMessage}",
+                    ex.Message
+                );
+                // Don't throw - continue processing even if company resolution fails
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in CompanyMiddleware");
+                _logger.LogError(ex, "Error in CompanyMiddleware: {ErrorMessage}", ex.Message);
                 // Don't throw - continue processing even if company resolution fails
             }
 
