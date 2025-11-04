@@ -111,8 +111,25 @@ namespace CarRental.Api.Middleware
                         hostname
                     );
                     
-                    // Skip resolution for localhost
-                    if (hostname != "localhost" && hostname != "127.0.0.1" && !hostname.Contains("azurewebsites.net"))
+                    // Development fallback: Use miamilifecars as default company in development on localhost
+                    if (string.IsNullOrEmpty(companyId) && 
+                        (hostname == "localhost" || hostname == "127.0.0.1") &&
+                        _environment.IsDevelopment())
+                    {
+                        var defaultCompany = await companyService.GetCompanyBySubdomainAsync("miamilifecars");
+                        if (defaultCompany != null)
+                        {
+                            companyId = defaultCompany.Id.ToString();
+                            source = "dev-default";
+                            _logger.LogInformation(
+                                "Development mode: Using default company {CompanyId} ({CompanyName}) for localhost",
+                                companyId,
+                                defaultCompany.CompanyName
+                            );
+                        }
+                    }
+                    // Try to resolve from hostname for non-localhost
+                    else if (hostname != "localhost" && hostname != "127.0.0.1" && !hostname.Contains("azurewebsites.net"))
                     {
                         var company = await companyService.GetCompanyByFullDomainAsync(hostname);
                         
@@ -132,23 +149,6 @@ namespace CarRental.Api.Middleware
                             _logger.LogWarning(
                                 "Could not resolve company from hostname {Hostname}",
                                 hostname
-                            );
-                        }
-                    }
-                    // Development fallback: Use miamilifecars as default company in development
-                    else if (string.IsNullOrEmpty(companyId) && 
-                             (hostname == "localhost" || hostname == "127.0.0.1") &&
-                             _environment.IsDevelopment())
-                    {
-                        var defaultCompany = await companyService.GetCompanyBySubdomainAsync("miamilifecars");
-                        if (defaultCompany != null)
-                        {
-                            companyId = defaultCompany.Id.ToString();
-                            source = "dev-default";
-                            _logger.LogInformation(
-                                "Development mode: Using default company {CompanyId} ({CompanyName}) for localhost",
-                                companyId,
-                                defaultCompany.CompanyName
                             );
                         }
                     }
