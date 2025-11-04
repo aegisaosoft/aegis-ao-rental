@@ -21,6 +21,7 @@ using CarRental.Api.Data;
 using CarRental.Api.Services;
 using CarRental.Api.Filters;
 using CarRental.Api.Middleware;
+using CarRental.Api.Extensions;
 
 // Enable legacy timestamp behavior for Npgsql to handle DateTimes
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -133,6 +134,12 @@ builder.Services.AddScoped<IStripeService, StripeService>();
 // Add Company Management Service
 builder.Services.AddScoped<ICompanyManagementService, CompanyManagementService>();
 
+// Add Company Service for domain-based multi-tenancy
+builder.Services.AddScoped<ICompanyService, CompanyService>();
+
+// Add Memory Cache for company domain mapping
+builder.Services.AddMemoryCache();
+
 // Add Email Service
 builder.Services.AddScoped<IEmailService, EmailService>();
 
@@ -215,7 +222,11 @@ app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// 6. Swagger (only in Development - file uploads cause issues in production)
+// 6. Company Middleware - must come after Authentication/Authorization
+// This middleware resolves company from domain/subdomain and sets it in HttpContext
+app.UseCompanyMiddleware();
+
+// 7. Swagger (only in Development - file uploads cause issues in production)
 if (app.Environment.IsDevelopment())
 {
     try
@@ -234,7 +245,7 @@ if (app.Environment.IsDevelopment())
     }
 }
 
-// 7. Map Controllers (always last)
+// 8. Map Controllers (always last)
 app.MapControllers();
 
 app.Run();

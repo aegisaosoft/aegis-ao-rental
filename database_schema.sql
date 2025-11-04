@@ -239,6 +239,52 @@ ALTER TABLE public.customers OWNER TO alex;
 GRANT ALL ON TABLE public.customers TO alex;
 
 
+-- public.aegis_users definition
+
+-- Drop table
+
+-- DROP TABLE public.aegis_users;
+
+CREATE TABLE public.aegis_users (
+	aegis_user_id uuid DEFAULT uuid_generate_v4() NOT NULL,
+	userid varchar(255) NOT NULL,
+	first_name varchar(100) NOT NULL,
+	last_name varchar(100) NOT NULL,
+	phone varchar(50) NULL,
+	password_hash varchar(500) NULL,
+	date_of_birth date NULL,
+	address text NULL,
+	city varchar(100) NULL,
+	state varchar(100) NULL,
+	country varchar(100) NULL,
+	postal_code varchar(20) NULL,
+	stripe_customer_id varchar(255) NULL,
+	created_at timestamp DEFAULT CURRENT_TIMESTAMP NULL,
+	updated_at timestamp DEFAULT CURRENT_TIMESTAMP NULL,
+	"role" varchar(50) DEFAULT 'agent'::character varying NULL,
+	is_active bool DEFAULT true NULL,
+	last_login timestamp NULL,
+	CONSTRAINT aegis_users_userid_key UNIQUE (userid),
+	CONSTRAINT aegis_users_pkey PRIMARY KEY (aegis_user_id),
+	CONSTRAINT aegis_users_stripe_customer_id_key UNIQUE (stripe_customer_id),
+	CONSTRAINT valid_aegis_user_role CHECK (((role)::text = ANY ((ARRAY['agent'::character varying, 'admin'::character varying])::text[])))
+);
+CREATE INDEX idx_aegis_users_is_active ON public.aegis_users USING btree (is_active);
+CREATE INDEX idx_aegis_users_role ON public.aegis_users USING btree (role);
+
+-- Table Triggers
+
+create trigger update_aegis_users_updated_at before
+update
+    on
+    public.aegis_users for each row execute function update_updated_at_column();
+
+-- Permissions
+
+ALTER TABLE public.aegis_users OWNER TO alex;
+GRANT ALL ON TABLE public.aegis_users TO alex;
+
+
 -- public.locations definition
 
 -- Drop table

@@ -101,6 +101,10 @@ public class VehiclesController : ControllerBase
     /// <param name="companyId">Filter by company ID</param>
     /// <param name="status">Filter by status</param>
     /// <param name="location">Filter by location</param>
+    /// <param name="make">Filter by make</param>
+    /// <param name="model">Filter by model</param>
+    /// <param name="year">Filter by year</param>
+    /// <param name="licensePlate">Filter by license plate</param>
     /// <param name="minPrice">Minimum daily rate</param>
     /// <param name="maxPrice">Maximum daily rate</param>
     /// <param name="page">Page number</param>
@@ -114,6 +118,8 @@ public class VehiclesController : ControllerBase
         [FromQuery] Guid? categoryId = null,
         [FromQuery] string? make = null,
         [FromQuery] string? model = null,
+        [FromQuery] int? year = null,
+        [FromQuery] string? licensePlate = null,
         [FromQuery] string? status = null,
         [FromQuery] string? location = null,
         [FromQuery] decimal? minPrice = null,
@@ -159,6 +165,20 @@ public class VehiclesController : ControllerBase
             {
                 query = query.Where(v => v.VehicleModel != null && v.VehicleModel.Model != null && 
                     EF.Functions.ILike(v.VehicleModel.Model.ModelName, $"%{model}%"));
+            }
+
+            // Filter by year if provided
+            if (year.HasValue)
+            {
+                query = query.Where(v => v.VehicleModel != null && v.VehicleModel.Model != null && 
+                    v.VehicleModel.Model.Year == year.Value);
+            }
+
+            // Filter by license plate if provided (case-insensitive using ILIKE for PostgreSQL)
+            if (!string.IsNullOrEmpty(licensePlate))
+            {
+                query = query.Where(v => v.LicensePlate != null && 
+                    EF.Functions.ILike(v.LicensePlate, $"%{licensePlate}%"));
             }
 
             // Note: categoryId filtering will be done after fetching vehicles

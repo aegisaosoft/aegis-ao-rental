@@ -26,6 +26,7 @@ public class CarRentalDbContext : DbContext
 
     public DbSet<RentalCompany> Companies { get; set; }
     public DbSet<Customer> Customers { get; set; }
+    public DbSet<AegisUser> AegisUsers { get; set; }
     public DbSet<VehicleCategory> VehicleCategories { get; set; }
     public DbSet<Vehicle> Vehicles { get; set; }
     public DbSet<Location> Locations { get; set; }
@@ -56,6 +57,10 @@ public class CarRentalDbContext : DbContext
             .HasDefaultValueSql("uuid_generate_v4()");
 
         modelBuilder.Entity<Customer>()
+            .Property(e => e.Id)
+            .HasDefaultValueSql("uuid_generate_v4()");
+
+        modelBuilder.Entity<AegisUser>()
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 

@@ -110,6 +110,14 @@ public class RentalCompany
     [Column("custom_css")]
     public string? CustomCss { get; set; }
 
+    [MaxLength(100)]
+    [Column("country")]
+    public string? Country { get; set; }
+
+    [MaxLength(10)]
+    [Column("language")]
+    public string? Language { get; set; } = "en"; // ISO 639-1 language code
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 

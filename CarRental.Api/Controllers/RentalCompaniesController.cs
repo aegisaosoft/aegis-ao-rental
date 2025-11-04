@@ -91,6 +91,7 @@ public class RentalCompaniesController : ControllerBase
                 LogoUrl = c.LogoUrl,
                 FaviconUrl = c.FaviconUrl,
                 CustomCss = c.CustomCss,
+                Country = c.Country,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -136,6 +137,7 @@ public class RentalCompaniesController : ControllerBase
             LogoUrl = company.LogoUrl,
             FaviconUrl = company.FaviconUrl,
             CustomCss = company.CustomCss,
+            Country = company.Country,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -181,6 +183,7 @@ public class RentalCompaniesController : ControllerBase
             LogoUrl = company.LogoUrl,
             FaviconUrl = company.FaviconUrl,
             CustomCss = company.CustomCss,
+            Country = company.Country,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -225,6 +228,7 @@ public class RentalCompaniesController : ControllerBase
             LogoUrl = createCompanyDto.LogoUrl,
             FaviconUrl = createCompanyDto.FaviconUrl,
             CustomCss = createCompanyDto.CustomCss,
+            Country = createCompanyDto.Country,
             IsActive = true
         };
 
@@ -275,6 +279,7 @@ public class RentalCompaniesController : ControllerBase
                 LogoUrl = company.LogoUrl,
                 FaviconUrl = company.FaviconUrl,
                 CustomCss = company.CustomCss,
+                Country = company.Country,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -373,6 +378,9 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.CustomCss != null)
             company.CustomCss = updateCompanyDto.CustomCss;
+
+        if (updateCompanyDto.Country != null)
+            company.Country = updateCompanyDto.Country;
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;

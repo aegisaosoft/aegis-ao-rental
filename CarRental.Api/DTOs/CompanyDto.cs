@@ -83,6 +83,9 @@ public class RentalCompanyDto
     
     public string? CustomCss { get; set; }
     
+    [MaxLength(100)]
+    public string? Country { get; set; }
+    
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -149,6 +152,9 @@ public class CreateRentalCompanyDto
     public string? FaviconUrl { get; set; }
     
     public string? CustomCss { get; set; }
+    
+    [MaxLength(100)]
+    public string? Country { get; set; }
 }
 
 public class UpdateRentalCompanyDto
@@ -211,5 +217,83 @@ public class UpdateRentalCompanyDto
     
     public string? CustomCss { get; set; }
     
+    [MaxLength(100)]
+    public string? Country { get; set; }
+    
     public bool? IsActive { get; set; }
+}
+
+// DTO for company configuration (public API - used by frontend)
+public class CompanyConfigDto
+{
+    public Guid Id { get; set; }
+    public string CompanyName { get; set; } = string.Empty;
+    public string Subdomain { get; set; } = string.Empty;
+    public string FullDomain { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string? LogoUrl { get; set; }
+    public string? FaviconUrl { get; set; }
+    public string? PrimaryColor { get; set; }
+    public string? SecondaryColor { get; set; }
+    public string? Motto { get; set; }
+    public string? MottoDescription { get; set; }
+    public string? About { get; set; }
+    public string? VideoLink { get; set; }
+    public string? BannerLink { get; set; }
+    public string? BackgroundLink { get; set; }
+    public string? Website { get; set; }
+    public string? CustomCss { get; set; }
+    public string? Country { get; set; }
+    public bool BookingIntegrated { get; set; }
+    public string? Invitation { get; set; }
+    public string? Texts { get; set; }
+    public string? Language { get; set; }
+}
+
+// DTO for company list (admin)
+public class CompanyListDto
+{
+    public Guid Id { get; set; }
+    public string CompanyName { get; set; } = string.Empty;
+    public string Subdomain { get; set; } = string.Empty;
+    public string FullDomain { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public bool BookingIntegrated { get; set; }
+    public string? Country { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+// DTO for company details (admin)
+public class CompanyDetailDto
+{
+    public Guid Id { get; set; }
+    public string CompanyName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string Subdomain { get; set; } = string.Empty;
+    public string FullDomain { get; set; } = string.Empty;
+    public string? StripeAccountId { get; set; }
+    public string? TaxId { get; set; }
+    public bool IsActive { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public string? VideoLink { get; set; }
+    public string? BannerLink { get; set; }
+    public string? LogoLink { get; set; }
+    public string? Motto { get; set; }
+    public string? MottoDescription { get; set; }
+    public string? Invitation { get; set; }
+    public string? Texts { get; set; }
+    public string? Website { get; set; }
+    public string? BackgroundLink { get; set; }
+    public string? About { get; set; }
+    public string? CompanyPath { get; set; }
+    public bool BookingIntegrated { get; set; }
+    public string? PrimaryColor { get; set; }
+    public string? SecondaryColor { get; set; }
+    public string? LogoUrl { get; set; }
+    public string? FaviconUrl { get; set; }
+    public string? CustomCss { get; set; }
+    public string? Country { get; set; }
+    public string? Language { get; set; }
 }

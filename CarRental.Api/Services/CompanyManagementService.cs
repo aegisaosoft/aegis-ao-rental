@@ -138,8 +138,8 @@ public class CompanyManagementService : ICompanyManagementService
         {
             var query = _context.Vehicles
                 .Include(v => v.VehicleModel)
-                    .ThenInclude(vm => vm.Model)
-                        .ThenInclude(m => m.Category)
+                    .ThenInclude(vm => vm!.Model)
+                        .ThenInclude(m => m!.Category)
                 .Where(v => v.CompanyId == companyId);
 
             if (!string.IsNullOrEmpty(searchDto.Make))
