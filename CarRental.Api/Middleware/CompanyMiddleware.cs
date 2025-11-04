@@ -40,6 +40,14 @@ namespace CarRental.Api.Middleware
 
             try
             {
+                // Check if EF Core is available (database might not be initialized yet)
+                // This prevents errors during app startup when EF Core is still initializing
+                if (companyService == null)
+                {
+                    _logger.LogWarning("CompanyMiddleware: ICompanyService is null, skipping company resolution");
+                    await _next(context);
+                    return;
+                }
                 // Log all incoming headers for debugging (only in development)
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {

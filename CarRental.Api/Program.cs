@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Microsoft.AspNetCore.HttpOverrides;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
 using CarRental.Api.Filters;
@@ -210,6 +211,14 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline in correct order
+// 0. Forwarded Headers (must be first for proxy support)
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
+    // Trust all proxies in Azure (Azure App Service acts as a reverse proxy)
+    RequireHeaderSymmetry = false
+});
+
 // 1. Exception handling middleware (first to catch all exceptions)
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
