@@ -111,14 +111,25 @@ public class DriverLicenseController : ControllerBase
 
             _logger.LogInformation("Driver license image uploaded successfully. Company: {CompanyId}, User: {UserId}, Path: {FilePath}",
                 companyId.Value, userId, filePath);
+            
+            // Log the actual physical path for debugging
+            _logger.LogInformation("Physical file location: {FilePath}", filePath);
+            _logger.LogInformation("ContentRootPath: {ContentRootPath}", _env.ContentRootPath);
+            _logger.LogInformation("WebRootPath: {WebRootPath}", _env.WebRootPath);
 
             // Return the URL path (relative to wwwroot/public)
             var urlPath = $"/public/{companyId.Value}/{userId}/{fileName}";
+            
+            // Also return the full physical path for local debugging
+            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            var fullUrl = $"{baseUrl}{urlPath}";
 
             return Ok(new
             {
                 message = "Driver license uploaded successfully",
                 filePath = urlPath,
+                fullUrl = fullUrl,
+                physicalPath = filePath,
                 companyId = companyId.Value,
                 userId = userId
             });
@@ -127,6 +138,60 @@ public class DriverLicenseController : ControllerBase
         {
             _logger.LogError(ex, "Error uploading driver license image");
             return StatusCode(500, new { message = "An error occurred while uploading the file" });
+        }
+    }
+
+    /// <summary>
+    /// Get driver license image for the current user
+    /// </summary>
+    [HttpGet("image")]
+    [Authorize]
+    public IActionResult GetDriverLicenseImage()
+    {
+        try
+        {
+            // Get company ID from context (set by CompanyMiddleware)
+            var companyId = HttpContext.GetCompanyIdAsGuid();
+            if (!companyId.HasValue)
+            {
+                return BadRequest(new { message = "Company ID not found in request context" });
+            }
+
+            // Get user ID from JWT token
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            {
+                return Unauthorized(new { message = "Invalid user token" });
+            }
+
+            // Build file path
+            var publicDir = Path.Combine(_env.ContentRootPath, "wwwroot", "public");
+            var companyDir = Path.Combine(publicDir, companyId.Value.ToString());
+            var userDir = Path.Combine(companyDir, userId.ToString());
+            var fileName = "driverlicense.png";
+            var filePath = Path.Combine(userDir, fileName);
+
+            _logger.LogInformation("Looking for driver license image at: {FilePath}", filePath);
+
+            // Check if file exists
+            if (!System.IO.File.Exists(filePath))
+            {
+                _logger.LogWarning("Driver license image not found at: {FilePath}", filePath);
+                return NotFound(new { message = "Driver license image not found" });
+            }
+
+            // Return the file
+            var fileBytes = System.IO.File.ReadAllBytes(filePath);
+            var contentType = "image/png";
+            
+            _logger.LogInformation("Returning driver license image from: {FilePath}", filePath);
+            
+            return File(fileBytes, contentType, fileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving driver license image");
+            return StatusCode(500, new { message = "An error occurred while retrieving the file" });
         }
     }
 }
