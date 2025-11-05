@@ -231,11 +231,15 @@ var publicPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "p
 if (!Directory.Exists(publicPath))
 {
     Directory.CreateDirectory(publicPath);
+    app.Logger.LogInformation("Created public directory at: {PublicPath}", publicPath);
 }
+app.Logger.LogInformation("Static files will be served from: {PublicPath} at path /public", publicPath);
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(publicPath),
-    RequestPath = "/public"
+    RequestPath = "/public",
+    ServeUnknownFileTypes = true, // Allow serving files with unknown extensions
+    DefaultContentType = "application/octet-stream"
 });
 
 // 4. CORS (before authentication)
