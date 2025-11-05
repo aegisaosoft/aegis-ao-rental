@@ -44,47 +44,51 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
     options.ValueLengthLimit = 524_288_000;
     options.MultipartHeadersLengthLimit = 524_288_000;
 });
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(c =>
+// Only register Swagger services in Development to avoid issues in production
+if (builder.Environment.IsDevelopment())
 {
-    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(c =>
     {
-        Title = "Car Rental API",
-        Version = "v1",
-        Description = "API for managing car rental operations",
-        Contact = new Microsoft.OpenApi.Models.OpenApiContact
+        c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
         {
-            Name = "Car Rental API Support"
-        }
-    });
-    
-    // Add JWT Bearer authentication to Swagger
-    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-    {
-        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.",
-        Name = "Authorization",
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
-    });
-    
-    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
-    {
-        {
-            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            Title = "Car Rental API",
+            Version = "v1",
+            Description = "API for managing car rental operations",
+            Contact = new Microsoft.OpenApi.Models.OpenApiContact
             {
-                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                Name = "Car Rental API Support"
+            }
+        });
+        
+        // Add JWT Bearer authentication to Swagger
+        c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+        {
+            Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.",
+            Name = "Authorization",
+            In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+            Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+            Scheme = "Bearer"
+        });
+        
+        c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+        {
+            {
+                new Microsoft.OpenApi.Models.OpenApiSecurityScheme
                 {
-                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            Array.Empty<string>()
-        }
+                    Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                    {
+                        Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                        Id = "Bearer"
+                    }
+                },
+                Array.Empty<string>()
+            }
+        });
+        
+        // No longer need SwaggerFileOperationFilter since we use [FromForm] attributes
     });
-    
-    // No longer need SwaggerFileOperationFilter since we use [FromForm] attributes
-});
+}
 
 // Add Database Configuration Service
 builder.Services.AddScoped<IDatabaseConfigService, DatabaseConfigService>();
