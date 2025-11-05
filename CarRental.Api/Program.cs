@@ -107,13 +107,15 @@ builder.Services.AddDbContext<CarRentalDbContext>((serviceProvider, options) =>
 
         // Log database configuration (without sensitive data)
         var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogInformation("Configuring database connection...");
+        logger.LogInformation("[Database] Configuring database connection...");
         var connStr = dbConfigService.GetConnectionString();
         var hostPart = connStr.Split(';').FirstOrDefault(s => s.StartsWith("Host="));
         var dbPart = connStr.Split(';').FirstOrDefault(s => s.StartsWith("Database="));
-        logger.LogInformation("Database Host: {Host}, Database: {Database}", 
+        logger.LogInformation("[Database] Host: {Host}, Database: {Database}, Port: {Port}, SSLMode: {SSLMode}", 
             hostPart?.Replace("Host=", "") ?? "Unknown", 
-            dbPart?.Replace("Database=", "") ?? "Unknown");
+            dbPart?.Replace("Database=", "") ?? "Unknown",
+            connStr.Split(';').FirstOrDefault(s => s.StartsWith("Port="))?.Replace("Port=", "") ?? "Unknown",
+            connStr.Split(';').FirstOrDefault(s => s.StartsWith("SSL Mode="))?.Replace("SSL Mode=", "") ?? "Unknown");
 
         options.UseNpgsql(connectionString, npgsqlOptions =>
         {
@@ -146,7 +148,8 @@ builder.Services.AddDbContext<CarRentalDbContext>((serviceProvider, options) =>
         // Query splitting behavior is handled at query level, not configuration level
         // This setting is for reference only
         
-        logger.LogInformation("Database context configured successfully");
+        logger.LogInformation("[Database] Database context configured successfully. CommandTimeout: {Timeout}s, RetryOnFailure: {RetryEnabled}, MaxRetryCount: {MaxRetry}", 
+            dbSettings.CommandTimeout, dbSettings.EnableRetryOnFailure, dbSettings.MaxRetryCount);
     }
     catch (Exception ex)
     {
@@ -247,7 +250,10 @@ startupLogger.LogInformation("Content Root: {ContentRoot}", app.Environment.Cont
 startupLogger.LogInformation("Application Name: {ApplicationName}", app.Environment.ApplicationName);
 
 // Configure the HTTP request pipeline in correct order
+startupLogger.LogInformation("Configuring HTTP request pipeline...");
+
 // 0. Forwarded Headers (must be first for proxy support)
+startupLogger.LogInformation("Setting up forwarded headers...");
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost,
@@ -256,19 +262,22 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 });
 
 // 1. Exception handling middleware (first to catch all exceptions)
+startupLogger.LogInformation("Adding exception handling middleware...");
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 // 2. HTTPS Redirection (early in pipeline)
+startupLogger.LogInformation("Configuring HTTPS redirection...");
 app.UseHttpsRedirection();
 
 // 3. Static files for uploads (serve from wwwroot/public)
+startupLogger.LogInformation("Configuring static files...");
 var publicPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "public");
 if (!Directory.Exists(publicPath))
 {
     Directory.CreateDirectory(publicPath);
-    app.Logger.LogInformation("Created public directory at: {PublicPath}", publicPath);
+    startupLogger.LogInformation("Created public directory at: {PublicPath}", publicPath);
 }
-app.Logger.LogInformation("Static files will be served from: {PublicPath} at path /public", publicPath);
+startupLogger.LogInformation("Static files will be served from: {PublicPath} at path /public", publicPath);
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(publicPath),
@@ -278,14 +287,17 @@ app.UseStaticFiles(new StaticFileOptions
 });
 
 // 4. CORS (before authentication)
+startupLogger.LogInformation("Configuring CORS...");
 app.UseCors("AllowAll");
 
 // 5. Authentication & Authorization
+startupLogger.LogInformation("Configuring authentication and authorization...");
 app.UseAuthentication();
 app.UseAuthorization();
 
 // 6. Company Middleware - must come after Authentication/Authorization
 // This middleware resolves company from domain/subdomain and sets it in HttpContext
+startupLogger.LogInformation("Adding company middleware...");
 app.UseCompanyMiddleware();
 
 // 7. Swagger (only in Development - file uploads cause issues in production)
@@ -293,6 +305,7 @@ if (app.Environment.IsDevelopment())
 {
     try
     {
+        startupLogger.LogInformation("Configuring Swagger...");
         app.UseSwagger();
         app.UseSwaggerUI(c =>
         {
@@ -300,59 +313,57 @@ if (app.Environment.IsDevelopment())
             c.RoutePrefix = "swagger"; // Access at /swagger
             c.DocumentTitle = "Car Rental API Documentation";
         });
+        startupLogger.LogInformation("Swagger configured successfully");
     }
     catch (Exception ex)
     {
-        app.Logger.LogWarning(ex, "Swagger failed to initialize");
+        startupLogger.LogWarning(ex, "Swagger failed to initialize");
     }
 }
 
 // 8. Map Controllers (always last)
+startupLogger.LogInformation("Mapping controllers...");
 app.MapControllers();
-
-// Log startup information and verify database connection
-var logger = app.Services.GetRequiredService<ILogger<Program>>();
-logger.LogInformation("=== Application Startup ===");
-logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
-logger.LogInformation("Application Name: {ApplicationName}", app.Environment.ApplicationName);
-logger.LogInformation("Content Root: {ContentRoot}", app.Environment.ContentRootPath);
+startupLogger.LogInformation("Controllers mapped successfully");
+startupLogger.LogInformation("HTTP request pipeline configuration complete");
 
 // Test database connection before starting the server (non-blocking)
+startupLogger.LogInformation("Starting database connection test (non-blocking)...");
 _ = Task.Run(async () =>
 {
     try
     {
-        logger.LogInformation("Testing database connection...");
-        await Task.Delay(1000); // Brief delay to ensure services are ready
+        startupLogger.LogInformation("[Database] Testing database connection...");
+        await Task.Delay(2000); // Brief delay to ensure services are ready
         using (var scope = app.Services.CreateScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<CarRentalDbContext>();
             var canConnect = await dbContext.Database.CanConnectAsync();
             if (canConnect)
             {
-                logger.LogInformation("Database connection test successful");
+                startupLogger.LogInformation("[Database] Connection test successful");
             }
             else
             {
-                logger.LogWarning("Database connection test returned false");
+                startupLogger.LogWarning("[Database] Connection test returned false");
             }
         }
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Database connection test failed: {Message}", ex.Message);
+        startupLogger.LogError(ex, "[Database] Connection test failed: {Message}", ex.Message);
         // Don't throw - let the app try to start anyway
     }
 });
 
 try
 {
-    logger.LogInformation("Starting Kestrel web server...");
-    logger.LogInformation("Application is ready to accept requests");
+    startupLogger.LogInformation("Starting Kestrel web server...");
+    startupLogger.LogInformation("Application is ready to accept requests");
     app.Run();
 }
 catch (Exception ex)
 {
-    logger.LogCritical(ex, "Application failed to start. Error: {Message}", ex.Message);
+    startupLogger.LogCritical(ex, "Application failed to start. Error: {Message}", ex.Message);
     throw;
 }
