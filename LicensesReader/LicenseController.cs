@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading.Tasks;
 
 namespace RentalPlatform.Controllers
@@ -25,14 +27,35 @@ namespace RentalPlatform.Controllers
         /// POST /api/license/scan
         /// </summary>
         [HttpPost("scan")]
+        [Authorize]
         public async Task<ActionResult<LicenseVerificationResult>> ScanLicense(
             [FromBody] LicenseScanRequest request)
         {
             try
             {
-                // TODO: Get companyId from authenticated user's claims
-                // var companyId = Guid.Parse(User.FindFirst("CompanyId")?.Value ?? "");
-                var companyId = request.CompanyId;
+                // Get companyId from authenticated user's claims
+                var companyIdClaim = User.FindFirst("company_id")?.Value ?? User.FindFirst("CompanyId")?.Value;
+                Guid companyId;
+                
+                if (!string.IsNullOrEmpty(companyIdClaim) && Guid.TryParse(companyIdClaim, out companyId))
+                {
+                    // Use companyId from claims
+                    _logger.LogInformation("Using companyId from user claims: {CompanyId}", companyId);
+                }
+                else if (request.CompanyId != Guid.Empty)
+                {
+                    // Fallback to request CompanyId if not in claims
+                    companyId = request.CompanyId;
+                    _logger.LogWarning("CompanyId not found in claims, using request CompanyId: {CompanyId}", companyId);
+                }
+                else
+                {
+                    return BadRequest(new 
+                    { 
+                        success = false, 
+                        error = "CompanyId is required. Either authenticate with a user that has a company_id claim, or provide CompanyId in the request." 
+                    });
+                }
 
                 _logger.LogInformation(
                     "Processing license scan for customer {CustomerId}, License: {LicenseNumber}",
