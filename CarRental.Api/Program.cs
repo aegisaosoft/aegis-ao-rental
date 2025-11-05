@@ -17,8 +17,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Linq;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
 using CarRental.Api.Filters;
@@ -96,40 +99,61 @@ builder.Services.AddScoped<IDatabaseConfigService, DatabaseConfigService>();
 // Add Entity Framework with configuration
 builder.Services.AddDbContext<CarRentalDbContext>((serviceProvider, options) =>
 {
-    var dbConfigService = serviceProvider.GetRequiredService<IDatabaseConfigService>();
-    var connectionString = dbConfigService.GetConnectionString();
-    var dbSettings = dbConfigService.GetDatabaseSettings();
-
-    options.UseNpgsql(connectionString, npgsqlOptions =>
+    try
     {
-        npgsqlOptions.CommandTimeout(dbSettings.CommandTimeout);
-        npgsqlOptions.EnableRetryOnFailure(
-            maxRetryCount: dbSettings.MaxRetryCount,
-            maxRetryDelay: TimeSpan.Parse(dbSettings.MaxRetryDelay),
-            errorCodesToAdd: null);
-    });
+        var dbConfigService = serviceProvider.GetRequiredService<IDatabaseConfigService>();
+        var connectionString = dbConfigService.GetConnectionString();
+        var dbSettings = dbConfigService.GetDatabaseSettings();
 
-    // Note: We don't call UseModel() here, which forces EF Core to build the model at runtime
-    // instead of trying to use potentially corrupted compiled models. This prevents 
-    // "Token not valid Type token" errors that occur when compiled models are mismatched.
+        // Log database configuration (without sensitive data)
+        var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Configuring database connection...");
+        var connStr = dbConfigService.GetConnectionString();
+        var hostPart = connStr.Split(';').FirstOrDefault(s => s.StartsWith("Host="));
+        var dbPart = connStr.Split(';').FirstOrDefault(s => s.StartsWith("Database="));
+        logger.LogInformation("Database Host: {Host}, Database: {Database}", 
+            hostPart?.Replace("Host=", "") ?? "Unknown", 
+            dbPart?.Replace("Database=", "") ?? "Unknown");
 
-    if (dbSettings.EnableSensitiveDataLogging)
-    {
-        options.EnableSensitiveDataLogging();
+        options.UseNpgsql(connectionString, npgsqlOptions =>
+        {
+            npgsqlOptions.CommandTimeout(dbSettings.CommandTimeout);
+            npgsqlOptions.EnableRetryOnFailure(
+                maxRetryCount: dbSettings.MaxRetryCount,
+                maxRetryDelay: TimeSpan.Parse(dbSettings.MaxRetryDelay),
+                errorCodesToAdd: null);
+        });
+
+        // Note: We don't call UseModel() here, which forces EF Core to build the model at runtime
+        // instead of trying to use potentially corrupted compiled models. This prevents 
+        // "Token not valid Type token" errors that occur when compiled models are mismatched.
+
+        if (dbSettings.EnableSensitiveDataLogging)
+        {
+            options.EnableSensitiveDataLogging();
+        }
+
+        if (dbSettings.EnableDetailedErrors)
+        {
+            options.EnableDetailedErrors();
+        }
+
+        if (dbSettings.EnableServiceProviderCaching)
+        {
+            options.EnableServiceProviderCaching();
+        }
+
+        // Query splitting behavior is handled at query level, not configuration level
+        // This setting is for reference only
+        
+        logger.LogInformation("Database context configured successfully");
     }
-
-    if (dbSettings.EnableDetailedErrors)
+    catch (Exception ex)
     {
-        options.EnableDetailedErrors();
+        var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogCritical(ex, "Failed to configure database context");
+        throw;
     }
-
-    if (dbSettings.EnableServiceProviderCaching)
-    {
-        options.EnableServiceProviderCaching();
-    }
-
-    // Query splitting behavior is handled at query level, not configuration level
-    // This setting is for reference only
 });
 
 // Add JWT Service
@@ -215,6 +239,13 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Log environment information early
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+startupLogger.LogInformation("=== Application Startup ===");
+startupLogger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
+startupLogger.LogInformation("Content Root: {ContentRoot}", app.Environment.ContentRootPath);
+startupLogger.LogInformation("Application Name: {ApplicationName}", app.Environment.ApplicationName);
+
 // Configure the HTTP request pipeline in correct order
 // 0. Forwarded Headers (must be first for proxy support)
 app.UseForwardedHeaders(new ForwardedHeadersOptions
@@ -279,4 +310,49 @@ if (app.Environment.IsDevelopment())
 // 8. Map Controllers (always last)
 app.MapControllers();
 
-app.Run();
+// Log startup information and verify database connection
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+logger.LogInformation("=== Application Startup ===");
+logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
+logger.LogInformation("Application Name: {ApplicationName}", app.Environment.ApplicationName);
+logger.LogInformation("Content Root: {ContentRoot}", app.Environment.ContentRootPath);
+
+// Test database connection before starting the server (non-blocking)
+_ = Task.Run(async () =>
+{
+    try
+    {
+        logger.LogInformation("Testing database connection...");
+        await Task.Delay(1000); // Brief delay to ensure services are ready
+        using (var scope = app.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<CarRentalDbContext>();
+            var canConnect = await dbContext.Database.CanConnectAsync();
+            if (canConnect)
+            {
+                logger.LogInformation("Database connection test successful");
+            }
+            else
+            {
+                logger.LogWarning("Database connection test returned false");
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Database connection test failed: {Message}", ex.Message);
+        // Don't throw - let the app try to start anyway
+    }
+});
+
+try
+{
+    logger.LogInformation("Starting Kestrel web server...");
+    logger.LogInformation("Application is ready to accept requests");
+    app.Run();
+}
+catch (Exception ex)
+{
+    logger.LogCritical(ex, "Application failed to start. Error: {Message}", ex.Message);
+    throw;
+}
