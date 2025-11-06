@@ -254,6 +254,7 @@ public class CompanyConfigDto
     public string? Invitation { get; set; }
     public string? Texts { get; set; }
     public string? Language { get; set; }
+    public string? BlinkKey { get; set; } // BlinkID license key for the company
 }
 
 // DTO for company list (admin)
