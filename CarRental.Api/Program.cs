@@ -214,18 +214,28 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
-// Add CORS - Temporarily open for all origins to allow health checks from anywhere
+// Add CORS - Allow specific origins with credentials support
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        // Temporarily allow all origins for health checks and API testing
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        // Get allowed origins from configuration or use defaults
+        var allowedOrigins = builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
+            ?? new[]
+            {
+                "https://admin.aegis-rental.com",
+                "https://miamilifecars.aegis-rental.com",
+                "http://localhost:3000",
+                "https://localhost:3000",
+                "http://localhost:5000",
+                "https://localhost:5000"
+            };
         
-        // NOTE: AllowCredentials() cannot be used with AllowAnyOrigin()
-        // If you need credentials later, switch back to SetIsOriginAllowed with specific origins
+        // Allow specific origins with credentials support
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // Required for requests with credentials (cookies, auth headers)
     });
 });
 
