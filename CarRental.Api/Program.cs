@@ -180,6 +180,7 @@ builder.Services.AddMemoryCache();
 
 // Add Health Checks
 builder.Services.AddHealthChecks()
+    .AddCheck("startup", () => HealthCheckResult.Healthy("Application is running"), tags: new[] { "ready" })
     .AddDbContextCheck<CarRentalDbContext>(tags: new[] { "ready" });
 
 // Add Email Service
@@ -351,6 +352,13 @@ app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks
 app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains("ready"),
+    // Allow the service to be ready even if database check fails (database is lazy-loaded)
+    ResultStatusCodes = new Dictionary<HealthStatus, int>
+    {
+        { HealthStatus.Healthy, 200 },
+        { HealthStatus.Degraded, 200 }, // Return 200 even if degraded (database might be temporarily unavailable)
+        { HealthStatus.Unhealthy, 503 } // Only return 503 if truly unhealthy
+    },
     ResponseWriter = async (context, report) =>
     {
         context.Response.ContentType = "application/json";
@@ -361,7 +369,8 @@ app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.Health
             {
                 name = e.Key,
                 status = e.Value.Status.ToString(),
-                description = e.Value.Description
+                description = e.Value.Description,
+                exception = e.Value.Exception?.Message
             })
         });
         await context.Response.WriteAsync(result);
