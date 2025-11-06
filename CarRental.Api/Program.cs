@@ -245,6 +245,7 @@ var app = builder.Build();
 // Log environment information early
 var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
 startupLogger.LogInformation("=== Application Startup ===");
+startupLogger.LogInformation("Build timestamp: {Timestamp}", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC"));
 startupLogger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
 startupLogger.LogInformation("Content Root: {ContentRoot}", app.Environment.ContentRootPath);
 startupLogger.LogInformation("Application Name: {ApplicationName}", app.Environment.ApplicationName);
