@@ -492,20 +492,26 @@ public class CompaniesController : ControllerBase
                 HttpContext.Request.Host.Host
             );
             
-            if (!companyId.HasValue)
+            // Try to get company from HttpContext first (set by CompanyMiddleware to avoid duplicate DB query)
+            RentalCompany? company = HttpContext.Items["Company"] as RentalCompany;
+            
+            if (company == null && companyId.HasValue)
             {
-                _logger.LogWarning(
-                    "GetCurrentCompanyConfig: No company ID found. Hostname={Hostname}, Headers={Headers}",
-                    hostname,
-                    string.Join(", ", HttpContext.Request.Headers.Select(h => $"{h.Key}={h.Value}"))
-                );
-                return BadRequest(new { error = "Company ID is required. Domain-based company resolution failed.", hostname = hostname });
+                // Fallback: query database if not in context
+                company = await _companyService.GetCompanyByIdAsync(companyId.Value);
             }
-
-            var company = await _companyService.GetCompanyByIdAsync(companyId.Value);
             
             if (company == null)
             {
+                if (!companyId.HasValue)
+                {
+                    _logger.LogWarning(
+                        "GetCurrentCompanyConfig: No company ID found. Hostname={Hostname}, Headers={Headers}",
+                        hostname,
+                        string.Join(", ", HttpContext.Request.Headers.Select(h => $"{h.Key}={h.Value}"))
+                    );
+                    return BadRequest(new { error = "Company ID is required. Domain-based company resolution failed.", hostname = hostname });
+                }
                 return NotFound(new { error = "Company not found" });
             }
 
