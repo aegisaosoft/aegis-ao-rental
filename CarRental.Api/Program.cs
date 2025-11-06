@@ -214,36 +214,18 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
-// Add CORS
+// Add CORS - Temporarily open for all origins to allow health checks from anywhere
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.SetIsOriginAllowed(origin =>
-        {
-            if (string.IsNullOrEmpty(origin))
-                return false;
-
-            var uri = new Uri(origin);
-            
-            // Allow localhost for development
-            if (uri.Host == "localhost" || uri.Host == "127.0.0.1")
-                return true;
-            
-            // Allow Azure websites
-            if (uri.Host.EndsWith(".azurewebsites.net", StringComparison.OrdinalIgnoreCase))
-                return true;
-            
-            // Allow aegis-rental.com and all subdomains
-            if (uri.Host.Equals("aegis-rental.com", StringComparison.OrdinalIgnoreCase) ||
-                uri.Host.EndsWith(".aegis-rental.com", StringComparison.OrdinalIgnoreCase))
-                return true;
-            
-            return false;
-        })
-        .AllowAnyHeader()
-        .AllowAnyMethod()
-        .AllowCredentials();
+        // Temporarily allow all origins for health checks and API testing
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+        
+        // NOTE: AllowCredentials() cannot be used with AllowAnyOrigin()
+        // If you need credentials later, switch back to SetIsOriginAllowed with specific origins
     });
 });
 
