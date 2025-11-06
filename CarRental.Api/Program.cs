@@ -22,6 +22,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
 using CarRental.Api.Filters;
@@ -177,6 +178,10 @@ builder.Services.AddScoped<ICompanyService, CompanyService>();
 // Add Memory Cache for company domain mapping
 builder.Services.AddMemoryCache();
 
+// Add Health Checks
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<CarRentalDbContext>(tags: new[] { "ready" });
+
 // Add Email Service
 builder.Services.AddScoped<IEmailService, EmailService>();
 
@@ -322,7 +327,49 @@ if (app.Environment.IsDevelopment())
     }
 }
 
-// 8. Map Controllers (always last)
+// 8. Health Checks (before controllers, for Azure probes)
+startupLogger.LogInformation("Mapping health check endpoints...");
+app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        var result = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                description = e.Value.Description,
+                exception = e.Value.Exception?.Message
+            })
+        });
+        await context.Response.WriteAsync(result);
+    }
+});
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        var result = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                description = e.Value.Description
+            })
+        });
+        await context.Response.WriteAsync(result);
+    }
+});
+startupLogger.LogInformation("Health check endpoints mapped successfully");
+
+// 9. Map Controllers (always last)
 startupLogger.LogInformation("Mapping controllers...");
 app.MapControllers();
 startupLogger.LogInformation("Controllers mapped successfully");
