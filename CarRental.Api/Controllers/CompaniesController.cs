@@ -88,6 +88,7 @@ public class CompaniesController : ControllerBase
                 bookingIntegrated = !string.IsNullOrEmpty(c.BookingIntegrated) && (c.BookingIntegrated.ToLower() == "true" || c.BookingIntegrated == "1"),
                 taxId = c.TaxId,
                 stripeAccountId = c.StripeAccountId,
+                blinkKey = c.BlinkKey,
                 isActive = c.IsActive,
                 createdAt = c.CreatedAt,
                 updatedAt = c.UpdatedAt
@@ -142,6 +143,7 @@ public class CompaniesController : ControllerBase
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
                 stripeAccountId = company.StripeAccountId,
+                blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt
@@ -231,6 +233,7 @@ public class CompaniesController : ControllerBase
                 BookingIntegrated = request.BookingIntegrated.HasValue && request.BookingIntegrated.Value ? "true" : null,
                 TaxId = request.TaxId,
                 StripeAccountId = request.StripeAccountId,
+                BlinkKey = request.BlinkKey,
                 IsActive = request.IsActive ?? true,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -266,6 +269,7 @@ public class CompaniesController : ControllerBase
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
                 stripeAccountId = company.StripeAccountId,
+                blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt
@@ -386,6 +390,9 @@ public class CompaniesController : ControllerBase
             if (request.StripeAccountId != null)
                 company.StripeAccountId = request.StripeAccountId;
 
+            if (request.BlinkKey != null)
+                company.BlinkKey = request.BlinkKey;
+
             if (request.IsActive.HasValue)
                 company.IsActive = request.IsActive.Value;
 
@@ -421,6 +428,7 @@ public class CompaniesController : ControllerBase
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
                 stripeAccountId = company.StripeAccountId,
+                blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt
@@ -592,7 +600,8 @@ public class CompaniesController : ControllerBase
                               (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
             Invitation = company.Invitation,
             Texts = company.Texts,
-            Language = company.Language ?? "en"
+            Language = company.Language ?? "en",
+            BlinkKey = company.BlinkKey
         };
     }
 }
@@ -620,6 +629,7 @@ public class CreateCompanyRequest
     public bool? BookingIntegrated { get; set; }
     public string? TaxId { get; set; }
     public string? StripeAccountId { get; set; }
+    public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
 }
 
@@ -646,6 +656,7 @@ public class UpdateCompanyRequest
     public bool? BookingIntegrated { get; set; }
     public string? TaxId { get; set; }
     public string? StripeAccountId { get; set; }
+    public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
 }
 

@@ -86,6 +86,8 @@ public class RentalCompanyDto
     [MaxLength(100)]
     public string? Country { get; set; }
     
+    public string? BlinkKey { get; set; } // BlinkID license key for the company
+    
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -155,6 +157,8 @@ public class CreateRentalCompanyDto
     
     [MaxLength(100)]
     public string? Country { get; set; }
+    
+    public string? BlinkKey { get; set; } // BlinkID license key for the company
 }
 
 public class UpdateRentalCompanyDto
@@ -219,6 +223,8 @@ public class UpdateRentalCompanyDto
     
     [MaxLength(100)]
     public string? Country { get; set; }
+    
+    public string? BlinkKey { get; set; } // BlinkID license key for the company
     
     public bool? IsActive { get; set; }
 }
@@ -296,4 +302,5 @@ public class CompanyDetailDto
     public string? CustomCss { get; set; }
     public string? Country { get; set; }
     public string? Language { get; set; }
+    public string? BlinkKey { get; set; } // BlinkID license key for the company
 }

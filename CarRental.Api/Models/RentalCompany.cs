@@ -118,6 +118,9 @@ public class RentalCompany
     [Column("language")]
     public string? Language { get; set; } = "en"; // ISO 639-1 language code
 
+    [Column("blink_key")]
+    public string? BlinkKey { get; set; } // BlinkID license key for the company (domain-specific license)
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 

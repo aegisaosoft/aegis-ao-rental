@@ -92,6 +92,7 @@ public class RentalCompaniesController : ControllerBase
                 FaviconUrl = c.FaviconUrl,
                 CustomCss = c.CustomCss,
                 Country = c.Country,
+                BlinkKey = c.BlinkKey,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -138,6 +139,7 @@ public class RentalCompaniesController : ControllerBase
             FaviconUrl = company.FaviconUrl,
             CustomCss = company.CustomCss,
             Country = company.Country,
+            BlinkKey = company.BlinkKey,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -184,6 +186,7 @@ public class RentalCompaniesController : ControllerBase
             FaviconUrl = company.FaviconUrl,
             CustomCss = company.CustomCss,
             Country = company.Country,
+            BlinkKey = company.BlinkKey,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -280,6 +283,7 @@ public class RentalCompaniesController : ControllerBase
                 FaviconUrl = company.FaviconUrl,
                 CustomCss = company.CustomCss,
                 Country = company.Country,
+                BlinkKey = company.BlinkKey,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
