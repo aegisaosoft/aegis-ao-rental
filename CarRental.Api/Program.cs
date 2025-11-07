@@ -232,12 +232,32 @@ builder.Services.AddCors(options =>
                 "http://localhost:5000",
                 "https://localhost:5000"
             };
-        
-        // Allow specific origins with credentials support
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
+
+        var staticOrigins = new HashSet<string>(allowedOrigins, StringComparer.OrdinalIgnoreCase);
+
+        policy.AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials(); // Required for requests with credentials (cookies, auth headers)
+              .AllowCredentials()
+              .SetIsOriginAllowed(origin =>
+              {
+                  if (string.IsNullOrWhiteSpace(origin))
+                      return false;
+
+                  if (staticOrigins.Contains(origin))
+                      return true;
+
+                  if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                      return false;
+
+                  var host = uri.Host;
+                  if (host.Equals("aegis-rental.com", StringComparison.OrdinalIgnoreCase))
+                      return true;
+
+                  if (host.EndsWith(".aegis-rental.com", StringComparison.OrdinalIgnoreCase))
+                      return true;
+
+                  return false;
+              });
     });
 });
 
