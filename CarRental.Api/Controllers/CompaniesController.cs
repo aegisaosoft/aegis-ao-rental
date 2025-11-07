@@ -701,6 +701,31 @@ public class CompaniesController : ControllerBase
                     }
 
                     pictureObj["url"] = normalizedUrl;
+
+                    string caption = noteObj["caption"]?.GetValue<string>() ?? string.Empty;
+                    noteObj["caption"] = JsonValue.Create(caption);
+
+                    string title = noteObj["title"]?.GetValue<string>() ?? string.Empty;
+                    noteObj["title"] = JsonValue.Create(title);
+
+                    string symbol = noteObj["symbol"]?.GetValue<string>() ?? string.Empty;
+                    noteObj["symbol"] = JsonValue.Create(symbol);
+
+                    string symbolForeColor = noteObj["symbolForeColor"]?.GetValue<string>() ?? "#1f2937";
+                    if (!Regex.IsMatch(symbolForeColor ?? string.Empty, "^#[0-9A-Fa-f]{6}$"))
+                    {
+                        symbolForeColor = "#1f2937";
+                    }
+                    noteObj["symbolForeColor"] = JsonValue.Create(symbolForeColor);
+
+                    string textValue = noteObj["text"]?.GetValue<string>() ?? string.Empty;
+                    noteObj["text"] = JsonValue.Create(textValue);
+
+                    string foreColor = noteObj["foreColor"]?.GetValue<string>() ?? string.Empty;
+                    noteObj["foreColor"] = JsonValue.Create(foreColor);
+
+                    string backColor = noteObj["backColor"]?.GetValue<string>() ?? string.Empty;
+                    noteObj["backColor"] = JsonValue.Create(backColor);
                 }
             }
         }
