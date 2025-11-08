@@ -26,6 +26,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
 using System.Text.Encodings.Web;
+using System.Linq;
 
 namespace CarRental.Api.Controllers;
 
@@ -38,6 +39,7 @@ public class CompaniesController : ControllerBase
     private readonly ILogger<CompaniesController> _logger;
     private readonly ICompanyService _companyService;
     private readonly IWebHostEnvironment _environment;
+    private static readonly string[] SupportedLanguages = new[] { "en", "es", "pt", "fr", "de" };
 
     public CompaniesController(
         CarRentalDbContext context, 
@@ -147,6 +149,7 @@ public class CompaniesController : ControllerBase
                 bannerLink = company.BannerLink,
                 backgroundLink = company.BackgroundLink,
                 invitation = company.Invitation,
+                texts = company.Texts,
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
                 stripeAccountId = company.StripeAccountId,
@@ -246,7 +249,15 @@ public class CompaniesController : ControllerBase
                 UpdatedAt = DateTime.UtcNow
             };
 
-            company.Texts = await ProcessDesignAssetsAsync(company.Id, request.Texts);
+            var publicBaseUrl = GetPublicBaseUrl();
+
+            company.LogoUrl = await NormalizeAndSaveAssetAsync(company.Id, "logo", request.LogoUrl, publicBaseUrl);
+            company.FaviconUrl = await NormalizeAndSaveAssetAsync(company.Id, "favicon", request.FaviconUrl, publicBaseUrl);
+            company.BannerLink = await NormalizeAndSaveAssetAsync(company.Id, "banner", request.BannerLink, publicBaseUrl);
+            company.BackgroundLink = await NormalizeAndSaveAssetAsync(company.Id, "background", request.BackgroundLink, publicBaseUrl);
+            company.VideoLink = await NormalizeAndSaveAssetAsync(company.Id, "video", request.VideoLink, publicBaseUrl);
+
+            company.Texts = await ProcessDesignAssetsAsync(company.Id, request.Texts, publicBaseUrl);
 
             _context.Companies.Add(company);
             await _context.SaveChangesAsync();
@@ -339,6 +350,8 @@ public class CompaniesController : ControllerBase
                 }
             }
 
+            var publicBaseUrl = GetPublicBaseUrl();
+
             // Update fields if provided
             if (!string.IsNullOrWhiteSpace(request.CompanyName))
                 company.CompanyName = request.CompanyName;
@@ -353,10 +366,10 @@ public class CompaniesController : ControllerBase
                 company.SecondaryColor = request.SecondaryColor;
 
             if (request.LogoUrl != null)
-                company.LogoUrl = request.LogoUrl;
+                company.LogoUrl = await NormalizeAndSaveAssetAsync(company.Id, "logo", request.LogoUrl, publicBaseUrl);
 
             if (request.FaviconUrl != null)
-                company.FaviconUrl = request.FaviconUrl;
+                company.FaviconUrl = await NormalizeAndSaveAssetAsync(company.Id, "favicon", request.FaviconUrl, publicBaseUrl);
 
             if (request.Country != null)
                 company.Country = request.Country;
@@ -380,19 +393,19 @@ public class CompaniesController : ControllerBase
                 company.CustomCss = request.CustomCss;
 
             if (request.VideoLink != null)
-                company.VideoLink = request.VideoLink;
+                company.VideoLink = await NormalizeAndSaveAssetAsync(company.Id, "video", request.VideoLink, publicBaseUrl);
 
             if (request.BannerLink != null)
-                company.BannerLink = request.BannerLink;
+                company.BannerLink = await NormalizeAndSaveAssetAsync(company.Id, "banner", request.BannerLink, publicBaseUrl);
 
             if (request.BackgroundLink != null)
-                company.BackgroundLink = request.BackgroundLink;
+                company.BackgroundLink = await NormalizeAndSaveAssetAsync(company.Id, "background", request.BackgroundLink, publicBaseUrl);
 
             if (request.Invitation != null)
                 company.Invitation = request.Invitation;
 
             if (request.Texts != null)
-                company.Texts = await ProcessDesignAssetsAsync(company.Id, request.Texts);
+                company.Texts = await ProcessDesignAssetsAsync(company.Id, request.Texts, publicBaseUrl);
 
             if (request.BookingIntegrated.HasValue)
                 company.BookingIntegrated = request.BookingIntegrated.Value ? "true" : null;
@@ -587,7 +600,7 @@ public class CompaniesController : ControllerBase
         }
     }
 
-    private async Task<string?> ProcessDesignAssetsAsync(Guid companyId, string? texts)
+    private async Task<string?> ProcessDesignAssetsAsync(Guid companyId, string? texts, string publicBaseUrl)
     {
         if (string.IsNullOrWhiteSpace(texts))
         {
@@ -605,128 +618,117 @@ public class CompaniesController : ControllerBase
             return texts;
         }
 
-        if (rootNode is not JsonArray languages)
+        if (rootNode is not JsonArray array)
         {
             return texts;
         }
 
-        var designDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString(), "design");
-        bool hasChanges = false;
-
-        for (int languageIndex = 0; languageIndex < languages.Count; languageIndex++)
+        bool convertedFromLegacy = false;
+        JsonArray sectionsArray;
+        if (array.Any(item => item is JsonObject obj && obj.ContainsKey("language")))
         {
-            if (languages[languageIndex] is not JsonObject languageObj)
+            sectionsArray = ConvertLegacySections(array);
+            convertedFromLegacy = true;
+        }
+        else
+        {
+            sectionsArray = array;
+        }
+
+        var designDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString(), "design");
+        var sectionsDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString(), "sections");
+        bool hasChanges = convertedFromLegacy;
+
+        for (int sectionIndex = 0; sectionIndex < sectionsArray.Count; sectionIndex++)
+        {
+            if (sectionsArray[sectionIndex] is not JsonObject sectionObj)
             {
                 continue;
             }
 
-            var languageCode = languageObj["language"]?.GetValue<string>() ?? $"lang{languageIndex}";
-            if (languageObj["sections"] is not JsonArray sections)
+            if (EnsureSectionStructure(sectionObj))
             {
-                continue;
+                hasChanges = true;
             }
 
-            for (int sectionIndex = 0; sectionIndex < sections.Count; sectionIndex++)
+            if (sectionObj["backgroundImage"] is JsonObject backgroundImageObj)
             {
-                if (sections[sectionIndex] is not JsonObject sectionObj)
+                var backgroundUrl = backgroundImageObj["url"]?.GetValue<string>() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(backgroundUrl))
                 {
-                    continue;
-                }
-
-                JsonArray notes;
-                if (sectionObj["notes"] is JsonArray existingNotes)
-                {
-                    notes = existingNotes;
+                    var normalizedBackground = await NormalizeAndSaveSectionBackgroundAsync(
+                        companyId,
+                        sectionsDirectory,
+                        backgroundUrl,
+                        sectionIndex,
+                        publicBaseUrl);
+                    if (!string.Equals(normalizedBackground, backgroundUrl, StringComparison.Ordinal))
+                    {
+                        hasChanges = true;
+                    }
+                    backgroundImageObj["url"] = normalizedBackground;
                 }
                 else
                 {
-                    notes = new JsonArray();
-                    sectionObj["notes"] = notes;
+                    backgroundImageObj["url"] = string.Empty;
+                }
+            }
+
+            if (sectionObj["notes"] is not JsonArray notesArray)
+            {
+                notesArray = new JsonArray { CreateEmptyNoteObject() };
+                sectionObj["notes"] = notesArray;
+                hasChanges = true;
+            }
+
+            for (int noteIndex = 0; noteIndex < notesArray.Count; noteIndex++)
+            {
+                if (notesArray[noteIndex] is not JsonObject noteObj)
+                {
+                    noteObj = CreateEmptyNoteObject();
+                    notesArray[noteIndex] = noteObj;
                     hasChanges = true;
                 }
 
-                for (int noteIndex = 0; noteIndex < notes.Count; noteIndex++)
+                if (EnsureNoteStructure(noteObj))
                 {
-                    if (notes[noteIndex] is not JsonObject noteObj)
-                    {
-                        continue;
-                    }
-
-                    JsonObject pictureObj;
-                    string pictureUrl = string.Empty;
-
-                    var pictureNode = noteObj["picture"];
-                    if (pictureNode is JsonObject pictureObjExisting)
-                    {
-                        pictureObj = pictureObjExisting;
-                        pictureUrl = pictureObjExisting["url"]?.GetValue<string>() ?? string.Empty;
-                        if (string.IsNullOrWhiteSpace(pictureUrl) && pictureObjExisting["picturePng"] is JsonNode legacyPicture)
-                        {
-                            pictureUrl = legacyPicture.GetValue<string>();
-                            pictureObjExisting.Remove("picturePng");
-                            pictureObjExisting["url"] = pictureUrl;
-                            hasChanges = true;
-                        }
-                    }
-                    else if (pictureNode is JsonValue pictureValue)
-                    {
-                        pictureUrl = pictureValue.GetValue<string>() ?? string.Empty;
-                        pictureObj = new JsonObject { ["url"] = pictureUrl };
-                        noteObj["picture"] = pictureObj;
-                        hasChanges = true;
-                    }
-                    else if (noteObj["picturePng"] is JsonNode legacyPictureNode)
-                    {
-                        pictureUrl = legacyPictureNode.GetValue<string>() ?? string.Empty;
-                        pictureObj = new JsonObject { ["url"] = pictureUrl };
-                        noteObj["picture"] = pictureObj;
-                        noteObj.Remove("picturePng");
-                        hasChanges = true;
-                    }
-                    else
-                    {
-                        pictureObj = new JsonObject { ["url"] = string.Empty };
-                        noteObj["picture"] = pictureObj;
-                        hasChanges = true;
-                    }
-
-                    string normalizedUrl = pictureUrl;
-                    if (!string.IsNullOrWhiteSpace(pictureUrl))
-                    {
-                        normalizedUrl = await NormalizeAndSavePictureAsync(companyId, designDirectory, pictureUrl, languageCode, sectionIndex, noteIndex);
-                        if (!string.Equals(normalizedUrl, pictureUrl, StringComparison.Ordinal))
-                        {
-                            hasChanges = true;
-                        }
-                    }
-
-                    pictureObj["url"] = normalizedUrl;
-
-                    string caption = noteObj["caption"]?.GetValue<string>() ?? string.Empty;
-                    noteObj["caption"] = JsonValue.Create(caption);
-
-                    string title = noteObj["title"]?.GetValue<string>() ?? string.Empty;
-                    noteObj["title"] = JsonValue.Create(title);
-
-                    string symbol = noteObj["symbol"]?.GetValue<string>() ?? string.Empty;
-                    noteObj["symbol"] = JsonValue.Create(symbol);
-
-                    string symbolForeColor = noteObj["symbolForeColor"]?.GetValue<string>() ?? "#1f2937";
-                    if (!Regex.IsMatch(symbolForeColor ?? string.Empty, "^#[0-9A-Fa-f]{6}$"))
-                    {
-                        symbolForeColor = "#1f2937";
-                    }
-                    noteObj["symbolForeColor"] = JsonValue.Create(symbolForeColor);
-
-                    string textValue = noteObj["text"]?.GetValue<string>() ?? string.Empty;
-                    noteObj["text"] = JsonValue.Create(textValue);
-
-                    string foreColor = noteObj["foreColor"]?.GetValue<string>() ?? string.Empty;
-                    noteObj["foreColor"] = JsonValue.Create(foreColor);
-
-                    string backColor = noteObj["backColor"]?.GetValue<string>() ?? string.Empty;
-                    noteObj["backColor"] = JsonValue.Create(backColor);
+                    hasChanges = true;
                 }
+
+                JsonObject pictureObj;
+                string pictureUrl = string.Empty;
+
+                var pictureNode = noteObj["picture"];
+                if (pictureNode is JsonObject existingPicture)
+                {
+                    pictureObj = existingPicture;
+                    pictureUrl = existingPicture["url"]?.GetValue<string>() ?? string.Empty;
+                }
+                else if (pictureNode is JsonValue pictureValue)
+                {
+                    pictureUrl = pictureValue.GetValue<string>() ?? string.Empty;
+                    pictureObj = new JsonObject { ["url"] = pictureUrl };
+                    noteObj["picture"] = pictureObj;
+                    hasChanges = true;
+                }
+                else
+                {
+                    pictureObj = new JsonObject { ["url"] = string.Empty };
+                    noteObj["picture"] = pictureObj;
+                    hasChanges = true;
+                }
+
+                var normalizedUrl = pictureUrl;
+                if (!string.IsNullOrWhiteSpace(pictureUrl))
+                {
+                    normalizedUrl = await NormalizeAndSavePictureAsync(companyId, designDirectory, pictureUrl, sectionIndex, noteIndex, publicBaseUrl);
+                    if (!string.Equals(normalizedUrl, pictureUrl, StringComparison.Ordinal))
+                    {
+                        hasChanges = true;
+                    }
+                }
+
+                pictureObj["url"] = normalizedUrl;
             }
         }
 
@@ -741,10 +743,436 @@ public class CompaniesController : ControllerBase
             WriteIndented = false
         };
 
-        return languages.ToJsonString(serializerOptions);
+        return sectionsArray.ToJsonString(serializerOptions);
     }
 
-    private async Task<string> NormalizeAndSavePictureAsync(Guid companyId, string designDirectory, string pictureUrl, string languageCode, int sectionIndex, int noteIndex)
+    private JsonArray ConvertLegacySections(JsonArray legacyLanguages)
+    {
+        var sections = new List<JsonObject>();
+
+        for (int languageIndex = 0; languageIndex < legacyLanguages.Count; languageIndex++)
+        {
+            if (legacyLanguages[languageIndex] is not JsonObject languageObj)
+            {
+                continue;
+            }
+
+            var languageCode = languageObj["language"]?.GetValue<string>() ?? "en";
+            if (languageObj["sections"] is not JsonArray legacySections)
+            {
+                continue;
+            }
+
+            for (int sectionIndex = 0; sectionIndex < legacySections.Count; sectionIndex++)
+            {
+                if (legacySections[sectionIndex] is not JsonObject legacySection)
+                {
+                    continue;
+                }
+
+                while (sections.Count <= sectionIndex)
+                {
+                    sections.Add(CreateEmptySectionObject());
+                }
+
+                var targetSection = sections[sectionIndex];
+
+                var backColor = legacySection["backColor"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(backColor))
+                {
+                    targetSection["backColor"] = backColor;
+                }
+
+                var foreColor = legacySection["foreColor"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(foreColor))
+                {
+                    targetSection["foreColor"] = foreColor;
+                }
+
+                var notesLayout = legacySection["notesLayout"]?.GetValue<string>();
+                if (string.Equals(notesLayout, "horizontal", StringComparison.OrdinalIgnoreCase))
+                {
+                    targetSection["notesLayout"] = "horizontal";
+                }
+
+                var alignmentValue = legacySection["alignment"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(alignmentValue))
+                {
+                    var alignmentNormalized = alignmentValue.ToLowerInvariant();
+                    if (alignmentNormalized is "left" or "center" or "right")
+                    {
+                        targetSection["alignment"] = alignmentNormalized;
+                    }
+                }
+
+                var backgroundValue = GetPictureUrl(legacySection["backgroundImage"] ?? legacySection["backgroundImageUrl"]);
+                if (!string.IsNullOrWhiteSpace(backgroundValue))
+                {
+                    targetSection["backgroundImage"] = new JsonObject { ["url"] = backgroundValue };
+                }
+
+                var titleObj = targetSection["title"] as JsonObject ?? CreateEmptyLocalizedObject();
+                titleObj[languageCode] = JsonValue.Create(legacySection["title"]?.GetValue<string>() ?? string.Empty);
+                targetSection["title"] = titleObj;
+
+                var descriptionObj = targetSection["description"] as JsonObject ?? CreateEmptyLocalizedObject();
+                descriptionObj[languageCode] = JsonValue.Create(legacySection["description"]?.GetValue<string>() ?? string.Empty);
+                targetSection["description"] = descriptionObj;
+
+                var notesArray = targetSection["notes"] as JsonArray ?? new JsonArray();
+                targetSection["notes"] = notesArray;
+
+                var legacyNotes = legacySection["notes"] as JsonArray;
+                if (legacyNotes == null)
+                {
+                    continue;
+                }
+
+                for (int noteIndex = 0; noteIndex < legacyNotes.Count; noteIndex++)
+                {
+                    if (legacyNotes[noteIndex] is not JsonObject legacyNote)
+                    {
+                        continue;
+                    }
+
+                    while (notesArray.Count <= noteIndex)
+                    {
+                        notesArray.Add(CreateEmptyNoteObject());
+                    }
+
+                    if (notesArray[noteIndex] is not JsonObject targetNote)
+                    {
+                        targetNote = CreateEmptyNoteObject();
+                        notesArray[noteIndex] = targetNote;
+                    }
+
+                    var pictureUrl = GetPictureUrl(legacyNote["picture"] ?? legacyNote["picturePng"]);
+                    if (!string.IsNullOrWhiteSpace(pictureUrl))
+                    {
+                        targetNote["picture"] = new JsonObject { ["url"] = pictureUrl };
+                    }
+
+                    var symbolForeColor = legacyNote["symbolForeColor"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(symbolForeColor))
+                    {
+                        targetNote["symbolForeColor"] = symbolForeColor;
+                    }
+
+                    var symbol = legacyNote["symbol"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(symbol))
+                    {
+                        targetNote["symbol"] = symbol;
+                    }
+
+                    var foreColorValue = legacyNote["foreColor"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(foreColorValue))
+                    {
+                        targetNote["foreColor"] = foreColorValue;
+                    }
+
+                    var backColorValue = legacyNote["backColor"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(backColorValue))
+                    {
+                        targetNote["backColor"] = backColorValue;
+                    }
+
+                    var noteTitleObj = targetNote["title"] as JsonObject ?? CreateEmptyLocalizedObject();
+                    noteTitleObj[languageCode] = JsonValue.Create(legacyNote["title"]?.GetValue<string>() ?? string.Empty);
+                    targetNote["title"] = noteTitleObj;
+
+                    var noteCaptionObj = targetNote["caption"] as JsonObject ?? CreateEmptyLocalizedObject();
+                    noteCaptionObj[languageCode] = JsonValue.Create(legacyNote["caption"]?.GetValue<string>() ?? string.Empty);
+                    targetNote["caption"] = noteCaptionObj;
+
+                    var noteTextObj = targetNote["text"] as JsonObject ?? CreateEmptyLocalizedObject();
+                    noteTextObj[languageCode] = JsonValue.Create(legacyNote["text"]?.GetValue<string>() ?? string.Empty);
+                    targetNote["text"] = noteTextObj;
+                }
+            }
+        }
+
+        var result = new JsonArray();
+        if (sections.Count == 0)
+        {
+            result.Add(CreateEmptySectionObject());
+        }
+        else
+        {
+            foreach (var section in sections)
+            {
+                EnsureSectionStructure(section);
+                result.Add(section);
+            }
+        }
+
+        return result;
+    }
+
+    private bool EnsureSectionStructure(JsonObject section)
+    {
+        bool changed = false;
+
+        if (EnsureColorValue(section, "backColor", "#ffffff"))
+        {
+            changed = true;
+        }
+
+        if (EnsureColorValue(section, "foreColor", "#000000"))
+        {
+            changed = true;
+        }
+
+        var layoutValue = section["notesLayout"] is JsonValue layoutNode && layoutNode.TryGetValue<string>(out var layoutString)
+            ? layoutString?.ToLowerInvariant()
+            : null;
+
+        if (layoutValue != "horizontal" && layoutValue != "vertical")
+        {
+            section["notesLayout"] = "vertical";
+            changed = true;
+        }
+        else
+        {
+            section["notesLayout"] = layoutValue;
+        }
+
+        var alignmentValue = section["alignment"] is JsonValue alignmentNode && alignmentNode.TryGetValue<string>(out var alignmentString)
+            ? alignmentString?.ToLowerInvariant()
+            : null;
+
+        if (alignmentValue is "left" or "center" or "right")
+        {
+            section["alignment"] = alignmentValue;
+        }
+        else
+        {
+            section["alignment"] = "left";
+            changed = true;
+        }
+
+        if (EnsureLocalizedProperty(section, "title"))
+        {
+            changed = true;
+        }
+
+        if (EnsureLocalizedProperty(section, "description"))
+        {
+            changed = true;
+        }
+
+        if (EnsurePictureProperty(section, "backgroundImage"))
+        {
+            changed = true;
+        }
+
+        if (section["notes"] is JsonArray notesArray)
+        {
+            if (notesArray.Count == 0)
+            {
+                notesArray.Add(CreateEmptyNoteObject());
+                changed = true;
+            }
+
+            for (int i = 0; i < notesArray.Count; i++)
+            {
+                if (notesArray[i] is JsonObject noteObj)
+                {
+                    if (EnsureNoteStructure(noteObj))
+                    {
+                        changed = true;
+                    }
+                }
+                else
+                {
+                    notesArray[i] = CreateEmptyNoteObject();
+                    changed = true;
+                }
+            }
+        }
+        else
+        {
+            section["notes"] = new JsonArray { CreateEmptyNoteObject() };
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private bool EnsureNoteStructure(JsonObject note)
+    {
+        bool changed = false;
+
+        if (EnsurePictureProperty(note, "picture"))
+        {
+            changed = true;
+        }
+
+        if (EnsureColorValue(note, "symbolForeColor", "#1f2937"))
+        {
+            changed = true;
+        }
+
+        if (EnsureStringValue(note, "symbol", string.Empty))
+        {
+            changed = true;
+        }
+
+        if (EnsureStringValue(note, "foreColor", string.Empty))
+        {
+            changed = true;
+        }
+
+        if (EnsureStringValue(note, "backColor", string.Empty))
+        {
+            changed = true;
+        }
+
+        if (EnsureLocalizedProperty(note, "title"))
+        {
+            changed = true;
+        }
+
+        if (EnsureLocalizedProperty(note, "caption"))
+        {
+            changed = true;
+        }
+
+        if (EnsureLocalizedProperty(note, "text"))
+        {
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private bool EnsurePictureProperty(JsonObject parent, string propertyName)
+    {
+        if (parent[propertyName] is JsonObject pictureObj)
+        {
+            if (pictureObj["url"] is JsonValue urlValue && urlValue.TryGetValue<string>(out var url))
+            {
+                pictureObj["url"] = url ?? string.Empty;
+                return false;
+            }
+
+            pictureObj["url"] = string.Empty;
+            return true;
+        }
+
+        parent[propertyName] = new JsonObject { ["url"] = string.Empty };
+        return true;
+    }
+
+    private bool EnsureLocalizedProperty(JsonObject parent, string propertyName)
+    {
+        if (parent[propertyName] is JsonObject localizedObj)
+        {
+            return EnsureLocalizedObject(localizedObj);
+        }
+
+        parent[propertyName] = CreateEmptyLocalizedObject();
+        return true;
+    }
+
+    private bool EnsureLocalizedObject(JsonObject obj)
+    {
+        bool changed = false;
+        foreach (var language in SupportedLanguages)
+        {
+            if (obj[language] is JsonValue value && value.TryGetValue<string>(out var str) && str is not null)
+            {
+                obj[language] = str;
+            }
+            else
+            {
+                obj[language] = string.Empty;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private bool EnsureStringValue(JsonObject parent, string propertyName, string defaultValue)
+    {
+        if (parent[propertyName] is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var str) && str is not null)
+        {
+            parent[propertyName] = str;
+            return false;
+        }
+
+        parent[propertyName] = defaultValue;
+        return true;
+    }
+
+    private bool EnsureColorValue(JsonObject parent, string propertyName, string defaultValue)
+    {
+        if (parent[propertyName] is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var str) && !string.IsNullOrWhiteSpace(str) && Regex.IsMatch(str, "^#[0-9A-Fa-f]{6}$"))
+        {
+            parent[propertyName] = str;
+            return false;
+        }
+
+        parent[propertyName] = defaultValue;
+        return true;
+    }
+
+    private JsonObject CreateEmptyLocalizedObject()
+    {
+        var obj = new JsonObject();
+        foreach (var language in SupportedLanguages)
+        {
+            obj[language] = string.Empty;
+        }
+        return obj;
+    }
+
+    private JsonObject CreateEmptyNoteObject()
+    {
+        return new JsonObject
+        {
+            ["picture"] = new JsonObject { ["url"] = string.Empty },
+            ["symbolForeColor"] = "#1f2937",
+            ["symbol"] = string.Empty,
+            ["foreColor"] = string.Empty,
+            ["backColor"] = string.Empty,
+            ["title"] = CreateEmptyLocalizedObject(),
+            ["caption"] = CreateEmptyLocalizedObject(),
+            ["text"] = CreateEmptyLocalizedObject()
+        };
+    }
+
+    private JsonObject CreateEmptySectionObject()
+    {
+        return new JsonObject
+        {
+            ["backColor"] = "#ffffff",
+            ["foreColor"] = "#000000",
+            ["notesLayout"] = "vertical",
+            ["alignment"] = "left",
+            ["backgroundImage"] = new JsonObject { ["url"] = string.Empty },
+            ["title"] = CreateEmptyLocalizedObject(),
+            ["description"] = CreateEmptyLocalizedObject(),
+            ["notes"] = new JsonArray { CreateEmptyNoteObject() }
+        };
+    }
+
+    private static string GetPictureUrl(JsonNode? node)
+    {
+        if (node is JsonObject obj && obj["url"] is JsonValue urlValue && urlValue.TryGetValue<string>(out var url) && !string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
+        if (node is JsonValue value && value.TryGetValue<string>(out var str) && !string.IsNullOrWhiteSpace(str))
+        {
+            return str;
+        }
+
+        return string.Empty;
+    }
+
+    private async Task<string> NormalizeAndSavePictureAsync(Guid companyId, string designDirectory, string pictureUrl, int sectionIndex, int noteIndex, string publicBaseUrl)
     {
         if (string.IsNullOrWhiteSpace(pictureUrl))
         {
@@ -787,17 +1215,18 @@ public class CompaniesController : ControllerBase
 
                 Directory.CreateDirectory(designDirectory);
 
-                var fileName = $"note-{SanitizeFileNamePart(languageCode)}-{sectionIndex}-{noteIndex}-{DateTime.UtcNow:yyyyMMddHHmmssfff}.{extension}";
+                var fileName = $"note-{sectionIndex}-{noteIndex}-{DateTime.UtcNow:yyyyMMddHHmmssfff}.{extension}";
                 var filePath = Path.Combine(designDirectory, fileName);
 
                 await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
 
-                return $"/public/{companyId}/design/{fileName}".Replace("\\", "/");
+                var relativePath = $"/public/{companyId}/design/{fileName}".Replace("\\", "/");
+                return CombineWithBase(publicBaseUrl, relativePath);
             }
 
             if (pictureUrl.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
             {
-                return pictureUrl.Replace("\\", "/");
+                return CombineWithBase(publicBaseUrl, pictureUrl.Replace("\\", "/"));
             }
 
             if (pictureUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || pictureUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -806,7 +1235,8 @@ public class CompaniesController : ControllerBase
             }
 
             // Treat as relative path and ensure it points inside the design directory
-            return $"/public/{companyId}/design/{pictureUrl.TrimStart('/', '\\')}".Replace("\\", "/");
+            var fallbackPath = $"/public/{companyId}/design/{pictureUrl.TrimStart('/', '\\')}".Replace("\\", "/");
+            return CombineWithBase(publicBaseUrl, fallbackPath);
         }
         catch (Exception ex)
         {
@@ -815,21 +1245,232 @@ public class CompaniesController : ControllerBase
         }
     }
 
-    private static string SanitizeFileNamePart(string? value)
+    private async Task<string> NormalizeAndSaveSectionBackgroundAsync(Guid companyId, string sectionsDirectory, string backgroundUrl, int sectionIndex, string publicBaseUrl)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (string.IsNullOrWhiteSpace(backgroundUrl))
         {
-            return "lang";
+            return string.Empty;
         }
 
-        var invalidChars = Path.GetInvalidFileNameChars();
-        var sanitized = new string(value.Where(c => !invalidChars.Contains(c)).ToArray());
-        if (string.IsNullOrWhiteSpace(sanitized))
+        try
         {
-            sanitized = "lang";
+            if (backgroundUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var match = Regex.Match(backgroundUrl, @"^data:(?<mime>[\w/\-\.]+);base64,(?<data>.+)$");
+                if (!match.Success)
+                {
+                    _logger.LogWarning("Invalid data URL format for section background on company {CompanyId}", companyId);
+                    return string.Empty;
+                }
+
+                var mimeType = match.Groups["mime"].Value;
+                var base64Data = match.Groups["data"].Value;
+
+                byte[] fileBytes;
+                try
+                {
+                    fileBytes = Convert.FromBase64String(base64Data);
+                }
+                catch (FormatException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to decode base64 section background for company {CompanyId}", companyId);
+                    return string.Empty;
+                }
+
+                var extension = mimeType switch
+                {
+                    "image/jpeg" or "image/jpg" => "jpg",
+                    "image/gif" => "gif",
+                    "image/webp" => "webp",
+                    "image/svg+xml" => "svg",
+                    _ => "png"
+                };
+
+                Directory.CreateDirectory(sectionsDirectory);
+
+                foreach (var existing in Directory.EnumerateFiles(sectionsDirectory, $"section{sectionIndex + 1}.*"))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(existing);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete existing background image for section {SectionIndex} company {CompanyId}", sectionIndex, companyId);
+                    }
+                }
+
+                var fileName = $"section{sectionIndex + 1}.{extension}";
+                var filePath = Path.Combine(sectionsDirectory, fileName);
+                await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+
+                var relativePath = $"/public/{companyId}/sections/{fileName}".Replace("\\", "/");
+                return CombineWithBase(publicBaseUrl, relativePath);
+            }
+
+            if (backgroundUrl.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
+            {
+                return CombineWithBase(publicBaseUrl, backgroundUrl.Replace("\\", "/"));
+            }
+
+            if (backgroundUrl.StartsWith("/"))
+            {
+                return CombineWithBase(publicBaseUrl, backgroundUrl.Replace("\\", "/"));
+            }
+
+            if (backgroundUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || backgroundUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                return backgroundUrl;
+            }
+
+            var sanitized = $"/public/{companyId}/sections/{backgroundUrl.TrimStart('/', '\\')}".Replace("\\", "/");
+            return CombineWithBase(publicBaseUrl, sanitized);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process section background for company {CompanyId}", companyId);
+            return string.Empty;
+        }
+    }
+
+    private async Task<string?> NormalizeAndSaveAssetAsync(Guid companyId, string assetName, string? rawValue, string publicBaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return null;
         }
 
-        return sanitized.ToLowerInvariant();
+        try
+        {
+            if (rawValue.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var match = Regex.Match(rawValue, @"^data:(?<mime>[\w/\-\.]+);base64,(?<data>.+)$");
+                if (!match.Success)
+                {
+                    _logger.LogWarning("Invalid data URL format for {AssetName} on company {CompanyId}", assetName, companyId);
+                    return null;
+                }
+
+                var mimeType = match.Groups["mime"].Value;
+                var base64Data = match.Groups["data"].Value;
+
+                byte[] fileBytes;
+                try
+                {
+                    fileBytes = Convert.FromBase64String(base64Data);
+                }
+                catch (FormatException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to decode base64 payload for {AssetName} on company {CompanyId}", assetName, companyId);
+                    return null;
+                }
+
+                var extension = GetExtensionFromMime(mimeType, assetName);
+                if (extension == null)
+                {
+                    _logger.LogWarning("Unsupported mime type {Mime} for {AssetName} on company {CompanyId}", mimeType, assetName, companyId);
+                    return null;
+                }
+
+                var targetDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString());
+                Directory.CreateDirectory(targetDirectory);
+
+                foreach (var existing in Directory.EnumerateFiles(targetDirectory, $"{assetName}.*"))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(existing);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete existing {AssetName} file {File} for company {CompanyId}", assetName, existing, companyId);
+                    }
+                }
+
+                var fileName = $"{assetName}.{extension}";
+                var filePath = Path.Combine(targetDirectory, fileName);
+
+                await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+
+                var relativePath = $"/public/{companyId}/{fileName}".Replace("\\", "/");
+                return CombineWithBase(publicBaseUrl, relativePath);
+            }
+
+            if (rawValue.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
+            {
+                return CombineWithBase(publicBaseUrl, rawValue.Replace("\\", "/"));
+            }
+
+            if (rawValue.StartsWith("/"))
+            {
+                return CombineWithBase(publicBaseUrl, rawValue.Replace("\\", "/"));
+            }
+
+            return rawValue;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process {AssetName} for company {CompanyId}", assetName, companyId);
+            return null;
+        }
+    }
+
+    private static string? GetExtensionFromMime(string mimeType, string assetName)
+    {
+        if (string.IsNullOrWhiteSpace(mimeType))
+        {
+            return null;
+        }
+
+        return mimeType.ToLowerInvariant() switch
+        {
+            "image/jpeg" or "image/jpg" => "jpg",
+            "image/png" => "png",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            "image/svg+xml" => "svg",
+            "image/x-icon" => "ico",
+            "image/vnd.microsoft.icon" => "ico",
+            "video/mp4" => "mp4",
+            "video/webm" => "webm",
+            "video/ogg" => "ogv",
+            "video/quicktime" => "mov",
+            _ when mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) => "png",
+            _ when mimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase) => "mp4",
+            _ => null
+        };
+    }
+
+    private string GetPublicBaseUrl()
+    {
+        var request = HttpContext?.Request;
+        if (request == null)
+        {
+            return string.Empty;
+        }
+
+        var baseUrl = $"{request.Scheme}://{request.Host}".TrimEnd('/');
+        return string.IsNullOrWhiteSpace(baseUrl) ? string.Empty : baseUrl;
+    }
+
+    private static string CombineWithBase(string baseUrl, string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return relativePath;
+        }
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return relativePath;
+        }
+
+        if (!relativePath.StartsWith('/'))
+        {
+            relativePath = "/" + relativePath;
+        }
+
+        return $"{baseUrl.TrimEnd('/')}{relativePath}";
     }
 
     // Helper method to map RentalCompany to CompanyConfigDto

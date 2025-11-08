@@ -64,6 +64,14 @@ public class CarRentalDbContext : DbContext
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
+        modelBuilder.Entity<AegisUser>()
+            .Property(e => e.Role)
+            .HasMaxLength(50)
+            .HasDefaultValue("agent");
+
+        modelBuilder.Entity<AegisUser>()
+            .ToTable(tb => tb.HasCheckConstraint("ck_aegis_users_role_valid", "role IN ('agent','admin','mainadmin')"));
+
         modelBuilder.Entity<VehicleCategory>()
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");

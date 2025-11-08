@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS aegis_users (
     role VARCHAR(50) DEFAULT 'agent',
     is_active BOOLEAN DEFAULT true,
     last_login TIMESTAMP,
-    CONSTRAINT valid_aegis_user_role CHECK (role IN ('agent', 'admin'))
+    CONSTRAINT valid_aegis_user_role CHECK (role IN ('agent', 'admin', 'mainadmin'))
 );
 
 -- Add trigger for updated_at column
@@ -46,4 +46,11 @@ EXECUTE FUNCTION update_updated_at_column();
 -- Create indexes for faster lookups
 CREATE INDEX IF NOT EXISTS idx_aegis_users_is_active ON aegis_users(is_active);
 CREATE INDEX IF NOT EXISTS idx_aegis_users_role ON aegis_users(role);
+
+-- Ensure existing constraint allows mainadmin
+ALTER TABLE aegis_users
+    DROP CONSTRAINT IF EXISTS valid_aegis_user_role;
+
+ALTER TABLE aegis_users
+    ADD CONSTRAINT valid_aegis_user_role CHECK (role IN ('agent', 'admin', 'mainadmin'));
 
