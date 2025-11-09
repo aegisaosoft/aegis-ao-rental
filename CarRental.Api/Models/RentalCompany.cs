@@ -114,6 +114,11 @@ public class RentalCompany
     [Column("country")]
     public string? Country { get; set; }
 
+    [Required]
+    [MaxLength(3)]
+    [Column("currency")]
+    public string Currency { get; set; } = "USD";
+
     [MaxLength(10)]
     [Column("language")]
     public string? Language { get; set; } = "en"; // ISO 639-1 language code

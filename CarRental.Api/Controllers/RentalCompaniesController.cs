@@ -13,12 +13,14 @@
  *
  */
 
+using System;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
 using CarRental.Api.Services;
+using CarRental.Api.Helpers;
 
 namespace CarRental.Api.Controllers;
 
@@ -88,6 +90,7 @@ public class RentalCompaniesController : ControllerBase
                 Subdomain = c.Subdomain,
                 PrimaryColor = c.PrimaryColor,
                 SecondaryColor = c.SecondaryColor,
+                Currency = c.Currency,
                 LogoUrl = c.LogoUrl,
                 FaviconUrl = c.FaviconUrl,
                 CustomCss = c.CustomCss,
@@ -135,6 +138,7 @@ public class RentalCompaniesController : ControllerBase
             Subdomain = company.Subdomain,
             PrimaryColor = company.PrimaryColor,
             SecondaryColor = company.SecondaryColor,
+            Currency = company.Currency,
             LogoUrl = company.LogoUrl,
             FaviconUrl = company.FaviconUrl,
             CustomCss = company.CustomCss,
@@ -182,6 +186,7 @@ public class RentalCompaniesController : ControllerBase
             Subdomain = company.Subdomain,
             PrimaryColor = company.PrimaryColor,
             SecondaryColor = company.SecondaryColor,
+            Currency = company.Currency,
             LogoUrl = company.LogoUrl,
             FaviconUrl = company.FaviconUrl,
             CustomCss = company.CustomCss,
@@ -232,6 +237,7 @@ public class RentalCompaniesController : ControllerBase
             FaviconUrl = createCompanyDto.FaviconUrl,
             CustomCss = createCompanyDto.CustomCss,
             Country = createCompanyDto.Country,
+            Currency = CurrencyHelper.ResolveCurrency(createCompanyDto.Currency, createCompanyDto.Country),
             IsActive = true
         };
 
@@ -279,6 +285,7 @@ public class RentalCompaniesController : ControllerBase
                 Subdomain = company.Subdomain,
                 PrimaryColor = company.PrimaryColor,
                 SecondaryColor = company.SecondaryColor,
+                Currency = company.Currency,
                 LogoUrl = company.LogoUrl,
                 FaviconUrl = company.FaviconUrl,
                 CustomCss = company.CustomCss,
@@ -318,6 +325,9 @@ public class RentalCompaniesController : ControllerBase
             if (existingCompany != null)
                 return Conflict("Company with this email already exists");
         }
+
+        var originalCountry = company.Country;
+        var countryUpdated = false;
 
         // Update fields
         if (!string.IsNullOrEmpty(updateCompanyDto.CompanyName))
@@ -384,7 +394,19 @@ public class RentalCompaniesController : ControllerBase
             company.CustomCss = updateCompanyDto.CustomCss;
 
         if (updateCompanyDto.Country != null)
+        {
             company.Country = updateCompanyDto.Country;
+            countryUpdated = !string.Equals(originalCountry, updateCompanyDto.Country, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (!string.IsNullOrWhiteSpace(updateCompanyDto.Currency))
+        {
+            company.Currency = CurrencyHelper.ResolveCurrency(updateCompanyDto.Currency, company.Country);
+        }
+        else if (countryUpdated)
+        {
+            company.Currency = CurrencyHelper.GetCurrencyForCountry(company.Country);
+        }
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;

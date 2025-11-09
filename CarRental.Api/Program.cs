@@ -261,6 +261,9 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Register HttpClient factory
+builder.Services.AddHttpClient();
+
 var app = builder.Build();
 
 // Log environment information early

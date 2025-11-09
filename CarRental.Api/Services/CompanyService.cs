@@ -20,6 +20,7 @@ using System.Threading.Tasks;
 using CarRental.Api.Models;
 using CarRental.Api.Data;
 using Microsoft.EntityFrameworkCore;
+using CarRental.Api.Helpers;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
@@ -156,6 +157,7 @@ namespace CarRental.Api.Services
             company.CreatedAt = DateTime.UtcNow;
             company.UpdatedAt = DateTime.UtcNow;
             company.IsActive = true;
+            company.Currency = CurrencyHelper.ResolveCurrency(company.Currency, company.Country);
 
             _context.Companies.Add(company);
             await _context.SaveChangesAsync();
@@ -175,6 +177,7 @@ namespace CarRental.Api.Services
 
         public async Task<RentalCompany> UpdateCompanyAsync(RentalCompany company)
         {
+            company.Currency = CurrencyHelper.ResolveCurrency(company.Currency, company.Country);
             company.UpdatedAt = DateTime.UtcNow;
 
             _context.Companies.Update(company);

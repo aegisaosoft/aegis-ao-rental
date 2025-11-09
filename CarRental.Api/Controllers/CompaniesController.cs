@@ -21,12 +21,14 @@ using CarRental.Api.Models;
 using CarRental.Api.Services;
 using CarRental.Api.Extensions;
 using CarRental.Api.DTOs;
+using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
 using System.Text.Encodings.Web;
 using System.Linq;
+using CarRental.Api.Helpers;
 
 namespace CarRental.Api.Controllers;
 
@@ -84,6 +86,7 @@ public class CompaniesController : ControllerBase
                 logoUrl = c.LogoUrl,
                 faviconUrl = c.FaviconUrl,
                 country = c.Country,
+                currency = c.Currency,
                 language = c.Language ?? "en",
                 motto = c.Motto,
                 mottoDescription = c.MottoDescription,
@@ -139,6 +142,7 @@ public class CompaniesController : ControllerBase
                 logoUrl = company.LogoUrl,
                 faviconUrl = company.FaviconUrl,
                 country = company.Country,
+                currency = company.Currency,
                 language = company.Language ?? "en",
                 motto = company.Motto,
                 mottoDescription = company.MottoDescription,
@@ -244,6 +248,7 @@ public class CompaniesController : ControllerBase
                 TaxId = request.TaxId,
                 StripeAccountId = request.StripeAccountId,
                 BlinkKey = request.BlinkKey,
+                Currency = CurrencyHelper.ResolveCurrency(request.Currency, request.Country),
                 IsActive = request.IsActive ?? true,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -276,6 +281,7 @@ public class CompaniesController : ControllerBase
                 logoUrl = company.LogoUrl,
                 faviconUrl = company.FaviconUrl,
                 country = company.Country,
+                currency = company.Currency,
                 language = company.Language ?? "en",
                 motto = company.Motto,
                 mottoDescription = company.MottoDescription,
@@ -371,8 +377,15 @@ public class CompaniesController : ControllerBase
             if (request.FaviconUrl != null)
                 company.FaviconUrl = await NormalizeAndSaveAssetAsync(company.Id, "favicon", request.FaviconUrl, publicBaseUrl);
 
+            var originalCountry = company.Country;
+            var countryUpdated = false;
+
             if (request.Country != null)
-                company.Country = request.Country;
+            {
+                var normalizedCountry = string.IsNullOrWhiteSpace(request.Country) ? null : request.Country;
+                company.Country = normalizedCountry;
+                countryUpdated = !string.Equals(originalCountry, normalizedCountry, StringComparison.OrdinalIgnoreCase);
+            }
 
             if (request.Language != null)
                 company.Language = request.Language;
@@ -418,6 +431,15 @@ public class CompaniesController : ControllerBase
 
             if (request.BlinkKey != null)
                 company.BlinkKey = request.BlinkKey;
+
+            if (!string.IsNullOrWhiteSpace(request.Currency))
+            {
+                company.Currency = CurrencyHelper.ResolveCurrency(request.Currency, company.Country);
+            }
+            else if (countryUpdated)
+            {
+                company.Currency = CurrencyHelper.GetCurrencyForCountry(company.Country);
+            }
 
             if (request.IsActive.HasValue)
                 company.IsActive = request.IsActive.Value;
@@ -1501,7 +1523,8 @@ public class CompaniesController : ControllerBase
             Invitation = company.Invitation,
             Texts = company.Texts,
             Language = company.Language ?? "en",
-            BlinkKey = company.BlinkKey
+            BlinkKey = company.BlinkKey,
+            Currency = company.Currency
         };
     }
 }
@@ -1516,6 +1539,7 @@ public class CreateCompanyRequest
     public string? LogoUrl { get; set; }
     public string? FaviconUrl { get; set; }
     public string? Country { get; set; }
+    public string? Currency { get; set; }
     public string? Language { get; set; }
     public string? Motto { get; set; }
     public string? MottoDescription { get; set; }
@@ -1544,6 +1568,7 @@ public class UpdateCompanyRequest
     public string? LogoUrl { get; set; }
     public string? FaviconUrl { get; set; }
     public string? Country { get; set; }
+    public string? Currency { get; set; }
     public string? Language { get; set; }
     public string? Motto { get; set; }
     public string? MottoDescription { get; set; }

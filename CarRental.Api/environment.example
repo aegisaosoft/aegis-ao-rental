@@ -16,7 +16,7 @@ JWT_AUDIENCE=CarRentalClients
 JWT_EXPIRY_MINUTES=60
 
 # Stripe Configuration (Update with your actual keys)
-STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key_here
+STRIPE_SECRET_KEY=sk_test_51SJnshQ85I00SebCQ9MtCPBi5VBWChKcvsjNZaS3U3R7V240CgAqU4gt26NFjAw23uXOaiq3T8UX5AWufondpLfx00ZsPggvkL
 STRIPE_PUBLISHABLE_KEY=pk_test_your_stripe_publishable_key_here
 STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
 

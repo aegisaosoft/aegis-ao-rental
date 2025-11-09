@@ -235,6 +235,10 @@
             {
               "name": "jwt-secret",
               "value": "production-super-secret-jwt-key-that-should-be-at-least-64-characters-long-for-maximum-security"
+            },
+            {
+              "name": "stripe-secret-key",
+              "value": "sk_test_51SJnshQ85I00SebCQ9MtCPBi5VBWChKcvsjNZaS3U3R7V240CgAqU4gt26NFjAw23uXOaiq3T8UX5AWufondpLfx00ZsPggvkL"
             }
           ],
           "activeRevisionsMode": "Single"
@@ -376,6 +380,10 @@
                 {
                   "name": "Swagger__Version",
                   "value": "v1"
+                },
+                {
+                  "name": "Stripe__SecretKey",
+                  "secretRef": "stripe-secret-key"
                 }
               ],
               "probes": [
