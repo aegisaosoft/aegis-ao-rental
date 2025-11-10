@@ -198,7 +198,7 @@ builder.Services.AddScoped<IEmailTemplateService, EmailTemplateService>();
 
 // Add JWT Authentication
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-var secretKey = jwtSettings["SecretKey"] ?? "your-super-secret-jwt-key-that-should-be-at-least-32-characters-long-for-production-use";
+var secretKey = jwtSettings["SecretKey"] ?? "e8Xgin/OtynoYVm8o7jiNjB9/Fke1Q6RxjH3hJsRpTE=";
 var issuer = jwtSettings["Issuer"] ?? "CarRentalAPI";
 var audience = jwtSettings["Audience"] ?? "CarRentalClients";
 

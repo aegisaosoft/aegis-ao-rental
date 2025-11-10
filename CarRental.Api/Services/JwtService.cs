@@ -40,7 +40,7 @@ public class JwtService : IJwtService
     public string GenerateToken(string customerId, string role = "customer", string? companyId = null, string? companyName = null)
     {
         var jwtSettings = _configuration.GetSection("JwtSettings");
-        var secretKey = jwtSettings["SecretKey"] ?? "your-super-secret-jwt-key-that-should-be-at-least-32-characters-long-for-production-use";
+        var secretKey = jwtSettings["SecretKey"] ?? "e8Xgin/OtynoYVm8o7jiNjB9/Fke1Q6RxjH3hJsRpTE=";
         var issuer = jwtSettings["Issuer"] ?? "CarRentalAPI";
         var audience = jwtSettings["Audience"] ?? "CarRentalClients";
         var expiryMinutes = int.Parse(jwtSettings["ExpiryMinutes"] ?? "60");
@@ -86,7 +86,7 @@ public class JwtService : IJwtService
         try
         {
             var jwtSettings = _configuration.GetSection("JwtSettings");
-            var secretKey = jwtSettings["SecretKey"] ?? "your-super-secret-jwt-key-that-should-be-at-least-32-characters-long-for-production-use";
+            var secretKey = jwtSettings["SecretKey"] ?? "e8Xgin/OtynoYVm8o7jiNjB9/Fke1Q6RxjH3hJsRpTE=";
             var issuer = jwtSettings["Issuer"] ?? "CarRentalAPI";
             var audience = jwtSettings["Audience"] ?? "CarRentalClients";
 
