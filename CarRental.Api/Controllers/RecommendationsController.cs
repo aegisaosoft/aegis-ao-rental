@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
+using CarRental.Api.Services;
 
 namespace CarRental.Api.Controllers;
 
@@ -13,17 +14,19 @@ namespace CarRental.Api.Controllers;
 [Route("api/recommendations")]
 public class RecommendationsController : ControllerBase
 {
-    private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<RecommendationsController> _logger;
+    private readonly ISettingsService _settingsService;
+
+    private const string AnthropicApiKeySetting = "anthropic.apiKey";
 
     public RecommendationsController(
-        IConfiguration configuration,
         IHttpClientFactory httpClientFactory,
+        ISettingsService settingsService,
         ILogger<RecommendationsController> logger)
     {
-        _configuration = configuration;
         _httpClientFactory = httpClientFactory;
+        _settingsService = settingsService;
         _logger = logger;
     }
 
@@ -61,7 +64,7 @@ public class RecommendationsController : ControllerBase
 
         try
         {
-            var apiKey = _configuration["Anthropic:ApiKey"];
+            var apiKey = await _settingsService.GetValueAsync(AnthropicApiKeySetting);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 _logger.LogWarning("Anthropic API key missing. Falling back to rule-based logic.");

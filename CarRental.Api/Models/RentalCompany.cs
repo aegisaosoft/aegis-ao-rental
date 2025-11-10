@@ -126,6 +126,10 @@ public class RentalCompany
     [Column("blink_key")]
     public string? BlinkKey { get; set; } // BlinkID license key for the company (domain-specific license)
 
+    [MaxLength(20)]
+    [Column("ai_integration")]
+    public string AiIntegration { get; set; } = "claude";
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 

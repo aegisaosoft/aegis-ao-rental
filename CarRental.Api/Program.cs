@@ -170,6 +170,12 @@ builder.Services.AddSingleton<ISessionService, SessionService>();
 // Add Stripe Service
 builder.Services.AddScoped<IStripeService, StripeService>();
 
+// Add Encryption Service
+builder.Services.AddSingleton<IEncryptionService, EncryptionService>();
+
+// Add Settings Service
+builder.Services.AddScoped<ISettingsService, SettingsService>();
+
 // Add Company Management Service
 builder.Services.AddScoped<ICompanyManagementService, CompanyManagementService>();
 

@@ -46,6 +46,7 @@ public class CarRentalDbContext : DbContext
     public DbSet<CustomerLicense> CustomerLicenses { get; set; }
     public DbSet<Model> Models { get; set; }
     public DbSet<VehicleModel> VehicleModels { get; set; }
+    public DbSet<Setting> Settings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -103,6 +104,14 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<CustomerPaymentMethod>()
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
+
+        modelBuilder.Entity<Setting>()
+            .Property(e => e.Id)
+            .HasDefaultValueSql("uuid_generate_v4()");
+
+        modelBuilder.Entity<Setting>()
+            .HasIndex(s => s.Key)
+            .IsUnique();
 
         modelBuilder.Entity<Review>()
             .Property(e => e.Id)
@@ -686,6 +695,17 @@ public class CarRentalDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.CompanyId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure Setting entity
+        modelBuilder.Entity<Setting>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Key).HasMaxLength(150).IsRequired();
+            entity.Property(e => e.Value).IsRequired();
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(s => s.Key).IsUnique();
         });
     }
 }

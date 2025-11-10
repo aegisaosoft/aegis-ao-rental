@@ -41,18 +41,28 @@ public class CompaniesController : ControllerBase
     private readonly ILogger<CompaniesController> _logger;
     private readonly ICompanyService _companyService;
     private readonly IWebHostEnvironment _environment;
+    private readonly IEncryptionService _encryptionService;
     private static readonly string[] SupportedLanguages = new[] { "en", "es", "pt", "fr", "de" };
+    private static readonly HashSet<string> AllowedAiIntegrations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "free",
+        "claude",
+        "premium"
+    };
+    private const string DefaultAiIntegration = "claude";
 
     public CompaniesController(
         CarRentalDbContext context, 
         ILogger<CompaniesController> logger,
         ICompanyService companyService,
-        IWebHostEnvironment environment)
+        IWebHostEnvironment environment,
+        IEncryptionService encryptionService)
     {
         _context = context;
         _logger = logger;
         _companyService = companyService;
         _environment = environment;
+        _encryptionService = encryptionService;
     }
 
     /// <summary>
@@ -97,9 +107,11 @@ public class CompaniesController : ControllerBase
                 bannerLink = c.BannerLink,
                 backgroundLink = c.BackgroundLink,
                 invitation = c.Invitation,
+                aiIntegration = NormalizeAiIntegration(c.AiIntegration),
                 bookingIntegrated = !string.IsNullOrEmpty(c.BookingIntegrated) && (c.BookingIntegrated.ToLower() == "true" || c.BookingIntegrated == "1"),
                 taxId = c.TaxId,
-                stripeAccountId = c.StripeAccountId,
+                stripeAccountId = (string?)null,
+                hasStripeAccount = !string.IsNullOrEmpty(c.StripeAccountId),
                 blinkKey = c.BlinkKey,
                 isActive = c.IsActive,
                 createdAt = c.CreatedAt,
@@ -153,10 +165,11 @@ public class CompaniesController : ControllerBase
                 bannerLink = company.BannerLink,
                 backgroundLink = company.BackgroundLink,
                 invitation = company.Invitation,
+                aiIntegration = NormalizeAiIntegration(company.AiIntegration),
                 texts = company.Texts,
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
-                stripeAccountId = company.StripeAccountId,
+                hasStripeAccount = !string.IsNullOrEmpty(company.StripeAccountId),
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
@@ -246,8 +259,11 @@ public class CompaniesController : ControllerBase
                 Invitation = request.Invitation,
                 BookingIntegrated = request.BookingIntegrated.HasValue && request.BookingIntegrated.Value ? "true" : null,
                 TaxId = request.TaxId,
-                StripeAccountId = request.StripeAccountId,
+                StripeAccountId = string.IsNullOrWhiteSpace(request.StripeAccountId)
+                    ? null
+                    : _encryptionService.Encrypt(request.StripeAccountId),
                 BlinkKey = request.BlinkKey,
+                AiIntegration = NormalizeAiIntegration(request.AiIntegration),
                 Currency = CurrencyHelper.ResolveCurrency(request.Currency, request.Country),
                 IsActive = request.IsActive ?? true,
                 CreatedAt = DateTime.UtcNow,
@@ -292,10 +308,12 @@ public class CompaniesController : ControllerBase
                 bannerLink = company.BannerLink,
                 backgroundLink = company.BackgroundLink,
                 invitation = company.Invitation,
+                aiIntegration = NormalizeAiIntegration(company.AiIntegration),
                 texts = company.Texts,
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
-                stripeAccountId = company.StripeAccountId,
+                stripeAccountId = (string?)null,
+                hasStripeAccount = !string.IsNullOrEmpty(company.StripeAccountId),
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
@@ -427,10 +445,17 @@ public class CompaniesController : ControllerBase
                 company.TaxId = request.TaxId;
 
             if (request.StripeAccountId != null)
-                company.StripeAccountId = request.StripeAccountId;
+            {
+                company.StripeAccountId = string.IsNullOrWhiteSpace(request.StripeAccountId)
+                    ? null
+                    : _encryptionService.Encrypt(request.StripeAccountId);
+            }
 
             if (request.BlinkKey != null)
                 company.BlinkKey = request.BlinkKey;
+
+            if (request.AiIntegration != null)
+                company.AiIntegration = NormalizeAiIntegration(request.AiIntegration);
 
             if (!string.IsNullOrWhiteSpace(request.Currency))
             {
@@ -473,10 +498,12 @@ public class CompaniesController : ControllerBase
                 bannerLink = company.BannerLink,
                 backgroundLink = company.BackgroundLink,
                 invitation = company.Invitation,
+                aiIntegration = NormalizeAiIntegration(company.AiIntegration),
                 texts = company.Texts,
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
-                stripeAccountId = company.StripeAccountId,
+                stripeAccountId = (string?)null,
+                hasStripeAccount = !string.IsNullOrEmpty(company.StripeAccountId),
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
@@ -1524,8 +1551,20 @@ public class CompaniesController : ControllerBase
             Texts = company.Texts,
             Language = company.Language ?? "en",
             BlinkKey = company.BlinkKey,
-            Currency = company.Currency
+            Currency = company.Currency,
+            AiIntegration = NormalizeAiIntegration(company.AiIntegration)
         };
+    }
+
+    private static string NormalizeAiIntegration(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DefaultAiIntegration;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return AllowedAiIntegrations.Contains(normalized) ? normalized : DefaultAiIntegration;
     }
 }
 
@@ -1556,6 +1595,7 @@ public class CreateCompanyRequest
     public string? StripeAccountId { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
+    public string? AiIntegration { get; set; }
 }
 
 public class UpdateCompanyRequest
@@ -1585,5 +1625,6 @@ public class UpdateCompanyRequest
     public string? StripeAccountId { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
+    public string? AiIntegration { get; set; }
 }
 

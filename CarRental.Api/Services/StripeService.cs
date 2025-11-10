@@ -14,7 +14,9 @@
  */
 
 using Stripe;
+using Stripe.Checkout;
 using CarRental.Api.Models;
+using System.Threading;
 
 namespace CarRental.Api.Services;
 
@@ -34,29 +36,59 @@ public interface IStripeService
     Task<Transfer> CreateTransferAsync(string accountId, long amount, string currency = "usd");
     Task<WebhookEndpoint> CreateWebhookEndpointAsync(string url, string[] events);
     Task<Event> ConstructWebhookEventAsync(string payload, string signature, string webhookSecret);
+    Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null);
 }
 
 public class StripeService : IStripeService
 {
-    private readonly IConfiguration _configuration;
+    private readonly ISettingsService _settingsService;
     private readonly ILogger<StripeService> _logger;
+    private readonly SemaphoreSlim _initializationLock = new(1, 1);
+    private bool _initialized;
+    private string? _publishableKey;
+    private string? _webhookSecret;
 
-    public StripeService(IConfiguration configuration, ILogger<StripeService> logger)
+    private const string SecretKeySetting = "stripe.secretKey";
+    private const string PublishableKeySetting = "stripe.publishableKey";
+    private const string WebhookSecretSetting = "stripe.webhookSecret";
+
+    public StripeService(ISettingsService settingsService, ILogger<StripeService> logger)
     {
-        _configuration = configuration;
+        _settingsService = settingsService;
         _logger = logger;
-        
-        // Set Stripe API key
-        var apiKey = _configuration["Stripe:SecretKey"];
-        if (string.IsNullOrEmpty(apiKey))
+    }
+
+    private async Task EnsureInitializedAsync()
+    {
+        if (_initialized)
+            return;
+
+        await _initializationLock.WaitAsync();
+        try
         {
-            throw new InvalidOperationException("Stripe SecretKey is not configured");
+            if (_initialized)
+                return;
+
+            var secretKey = await _settingsService.GetValueAsync(SecretKeySetting) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(secretKey))
+            {
+                throw new InvalidOperationException($"Stripe secret key is not configured. Set the '{SecretKeySetting}' setting.");
+            }
+
+            StripeConfiguration.ApiKey = secretKey;
+            _publishableKey = await _settingsService.GetValueAsync(PublishableKeySetting);
+            _webhookSecret = await _settingsService.GetValueAsync(WebhookSecretSetting);
+            _initialized = true;
         }
-        StripeConfiguration.ApiKey = apiKey;
+        finally
+        {
+            _initializationLock.Release();
+        }
     }
 
     public async Task<Models.Customer> CreateCustomerAsync(Models.Customer customer)
     {
+        await EnsureInitializedAsync();
         try
         {
             var customerCreateOptions = new CustomerCreateOptions
@@ -95,6 +127,7 @@ public class StripeService : IStripeService
 
     public async Task<Models.Customer> UpdateCustomerAsync(Models.Customer customer)
     {
+        await EnsureInitializedAsync();
         try
         {
             if (string.IsNullOrEmpty(customer.StripeCustomerId))
@@ -135,6 +168,7 @@ public class StripeService : IStripeService
 
     public async Task<Models.Customer> GetCustomerAsync(string stripeCustomerId)
     {
+        await EnsureInitializedAsync();
         try
         {
             var stripeCustomer = await new CustomerService().GetAsync(stripeCustomerId);
@@ -165,6 +199,7 @@ public class StripeService : IStripeService
 
     public async Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId)
     {
+        await EnsureInitializedAsync();
         try
         {
             var attachOptions = new PaymentMethodAttachOptions
@@ -185,6 +220,7 @@ public class StripeService : IStripeService
 
     public async Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId)
     {
+        await EnsureInitializedAsync();
         try
         {
             var paymentMethod = await new PaymentMethodService().GetAsync(paymentMethodId);
@@ -199,6 +235,7 @@ public class StripeService : IStripeService
 
     public async Task<PaymentIntent> CreatePaymentIntentAsync(decimal amount, string currency, string customerId, string? paymentMethodId = null)
     {
+        await EnsureInitializedAsync();
         try
         {
             var paymentIntentOptions = new PaymentIntentCreateOptions
@@ -228,6 +265,7 @@ public class StripeService : IStripeService
 
     public async Task<PaymentIntent> ConfirmPaymentIntentAsync(string paymentIntentId)
     {
+        await EnsureInitializedAsync();
         try
         {
             var paymentIntent = await new PaymentIntentService().ConfirmAsync(paymentIntentId);
@@ -242,6 +280,7 @@ public class StripeService : IStripeService
 
     public async Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId)
     {
+        await EnsureInitializedAsync();
         try
         {
             var paymentIntent = await new PaymentIntentService().CancelAsync(paymentIntentId);
@@ -256,6 +295,7 @@ public class StripeService : IStripeService
 
     public async Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount)
     {
+        await EnsureInitializedAsync();
         try
         {
             var refundOptions = new RefundCreateOptions
@@ -276,6 +316,7 @@ public class StripeService : IStripeService
 
     public async Task<Account> CreateConnectedAccountAsync(string email, string country = "US")
     {
+        await EnsureInitializedAsync();
         try
         {
             var accountOptions = new AccountCreateOptions
@@ -308,6 +349,7 @@ public class StripeService : IStripeService
 
     public async Task<Account> GetConnectedAccountAsync(string accountId)
     {
+        await EnsureInitializedAsync();
         try
         {
             var account = await new AccountService().GetAsync(accountId);
@@ -322,6 +364,7 @@ public class StripeService : IStripeService
 
     public async Task<Transfer> CreateTransferAsync(string accountId, long amount, string currency = "usd")
     {
+        await EnsureInitializedAsync();
         try
         {
             var transferOptions = new TransferCreateOptions
@@ -343,6 +386,7 @@ public class StripeService : IStripeService
 
     public async Task<WebhookEndpoint> CreateWebhookEndpointAsync(string url, string[] events)
     {
+        await EnsureInitializedAsync();
         try
         {
             var webhookOptions = new WebhookEndpointCreateOptions
@@ -361,18 +405,41 @@ public class StripeService : IStripeService
         }
     }
 
-    public Task<Event> ConstructWebhookEventAsync(string payload, string signature, string webhookSecret)
+    public async Task<Event> ConstructWebhookEventAsync(string payload, string signature, string webhookSecret)
     {
+        await EnsureInitializedAsync();
         try
         {
-            var webhookSecretKey = _configuration["Stripe:WebhookSecret"] ?? webhookSecret;
+            var webhookSecretKey = !string.IsNullOrWhiteSpace(_webhookSecret)
+                ? _webhookSecret!
+                : webhookSecret;
+
+            if (string.IsNullOrWhiteSpace(webhookSecretKey))
+            {
+                throw new InvalidOperationException("Stripe webhook secret is not configured.");
+            }
             var stripeEvent = EventUtility.ConstructEvent(payload, signature, webhookSecretKey);
-            return Task.FromResult(stripeEvent);
+            return await Task.FromResult(stripeEvent);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error constructing webhook event");
             throw new InvalidOperationException($"Failed to construct webhook event: {ex.Message}", ex);
+        }
+    }
+
+    public async Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null)
+    {
+        await EnsureInitializedAsync();
+        try
+        {
+            var service = new Stripe.Checkout.SessionService();
+            return await service.CreateAsync(options, requestOptions);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Error creating checkout session");
+            throw new InvalidOperationException($"Failed to create checkout session: {ex.Message}", ex);
         }
     }
 }

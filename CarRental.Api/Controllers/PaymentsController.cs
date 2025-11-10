@@ -15,11 +15,14 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
 using CarRental.Api.Services;
 using Stripe;
+using CarRental.Api.DTOs.Payments;
+using System.Security.Cryptography;
 
 namespace CarRental.Api.Controllers;
 
@@ -30,15 +33,18 @@ public class PaymentsController : ControllerBase
     private readonly CarRentalDbContext _context;
     private readonly IStripeService _stripeService;
     private readonly ILogger<PaymentsController> _logger;
+    private readonly IEncryptionService _encryptionService;
 
     public PaymentsController(
         CarRentalDbContext context, 
         IStripeService stripeService, 
-        ILogger<PaymentsController> logger)
+        ILogger<PaymentsController> logger,
+        IEncryptionService encryptionService)
     {
         _context = context;
         _stripeService = stripeService;
         _logger = logger;
+        _encryptionService = encryptionService;
     }
 
     /// <summary>
@@ -203,6 +209,132 @@ public class PaymentsController : ControllerBase
         };
 
         return CreatedAtAction(nameof(GetPayment), new { id = payment.Id }, paymentDto);
+    }
+
+    /// <summary>
+    /// Create a Stripe Checkout session for a reservation/payment
+    /// </summary>
+    [HttpPost("checkout-session")]
+    public async Task<ActionResult<object>> CreateCheckoutSession([FromBody] CreateCheckoutSessionDto dto)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            if (dto.Amount <= 0)
+                return BadRequest("Amount must be greater than zero.");
+
+            var customer = await _context.Customers.FindAsync(dto.CustomerId);
+            if (customer == null)
+                return BadRequest("Customer not found");
+
+            if (string.IsNullOrEmpty(customer.StripeCustomerId))
+            {
+                customer = await _stripeService.CreateCustomerAsync(customer);
+                _context.Customers.Update(customer);
+                await _context.SaveChangesAsync();
+            }
+
+            var company = await _context.Companies.FirstOrDefaultAsync(c => c.Id == dto.CompanyId);
+            if (company == null)
+                return BadRequest("Company not found");
+
+            var amountInCents = (long)Math.Round(dto.Amount * 100M, MidpointRounding.AwayFromZero);
+
+            var lineItem = new Stripe.Checkout.SessionLineItemOptions
+            {
+                Quantity = 1,
+                PriceData = new Stripe.Checkout.SessionLineItemPriceDataOptions
+                {
+                    Currency = dto.Currency.ToLowerInvariant(),
+                    UnitAmount = amountInCents,
+                    ProductData = new Stripe.Checkout.SessionLineItemPriceDataProductDataOptions
+                    {
+                        Name = string.IsNullOrWhiteSpace(dto.Description) ? "Vehicle Booking" : dto.Description,
+                    }
+                }
+            };
+
+            var sessionOptions = new Stripe.Checkout.SessionCreateOptions
+            {
+                Mode = "payment",
+                Customer = customer.StripeCustomerId,
+                SuccessUrl = dto.SuccessUrl,
+                CancelUrl = dto.CancelUrl,
+                LineItems = new List<Stripe.Checkout.SessionLineItemOptions> { lineItem },
+                PaymentIntentData = new Stripe.Checkout.SessionPaymentIntentDataOptions
+                {
+                    Metadata = new Dictionary<string, string>
+                    {
+                        { "customer_id", customer.Id.ToString() },
+                        { "company_id", dto.CompanyId.ToString() }
+                    }
+                }
+            };
+
+            if (dto.ReservationId.HasValue)
+            {
+                sessionOptions.PaymentIntentData.Metadata!["reservation_id"] = dto.ReservationId.Value.ToString();
+            }
+
+            if (!string.IsNullOrWhiteSpace(company.StripeAccountId))
+            {
+                string? destination = null;
+
+                try
+                {
+                    destination = _encryptionService.Decrypt(company.StripeAccountId);
+                }
+                catch (FormatException)
+                {
+                    destination = company.StripeAccountId;
+                }
+                catch (CryptographicException)
+                {
+                    destination = company.StripeAccountId;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to decrypt Stripe account ID for company {CompanyId}", company.Id);
+                }
+
+                if (!string.IsNullOrWhiteSpace(destination))
+                {
+                    if (destination == company.StripeAccountId)
+                    {
+                        try
+                        {
+                            company.StripeAccountId = _encryptionService.Encrypt(destination);
+                            _context.Companies.Update(company);
+                            await _context.SaveChangesAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to re-encrypt Stripe account ID for company {CompanyId}", company.Id);
+                        }
+                    }
+
+                    sessionOptions.PaymentIntentData.TransferData = new Stripe.Checkout.SessionPaymentIntentDataTransferDataOptions
+                    {
+                        Destination = destination
+                    };
+                }
+            }
+
+            var session = await _stripeService.CreateCheckoutSessionAsync(sessionOptions);
+
+            return Ok(new
+            {
+                url = session.Url,
+                sessionId = session.Id
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating Stripe checkout session for customer {CustomerId}", dto.CustomerId);
+            return BadRequest($"Error creating checkout session: {ex.Message}");
+        }
     }
 
     /// <summary>

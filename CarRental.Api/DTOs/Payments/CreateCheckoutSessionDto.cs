@@ -1,0 +1,32 @@
+using System.ComponentModel.DataAnnotations;
+
+namespace CarRental.Api.DTOs.Payments;
+
+public class CreateCheckoutSessionDto
+{
+    [Required]
+    public Guid CustomerId { get; set; }
+
+    [Required]
+    public Guid CompanyId { get; set; }
+
+    public Guid? ReservationId { get; set; }
+
+    [Range(0.01, double.MaxValue, ErrorMessage = "Amount must be greater than zero.")]
+    public decimal Amount { get; set; }
+
+    [Required]
+    [StringLength(10)]
+    public string Currency { get; set; } = "usd";
+
+    [StringLength(200)]
+    public string? Description { get; set; }
+
+    [Required]
+    [Url]
+    public string SuccessUrl { get; set; } = string.Empty;
+
+    [Required]
+    [Url]
+    public string CancelUrl { get; set; } = string.Empty;
+}

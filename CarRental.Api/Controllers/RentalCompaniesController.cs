@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CarRental.Api.Data;
@@ -31,15 +32,61 @@ public class RentalCompaniesController : ControllerBase
     private readonly CarRentalDbContext _context;
     private readonly IStripeService _stripeService;
     private readonly ILogger<RentalCompaniesController> _logger;
+    private readonly IEncryptionService _encryptionService;
 
     public RentalCompaniesController(
         CarRentalDbContext context, 
         IStripeService stripeService, 
-        ILogger<RentalCompaniesController> logger)
+        ILogger<RentalCompaniesController> logger,
+        IEncryptionService encryptionService)
     {
         _context = context;
         _stripeService = stripeService;
         _logger = logger;
+        _encryptionService = encryptionService;
+    }
+
+    private async Task<string?> ResolveStripeAccountIdAsync(RentalCompany company)
+    {
+        if (string.IsNullOrWhiteSpace(company.StripeAccountId))
+            return null;
+
+        try
+        {
+            return _encryptionService.Decrypt(company.StripeAccountId);
+        }
+        catch (FormatException)
+        {
+            return await ReEncryptPlainStripeAccountIdAsync(company, company.StripeAccountId!);
+        }
+        catch (CryptographicException)
+        {
+            return await ReEncryptPlainStripeAccountIdAsync(company, company.StripeAccountId!);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to decrypt Stripe account ID for company {CompanyId}", company.Id);
+            return null;
+        }
+    }
+
+    private async Task<string?> ReEncryptPlainStripeAccountIdAsync(RentalCompany company, string plaintext)
+    {
+        if (string.IsNullOrWhiteSpace(plaintext))
+            return null;
+
+        try
+        {
+            company.StripeAccountId = _encryptionService.Encrypt(plaintext);
+            _context.Companies.Update(company);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to re-encrypt Stripe account ID for company {CompanyId}", company.Id);
+        }
+
+        return plaintext;
     }
 
     /// <summary>
@@ -74,7 +121,7 @@ public class RentalCompaniesController : ControllerBase
                 CompanyName = c.CompanyName,
                 Email = c.Email,
                 Website = c.Website,
-                StripeAccountId = c.StripeAccountId,
+                StripeAccountId = null,
                 TaxId = c.TaxId,
                 VideoLink = c.VideoLink,
                 BannerLink = c.BannerLink,
@@ -122,7 +169,7 @@ public class RentalCompaniesController : ControllerBase
             CompanyName = company.CompanyName,
             Email = company.Email,
             Website = company.Website,
-            StripeAccountId = company.StripeAccountId,
+            StripeAccountId = null,
             TaxId = company.TaxId,
             VideoLink = company.VideoLink,
             BannerLink = company.BannerLink,
@@ -170,7 +217,7 @@ public class RentalCompaniesController : ControllerBase
             CompanyName = company.CompanyName,
             Email = company.Email,
             Website = company.Website,
-            StripeAccountId = company.StripeAccountId,
+            StripeAccountId = null,
             TaxId = company.TaxId,
             VideoLink = company.VideoLink,
             BannerLink = company.BannerLink,
@@ -253,7 +300,7 @@ public class RentalCompaniesController : ControllerBase
                     company.Email, 
                     "US"); // Default to US, country can be specified per location
                 
-                company.StripeAccountId = stripeAccount.Id;
+                company.StripeAccountId = _encryptionService.Encrypt(stripeAccount.Id);
                 _context.Companies.Update(company);
                 await _context.SaveChangesAsync();
             }
@@ -269,7 +316,7 @@ public class RentalCompaniesController : ControllerBase
                 CompanyName = company.CompanyName,
                 Email = company.Email,
                 Website = company.Website,
-                StripeAccountId = company.StripeAccountId,
+                StripeAccountId = null,
                 TaxId = company.TaxId,
                 VideoLink = company.VideoLink,
                 BannerLink = company.BannerLink,
@@ -421,14 +468,18 @@ public class RentalCompaniesController : ControllerBase
             // Update Stripe Connect account if exists
             if (!string.IsNullOrEmpty(company.StripeAccountId))
             {
-                try
+                var stripeAccountId = await ResolveStripeAccountIdAsync(company);
+                if (!string.IsNullOrEmpty(stripeAccountId))
                 {
-                    await _stripeService.GetConnectedAccountAsync(company.StripeAccountId);
-                    // Additional Stripe account updates can be added here
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to update Stripe Connect account {StripeAccountId}", company.StripeAccountId);
+                    try
+                    {
+                        await _stripeService.GetConnectedAccountAsync(stripeAccountId);
+                        // Additional Stripe account updates can be added here
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to update Stripe Connect account for company {CompanyId}", company.Id);
+                    }
                 }
             }
 
@@ -760,21 +811,18 @@ public class RentalCompaniesController : ControllerBase
             return NotFound();
 
         if (!string.IsNullOrEmpty(company.StripeAccountId))
-            return BadRequest("Company already has a Stripe account");
+            return Conflict("Company already has a Stripe account.");
 
         try
         {
-            var stripeAccount = await _stripeService.CreateConnectedAccountAsync(
-                company.Email, 
-                "US"); // Default to US - country information now stored in locations
-
-            company.StripeAccountId = stripeAccount.Id;
+            var stripeAccount = await _stripeService.CreateConnectedAccountAsync(company.Email, "US");
+            company.StripeAccountId = _encryptionService.Encrypt(stripeAccount.Id);
             _context.Companies.Update(company);
             await _context.SaveChangesAsync();
 
             return Ok(new
             {
-                StripeAccountId = stripeAccount.Id,
+                HasStripeAccount = true,
                 Status = stripeAccount.DetailsSubmitted ? "completed" : "pending",
                 RequiresAction = !stripeAccount.DetailsSubmitted
             });
@@ -801,11 +849,15 @@ public class RentalCompaniesController : ControllerBase
 
         try
         {
-            var stripeAccount = await _stripeService.GetConnectedAccountAsync(company.StripeAccountId);
-            
+            var stripeAccountId = await ResolveStripeAccountIdAsync(company);
+            if (string.IsNullOrEmpty(stripeAccountId))
+                return BadRequest("Unable to retrieve Stripe account ID for this company");
+
+            var stripeAccount = await _stripeService.GetConnectedAccountAsync(stripeAccountId);
+
             return Ok(new
             {
-                StripeAccountId = stripeAccount.Id,
+                HasStripeAccount = true,
                 Status = stripeAccount.DetailsSubmitted ? "completed" : "pending",
                 ChargesEnabled = stripeAccount.ChargesEnabled,
                 PayoutsEnabled = stripeAccount.PayoutsEnabled,

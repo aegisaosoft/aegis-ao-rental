@@ -235,6 +235,9 @@ public class UpdateRentalCompanyDto
 
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     
+    [MaxLength(20)]
+    public string? AiIntegration { get; set; }
+    
     public bool? IsActive { get; set; }
 }
 
@@ -265,6 +268,7 @@ public class CompanyConfigDto
     public string? Language { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public string Currency { get; set; } = "USD";
+    public string AiIntegration { get; set; } = "claude";
 }
 
 // DTO for company list (admin)
@@ -279,6 +283,7 @@ public class CompanyListDto
     public bool BookingIntegrated { get; set; }
     public string? Country { get; set; }
     public string Currency { get; set; } = "USD";
+    public string AiIntegration { get; set; } = "claude";
     public DateTime CreatedAt { get; set; }
 }
 
@@ -316,4 +321,5 @@ public class CompanyDetailDto
     public string? Language { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public string Currency { get; set; } = "USD";
+    public string AiIntegration { get; set; } = "claude";
 }
