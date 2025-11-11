@@ -25,7 +25,7 @@ public class Payment
     [Column("id")]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    [Column("reservation_id")]
+    [Column("booking_id")]
     public Guid? ReservationId { get; set; }
 
     [Column("rental_id")]
@@ -40,10 +40,11 @@ public class Payment
     public Guid CompanyId { get; set; }
 
     [Required]
-    [Column(TypeName = "decimal(10,2)")]
+    [Column("amount", TypeName = "decimal(10,2)")]
     public decimal Amount { get; set; }
 
     [MaxLength(10)]
+    [Column("currency")]
     public string Currency { get; set; } = "USD";
 
     [Required]
@@ -68,7 +69,36 @@ public class Payment
     public string? StripePaymentMethodId { get; set; }
 
     [MaxLength(50)]
+    [Column("status")]
     public string Status { get; set; } = "pending";
+
+    [Column("security_deposit_amount", TypeName = "decimal(10,2)")]
+    public decimal? SecurityDepositAmount { get; set; }
+
+    [MaxLength(50)]
+    [Column("security_deposit_status")]
+    public string? SecurityDepositStatus { get; set; }
+
+    [Column("security_deposit_payment_intent_id")]
+    public string? SecurityDepositPaymentIntentId { get; set; }
+
+    [Column("security_deposit_charge_id")]
+    public string? SecurityDepositChargeId { get; set; }
+
+    [Column("security_deposit_authorized_at")]
+    public DateTime? SecurityDepositAuthorizedAt { get; set; }
+
+    [Column("security_deposit_captured_at")]
+    public DateTime? SecurityDepositCapturedAt { get; set; }
+
+    [Column("security_deposit_released_at")]
+    public DateTime? SecurityDepositReleasedAt { get; set; }
+
+    [Column("security_deposit_captured_amount", TypeName = "decimal(10,2)")]
+    public decimal? SecurityDepositCapturedAmount { get; set; }
+
+    [Column("security_deposit_capture_reason")]
+    public string? SecurityDepositCaptureReason { get; set; }
 
     [Column("failure_reason")]
     public string? FailureReason { get; set; }
@@ -90,5 +120,5 @@ public class Payment
     public virtual Customer Customer { get; set; } = null!;
 
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 }

@@ -16,6 +16,7 @@
 using Stripe;
 using Stripe.Checkout;
 using CarRental.Api.Models;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace CarRental.Api.Services;
@@ -27,9 +28,17 @@ public interface IStripeService
     Task<Models.Customer> GetCustomerAsync(string stripeCustomerId);
     Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId);
     Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId);
-    Task<PaymentIntent> CreatePaymentIntentAsync(decimal amount, string currency, string customerId, string? paymentMethodId = null);
+    Task<PaymentIntent> CreatePaymentIntentAsync(
+        decimal amount,
+        string currency,
+        string customerId,
+        string? paymentMethodId = null,
+        IDictionary<string, string>? metadata = null,
+        bool captureImmediately = true,
+        bool requestExtendedAuthorization = false);
     Task<PaymentIntent> ConfirmPaymentIntentAsync(string paymentIntentId);
     Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId);
+    Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null);
     Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount);
     Task<Account> CreateConnectedAccountAsync(string email, string country = "US");
     Task<Account> GetConnectedAccountAsync(string accountId);
@@ -75,9 +84,14 @@ public class StripeService : IStripeService
                 throw new InvalidOperationException($"Stripe secret key is not configured. Set the '{SecretKeySetting}' setting.");
             }
 
+            _logger.LogWarning("[Stripe] Using secret key: {SecretKey}", secretKey);
+
             StripeConfiguration.ApiKey = secretKey;
             _publishableKey = await _settingsService.GetValueAsync(PublishableKeySetting);
             _webhookSecret = await _settingsService.GetValueAsync(WebhookSecretSetting);
+
+            _logger.LogWarning("[Stripe] Publishable key: {Publishable}", _publishableKey);
+            _logger.LogWarning("[Stripe] Webhook secret: {WebhookSecret}", _webhookSecret);
             _initialized = true;
         }
         finally
@@ -89,6 +103,7 @@ public class StripeService : IStripeService
     public async Task<Models.Customer> CreateCustomerAsync(Models.Customer customer)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateCustomerAsync payload: {@Customer}", customer);
         try
         {
             var customerCreateOptions = new CustomerCreateOptions
@@ -128,6 +143,7 @@ public class StripeService : IStripeService
     public async Task<Models.Customer> UpdateCustomerAsync(Models.Customer customer)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] UpdateCustomerAsync payload: {@Customer}", customer);
         try
         {
             if (string.IsNullOrEmpty(customer.StripeCustomerId))
@@ -169,6 +185,7 @@ public class StripeService : IStripeService
     public async Task<Models.Customer> GetCustomerAsync(string stripeCustomerId)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] GetCustomerAsync stripeCustomerId={StripeCustomerId}", stripeCustomerId);
         try
         {
             var stripeCustomer = await new CustomerService().GetAsync(stripeCustomerId);
@@ -200,6 +217,7 @@ public class StripeService : IStripeService
     public async Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreatePaymentMethodAsync customerId={CustomerId} paymentMethodId={PaymentMethodId}", customerId, paymentMethodId);
         try
         {
             var attachOptions = new PaymentMethodAttachOptions
@@ -221,6 +239,7 @@ public class StripeService : IStripeService
     public async Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] GetPaymentMethodAsync paymentMethodId={PaymentMethodId}", paymentMethodId);
         try
         {
             var paymentMethod = await new PaymentMethodService().GetAsync(paymentMethodId);
@@ -233,9 +252,18 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<PaymentIntent> CreatePaymentIntentAsync(decimal amount, string currency, string customerId, string? paymentMethodId = null)
+    public async Task<PaymentIntent> CreatePaymentIntentAsync(
+        decimal amount,
+        string currency,
+        string customerId,
+        string? paymentMethodId = null,
+        IDictionary<string, string>? metadata = null,
+        bool captureImmediately = true,
+        bool requestExtendedAuthorization = false)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreatePaymentIntentAsync amount={Amount} currency={Currency} customerId={CustomerId} paymentMethodId={PaymentMethodId} captureImmediately={CaptureImmediately}",
+            amount, currency, customerId, paymentMethodId, captureImmediately);
         try
         {
             var paymentIntentOptions = new PaymentIntentCreateOptions
@@ -246,11 +274,39 @@ public class StripeService : IStripeService
                 PaymentMethod = paymentMethodId,
                 ConfirmationMethod = "manual",
                 Confirm = paymentMethodId != null,
+                CaptureMethod = captureImmediately ? "automatic" : "manual",
                 Metadata = new Dictionary<string, string>
                 {
                     { "source", "car_rental_api" }
                 }
             };
+
+            if (!captureImmediately)
+            {
+                paymentIntentOptions.PaymentMethodTypes = new List<string> { "card" };
+
+                if (requestExtendedAuthorization)
+                {
+                    paymentIntentOptions.PaymentMethodOptions = new PaymentIntentPaymentMethodOptionsOptions
+                    {
+                        Card = new PaymentIntentPaymentMethodOptionsCardOptions
+                        {
+                            RequestExtendedAuthorization = "if_available"
+                        }
+                    };
+                }
+            }
+
+            if (metadata != null)
+            {
+                foreach (var kvp in metadata)
+                {
+                    if (!string.IsNullOrWhiteSpace(kvp.Key) && !paymentIntentOptions.Metadata.ContainsKey(kvp.Key))
+                    {
+                        paymentIntentOptions.Metadata[kvp.Key] = kvp.Value;
+                    }
+                }
+            }
 
             var paymentIntent = await new PaymentIntentService().CreateAsync(paymentIntentOptions);
             
@@ -266,6 +322,7 @@ public class StripeService : IStripeService
     public async Task<PaymentIntent> ConfirmPaymentIntentAsync(string paymentIntentId)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] ConfirmPaymentIntentAsync paymentIntentId={PaymentIntentId}", paymentIntentId);
         try
         {
             var paymentIntent = await new PaymentIntentService().ConfirmAsync(paymentIntentId);
@@ -281,6 +338,7 @@ public class StripeService : IStripeService
     public async Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CancelPaymentIntentAsync paymentIntentId={PaymentIntentId}", paymentIntentId);
         try
         {
             var paymentIntent = await new PaymentIntentService().CancelAsync(paymentIntentId);
@@ -293,9 +351,32 @@ public class StripeService : IStripeService
         }
     }
 
+    public async Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null)
+    {
+        await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CapturePaymentIntentAsync paymentIntentId={PaymentIntentId} amount={Amount}", paymentIntentId, amountToCapture);
+        try
+        {
+            var options = new PaymentIntentCaptureOptions();
+            if (amountToCapture.HasValue)
+            {
+                options.AmountToCapture = (long)(amountToCapture.Value * 100);
+            }
+
+            var paymentIntent = await new PaymentIntentService().CaptureAsync(paymentIntentId, options);
+            return paymentIntent;
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Error capturing payment intent {PaymentIntentId}", paymentIntentId);
+            throw new InvalidOperationException($"Failed to capture payment intent: {ex.Message}", ex);
+        }
+    }
+
     public async Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateRefundAsync paymentIntentId={PaymentIntentId} amount={Amount}", paymentIntentId, amount);
         try
         {
             var refundOptions = new RefundCreateOptions
@@ -317,6 +398,7 @@ public class StripeService : IStripeService
     public async Task<Account> CreateConnectedAccountAsync(string email, string country = "US")
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateConnectedAccountAsync email={Email} country={Country}", email, country);
         try
         {
             var accountOptions = new AccountCreateOptions
@@ -350,6 +432,7 @@ public class StripeService : IStripeService
     public async Task<Account> GetConnectedAccountAsync(string accountId)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] GetConnectedAccountAsync accountId={AccountId}", accountId);
         try
         {
             var account = await new AccountService().GetAsync(accountId);
@@ -365,6 +448,7 @@ public class StripeService : IStripeService
     public async Task<Transfer> CreateTransferAsync(string accountId, long amount, string currency = "usd")
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateTransferAsync accountId={AccountId} amount={Amount} currency={Currency}", accountId, amount, currency);
         try
         {
             var transferOptions = new TransferCreateOptions
@@ -387,6 +471,7 @@ public class StripeService : IStripeService
     public async Task<WebhookEndpoint> CreateWebhookEndpointAsync(string url, string[] events)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateWebhookEndpointAsync url={Url} events={Events}", url, events);
         try
         {
             var webhookOptions = new WebhookEndpointCreateOptions
@@ -408,6 +493,7 @@ public class StripeService : IStripeService
     public async Task<Event> ConstructWebhookEventAsync(string payload, string signature, string webhookSecret)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] ConstructWebhookEventAsync signature={Signature} incomingSecret={IncomingSecret} storedSecret={StoredSecret}", signature, webhookSecret, _webhookSecret);
         try
         {
             var webhookSecretKey = !string.IsNullOrWhiteSpace(_webhookSecret)
@@ -431,6 +517,7 @@ public class StripeService : IStripeService
     public async Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null)
     {
         await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateCheckoutSessionAsync options={Options} requestOptions={RequestOptions}", options, requestOptions);
         try
         {
             var service = new Stripe.Checkout.SessionService();

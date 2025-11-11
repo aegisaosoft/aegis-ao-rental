@@ -29,6 +29,7 @@ using CarRental.Api.Services;
 using CarRental.Api.Filters;
 using CarRental.Api.Middleware;
 using CarRental.Api.Extensions;
+using CarRental.Api.HostedServices;
 
 // Enable legacy timestamp behavior for Npgsql to handle DateTimes
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -195,6 +196,9 @@ builder.Services.AddScoped<IEmailService, EmailService>();
 
 // Add Email Template Service
 builder.Services.AddScoped<IEmailTemplateService, EmailTemplateService>();
+
+// Add background services
+builder.Services.AddHostedService<SecurityDepositCollectionService>();
 
 // Add JWT Authentication
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");

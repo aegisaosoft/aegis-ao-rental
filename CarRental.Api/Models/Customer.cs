@@ -102,11 +102,11 @@ public class Customer
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany? Company { get; set; }
+    public virtual Company? Company { get; set; }
     
     public virtual CustomerLicense? License { get; set; }
     
-    public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
+    public virtual ICollection<Booking> Bookings { get; set; } = new List<Booking>();
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
     public virtual ICollection<CustomerPaymentMethod> PaymentMethods { get; set; } = new List<CustomerPaymentMethod>();

@@ -66,6 +66,8 @@ public class RentalCompanyDto
 
     [MaxLength(3)]
     public string Currency { get; set; } = "USD";
+
+    public decimal SecurityDeposit { get; set; } = 1000m;
     
     public string? CompanyPath { get; set; }
     
@@ -164,6 +166,8 @@ public class CreateRentalCompanyDto
     [MaxLength(3)]
     public string? Currency { get; set; }
 
+    public decimal? SecurityDeposit { get; set; }
+
     public string? BlinkKey { get; set; } // BlinkID license key for the company
 }
 
@@ -234,6 +238,8 @@ public class UpdateRentalCompanyDto
     public string? Currency { get; set; }
 
     public string? BlinkKey { get; set; } // BlinkID license key for the company
+
+    public decimal? SecurityDeposit { get; set; }
     
     [MaxLength(20)]
     public string? AiIntegration { get; set; }
@@ -269,6 +275,7 @@ public class CompanyConfigDto
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public string Currency { get; set; } = "USD";
     public string AiIntegration { get; set; } = "claude";
+    public decimal SecurityDeposit { get; set; } = 1000m;
 }
 
 // DTO for company list (admin)
@@ -284,6 +291,7 @@ public class CompanyListDto
     public string? Country { get; set; }
     public string Currency { get; set; } = "USD";
     public string AiIntegration { get; set; } = "claude";
+    public decimal SecurityDeposit { get; set; } = 1000m;
     public DateTime CreatedAt { get; set; }
 }
 
@@ -322,4 +330,5 @@ public class CompanyDetailDto
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public string Currency { get; set; } = "USD";
     public string AiIntegration { get; set; } = "claude";
+    public decimal SecurityDeposit { get; set; } = 1000m;
 }

@@ -16,6 +16,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
+using System;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
@@ -23,6 +24,7 @@ using CarRental.Api.Services;
 using Stripe;
 using CarRental.Api.DTOs.Payments;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace CarRental.Api.Controllers;
 
@@ -34,17 +36,20 @@ public class PaymentsController : ControllerBase
     private readonly IStripeService _stripeService;
     private readonly ILogger<PaymentsController> _logger;
     private readonly IEncryptionService _encryptionService;
+    private readonly IConfiguration _configuration;
 
     public PaymentsController(
         CarRentalDbContext context, 
         IStripeService stripeService, 
         ILogger<PaymentsController> logger,
-        IEncryptionService encryptionService)
+        IEncryptionService encryptionService,
+        IConfiguration configuration)
     {
         _context = context;
         _stripeService = stripeService;
         _logger = logger;
         _encryptionService = encryptionService;
+        _configuration = configuration;
     }
 
     /// <summary>
@@ -104,6 +109,15 @@ public class PaymentsController : ControllerBase
                 StripeChargeId = p.StripeChargeId,
                 StripePaymentMethodId = p.StripePaymentMethodId,
                 Status = p.Status,
+                SecurityDepositAmount = p.SecurityDepositAmount,
+                SecurityDepositStatus = p.SecurityDepositStatus,
+                SecurityDepositPaymentIntentId = p.SecurityDepositPaymentIntentId,
+                SecurityDepositChargeId = p.SecurityDepositChargeId,
+                SecurityDepositAuthorizedAt = p.SecurityDepositAuthorizedAt,
+                SecurityDepositCapturedAt = p.SecurityDepositCapturedAt,
+                SecurityDepositReleasedAt = p.SecurityDepositReleasedAt,
+                SecurityDepositCapturedAmount = p.SecurityDepositCapturedAmount,
+                SecurityDepositCaptureReason = p.SecurityDepositCaptureReason,
                 FailureReason = p.FailureReason,
                 ProcessedAt = p.ProcessedAt,
                 CreatedAt = p.CreatedAt,
@@ -145,6 +159,15 @@ public class PaymentsController : ControllerBase
             StripeChargeId = payment.StripeChargeId,
             StripePaymentMethodId = payment.StripePaymentMethodId,
             Status = payment.Status,
+            SecurityDepositAmount = payment.SecurityDepositAmount,
+            SecurityDepositStatus = payment.SecurityDepositStatus,
+            SecurityDepositPaymentIntentId = payment.SecurityDepositPaymentIntentId,
+            SecurityDepositChargeId = payment.SecurityDepositChargeId,
+            SecurityDepositAuthorizedAt = payment.SecurityDepositAuthorizedAt,
+            SecurityDepositCapturedAt = payment.SecurityDepositCapturedAt,
+            SecurityDepositReleasedAt = payment.SecurityDepositReleasedAt,
+            SecurityDepositCapturedAmount = payment.SecurityDepositCapturedAmount,
+            SecurityDepositCaptureReason = payment.SecurityDepositCaptureReason,
             FailureReason = payment.FailureReason,
             ProcessedAt = payment.ProcessedAt,
             CreatedAt = payment.CreatedAt,
@@ -180,7 +203,9 @@ public class PaymentsController : ControllerBase
             PaymentType = createPaymentDto.PaymentType,
             PaymentMethod = createPaymentDto.PaymentMethod,
             StripePaymentMethodId = createPaymentDto.StripePaymentMethodId,
-            Status = "pending"
+            Status = "pending",
+            SecurityDepositAmount = createPaymentDto.SecurityDepositAmount,
+            SecurityDepositStatus = createPaymentDto.SecurityDepositAmount > 0 ? "pending" : null
         };
 
         _context.Payments.Add(payment);
@@ -201,6 +226,15 @@ public class PaymentsController : ControllerBase
             StripeChargeId = payment.StripeChargeId,
             StripePaymentMethodId = payment.StripePaymentMethodId,
             Status = payment.Status,
+            SecurityDepositAmount = payment.SecurityDepositAmount,
+            SecurityDepositStatus = payment.SecurityDepositStatus,
+            SecurityDepositPaymentIntentId = payment.SecurityDepositPaymentIntentId,
+            SecurityDepositChargeId = payment.SecurityDepositChargeId,
+            SecurityDepositAuthorizedAt = payment.SecurityDepositAuthorizedAt,
+            SecurityDepositCapturedAt = payment.SecurityDepositCapturedAt,
+            SecurityDepositReleasedAt = payment.SecurityDepositReleasedAt,
+            SecurityDepositCapturedAmount = payment.SecurityDepositCapturedAmount,
+            SecurityDepositCaptureReason = payment.SecurityDepositCaptureReason,
             FailureReason = payment.FailureReason,
             ProcessedAt = payment.ProcessedAt,
             CreatedAt = payment.CreatedAt,
@@ -225,6 +259,8 @@ public class PaymentsController : ControllerBase
             if (dto.Amount <= 0)
                 return BadRequest("Amount must be greater than zero.");
 
+            _logger.LogInformation("[Stripe] Checkout session request received: {@Request}", dto);
+
             var customer = await _context.Customers.FindAsync(dto.CustomerId);
             if (customer == null)
                 return BadRequest("Customer not found");
@@ -242,19 +278,31 @@ public class PaymentsController : ControllerBase
 
             var amountInCents = (long)Math.Round(dto.Amount * 100M, MidpointRounding.AwayFromZero);
 
+            var bookingId = dto.BookingId;
+#pragma warning disable CS0618
+            bookingId ??= dto.ReservationId;
+#pragma warning restore CS0618
+
             var lineItem = new Stripe.Checkout.SessionLineItemOptions
             {
-                Quantity = 1,
                 PriceData = new Stripe.Checkout.SessionLineItemPriceDataOptions
                 {
-                    Currency = dto.Currency.ToLowerInvariant(),
-                    UnitAmount = amountInCents,
+                    Currency = dto.Currency.ToLower(),
+                    UnitAmountDecimal = dto.Amount * 100,
                     ProductData = new Stripe.Checkout.SessionLineItemPriceDataProductDataOptions
                     {
-                        Name = string.IsNullOrWhiteSpace(dto.Description) ? "Vehicle Booking" : dto.Description,
+                        Name = dto.Description ?? $"Booking {dto.BookingNumber ?? bookingId?.ToString() ?? ""}".Trim()
                     }
-                }
+                },
+                Quantity = 1
             };
+
+            _logger.LogInformation("[Stripe] Checkout session line item: {@LineItem}", new
+            {
+                lineItem.PriceData?.Currency,
+                lineItem.PriceData?.UnitAmountDecimal,
+                ProductName = lineItem.PriceData?.ProductData?.Name
+            });
 
             var sessionOptions = new Stripe.Checkout.SessionCreateOptions
             {
@@ -273,9 +321,14 @@ public class PaymentsController : ControllerBase
                 }
             };
 
-            if (dto.ReservationId.HasValue)
+            if (bookingId.HasValue)
             {
-                sessionOptions.PaymentIntentData.Metadata!["reservation_id"] = dto.ReservationId.Value.ToString();
+                sessionOptions.PaymentIntentData.Metadata!["booking_id"] = bookingId.Value.ToString();
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.BookingNumber))
+            {
+                sessionOptions.PaymentIntentData.Metadata!["booking_number"] = dto.BookingNumber;
             }
 
             if (!string.IsNullOrWhiteSpace(company.StripeAccountId))
@@ -322,7 +375,25 @@ public class PaymentsController : ControllerBase
                 }
             }
 
+            _logger.LogInformation("[Stripe] Checkout session options: {@Options}", new
+            {
+                sessionOptions.Mode,
+                sessionOptions.Customer,
+                sessionOptions.SuccessUrl,
+                sessionOptions.CancelUrl,
+                LineItems = sessionOptions.LineItems?.Select(li => new
+                {
+                    Currency = li.PriceData?.Currency,
+                    Amount = li.PriceData?.UnitAmountDecimal,
+                    ProductName = li.PriceData?.ProductData?.Name
+                }).ToList(),
+                Metadata = sessionOptions.PaymentIntentData?.Metadata,
+                TransferDestination = sessionOptions.PaymentIntentData?.TransferData?.Destination
+            });
+
             var session = await _stripeService.CreateCheckoutSessionAsync(sessionOptions);
+
+            _logger.LogInformation("[Stripe] Checkout session created. SessionId={SessionId} Url={Url}", session.Id, session.Url);
 
             return Ok(new
             {
@@ -345,6 +416,8 @@ public class PaymentsController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("[Stripe] Process payment request received: {@Request}", processPaymentDto);
+
             var customer = await _context.Customers.FindAsync(processPaymentDto.CustomerId);
             if (customer == null)
                 return BadRequest("Customer not found");
@@ -363,6 +436,15 @@ public class PaymentsController : ControllerBase
                 processPaymentDto.Currency,
                 customer.StripeCustomerId!,
                 processPaymentDto.PaymentMethodId);
+
+            _logger.LogInformation("[Stripe] Payment intent created: {@Info}", new
+            {
+                paymentIntent.Id,
+                paymentIntent.Amount,
+                paymentIntent.Currency,
+                paymentIntent.Status,
+                CustomerId = processPaymentDto.CustomerId
+            });
 
             // Create payment record
             var payment = new Payment
@@ -523,6 +605,120 @@ public class PaymentsController : ControllerBase
     }
 
     /// <summary>
+    /// Capture a previously authorized security deposit
+    /// </summary>
+    [HttpPost("security-deposit/capture")]
+    public async Task<ActionResult<object>> CaptureSecurityDeposit([FromBody] CaptureSecurityDepositDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var payment = await _context.Payments
+            .Include(p => p.Customer)
+            .FirstOrDefaultAsync(p => p.ReservationId == dto.ReservationId);
+
+        if (payment == null)
+            return NotFound("Payment record for reservation not found.");
+
+        if (string.IsNullOrWhiteSpace(payment.SecurityDepositPaymentIntentId))
+            return BadRequest("No security deposit authorization exists for this reservation.");
+
+        if (payment.SecurityDepositStatus == "captured")
+            return BadRequest("Security deposit has already been captured.");
+
+        if (payment.SecurityDepositStatus == "released")
+            return BadRequest("Security deposit has already been released.");
+
+        if (payment.SecurityDepositAmount.HasValue && dto.Amount > payment.SecurityDepositAmount.Value)
+            return BadRequest("Capture amount cannot exceed the authorized security deposit.");
+
+        try
+        {
+            var captureIntent = await _stripeService.CapturePaymentIntentAsync(
+                payment.SecurityDepositPaymentIntentId,
+                dto.Amount);
+
+            var capturedAmount = captureIntent.AmountReceived > 0
+                ? captureIntent.AmountReceived / 100m
+                : dto.Amount;
+
+            payment.SecurityDepositStatus = "captured";
+            payment.SecurityDepositCapturedAt = DateTime.UtcNow;
+            payment.SecurityDepositCapturedAmount = capturedAmount;
+            payment.SecurityDepositCaptureReason = dto.Reason;
+            payment.SecurityDepositChargeId = captureIntent.LatestChargeId;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                payment.SecurityDepositStatus,
+                payment.SecurityDepositCapturedAt,
+                payment.SecurityDepositCapturedAmount,
+                payment.SecurityDepositChargeId
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error capturing security deposit for reservation {ReservationId}",
+                dto.ReservationId);
+            return BadRequest($"Failed to capture security deposit: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Release a previously authorized security deposit hold
+    /// </summary>
+    [HttpPost("security-deposit/release")]
+    public async Task<ActionResult<object>> ReleaseSecurityDeposit([FromBody] ReleaseSecurityDepositDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var payment = await _context.Payments
+            .Include(p => p.Customer)
+            .FirstOrDefaultAsync(p => p.ReservationId == dto.ReservationId);
+
+        if (payment == null)
+            return NotFound("Payment record for reservation not found.");
+
+        if (string.IsNullOrWhiteSpace(payment.SecurityDepositPaymentIntentId))
+            return BadRequest("No security deposit authorization exists for this reservation.");
+
+        if (payment.SecurityDepositStatus == "captured")
+            return BadRequest("Security deposit has already been captured and cannot be released.");
+
+        if (payment.SecurityDepositStatus == "released")
+            return BadRequest("Security deposit has already been released.");
+
+        try
+        {
+            var cancelIntent = await _stripeService.CancelPaymentIntentAsync(payment.SecurityDepositPaymentIntentId);
+
+            payment.SecurityDepositStatus = "released";
+            payment.SecurityDepositReleasedAt = DateTime.UtcNow;
+            payment.SecurityDepositCaptureReason = dto.Reason;
+            payment.SecurityDepositChargeId = cancelIntent.LatestChargeId;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                payment.SecurityDepositStatus,
+                payment.SecurityDepositReleasedAt
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error releasing security deposit for reservation {ReservationId}",
+                dto.ReservationId);
+            return BadRequest($"Failed to release security deposit: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Get customer payment methods
     /// </summary>
     [HttpGet("customer/{customerId}/payment-methods")]
@@ -638,7 +834,14 @@ public class PaymentsController : ControllerBase
 
         try
         {
-            var stripeEvent = await _stripeService.ConstructWebhookEventAsync(json, signature, "");
+            var webhookSecret = _configuration["Stripe:WebhookSecret"];
+            if (string.IsNullOrWhiteSpace(webhookSecret))
+            {
+                _logger.LogError("[Stripe] Webhook secret is not configured (Stripe:WebhookSecret)");
+                return BadRequest("Stripe webhook secret is not configured.");
+            }
+
+            var stripeEvent = await _stripeService.ConstructWebhookEventAsync(json, signature, webhookSecret);
             
             switch (stripeEvent.Type)
             {
@@ -647,6 +850,12 @@ public class PaymentsController : ControllerBase
                     break;
                 case "payment_intent.payment_failed":
                     await HandlePaymentIntentFailed(stripeEvent);
+                    break;
+                case "payment_intent.amount_capturable_updated":
+                    await HandlePaymentIntentAmountCapturableUpdated(stripeEvent);
+                    break;
+                case "payment_intent.canceled":
+                    await HandlePaymentIntentCanceled(stripeEvent);
                     break;
                 case "payment_method.attached":
                     await HandlePaymentMethodAttached(stripeEvent);
@@ -670,24 +879,156 @@ public class PaymentsController : ControllerBase
         var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
         if (paymentIntent == null) return;
 
+        var paymentType = paymentIntent.Metadata?.GetValueOrDefault("payment_type");
+
+        if (string.Equals(paymentType, "security_deposit", StringComparison.OrdinalIgnoreCase))
+        {
+            var depositPayment = await FindPaymentForDepositIntent(paymentIntent);
+            if (depositPayment != null)
+            {
+                var amountReceived = paymentIntent.AmountReceived;
+                var capturedAmount = amountReceived > 0
+                    ? amountReceived / 100m
+                    : depositPayment.SecurityDepositAmount;
+
+                depositPayment.SecurityDepositStatus = "captured";
+                depositPayment.SecurityDepositCapturedAt = DateTime.UtcNow;
+                depositPayment.SecurityDepositCapturedAmount = capturedAmount;
+                depositPayment.SecurityDepositChargeId = paymentIntent.LatestChargeId;
+
+                await _context.SaveChangesAsync();
+            }
+
+            return;
+        }
+
         var payment = await _context.Payments
             .FirstOrDefaultAsync(p => p.StripePaymentIntentId == paymentIntent.Id);
+
+        Guid? bookingId = null;
+        string? bookingNumber = null;
+        if (paymentIntent.Metadata != null)
+        {
+            if (paymentIntent.Metadata.TryGetValue("booking_id", out var bookingIdValue) &&
+                Guid.TryParse(bookingIdValue, out var parsedBookingId))
+            {
+                bookingId = parsedBookingId;
+            }
+            else if (paymentIntent.Metadata.TryGetValue("reservation_id", out var reservationIdValue) &&
+                     Guid.TryParse(reservationIdValue, out var parsedReservationId))
+            {
+                bookingId = parsedReservationId;
+            }
+
+            paymentIntent.Metadata.TryGetValue("booking_number", out bookingNumber);
+        }
 
         if (payment != null)
         {
             payment.Status = "succeeded";
             payment.ProcessedAt = DateTime.UtcNow;
             payment.StripeChargeId = paymentIntent.LatestCharge?.Id;
-            
+
+            if (bookingId.HasValue && payment.ReservationId == null)
+            {
+                payment.ReservationId = bookingId.Value;
+            }
+
             _context.Payments.Update(payment);
-            await _context.SaveChangesAsync();
         }
+        else if (paymentIntent.Metadata != null &&
+                 paymentIntent.Metadata.TryGetValue("customer_id", out var customerIdValue) &&
+                 Guid.TryParse(customerIdValue, out var customerId) &&
+                 paymentIntent.Metadata.TryGetValue("company_id", out var companyIdValue) &&
+                 Guid.TryParse(companyIdValue, out var companyId))
+        {
+            long amountRaw = paymentIntent.AmountReceived;
+            if (amountRaw == 0)
+            {
+                amountRaw = paymentIntent.Amount;
+            }
+            var amount = amountRaw / 100m;
+            var currency = string.IsNullOrWhiteSpace(paymentIntent.Currency)
+                ? "USD"
+                : paymentIntent.Currency.ToUpperInvariant();
+
+            payment = new Payment
+            {
+                CustomerId = customerId,
+                CompanyId = companyId,
+                ReservationId = bookingId,
+                Amount = amount,
+                Currency = currency,
+                PaymentType = "checkout",
+                PaymentMethod = paymentIntent.PaymentMethodTypes?.FirstOrDefault(),
+                StripePaymentIntentId = paymentIntent.Id,
+                StripeChargeId = paymentIntent.LatestCharge?.Id,
+                Status = "succeeded",
+                ProcessedAt = DateTime.UtcNow
+            };
+
+            _context.Payments.Add(payment);
+        }
+
+        if (bookingId.HasValue || !string.IsNullOrWhiteSpace(bookingNumber))
+        {
+            Reservation? reservation = null;
+
+            if (bookingId.HasValue)
+            {
+                reservation = await _context.Bookings
+                    .FirstOrDefaultAsync(r => r.Id == bookingId.Value);
+            }
+
+            if (reservation == null && !string.IsNullOrWhiteSpace(bookingNumber))
+            {
+                reservation = await _context.Bookings
+                    .FirstOrDefaultAsync(r => r.BookingNumber == bookingNumber);
+            }
+
+            if (reservation != null)
+            {
+                reservation.Status = BookingStatus.Confirmed;
+                reservation.UpdatedAt = DateTime.UtcNow;
+                _context.Bookings.Update(reservation);
+
+                var vehicle = await _context.Vehicles
+                    .FirstOrDefaultAsync(v => v.Id == reservation.VehicleId);
+
+                if (vehicle != null && vehicle.Status != VehicleStatus.Rented)
+                {
+                    vehicle.Status = VehicleStatus.Rented;
+                    _context.Vehicles.Update(vehicle);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Booking {BookingId} referenced in payment intent {PaymentIntentId} was not found", bookingId, paymentIntent.Id);
+            }
+        }
+
+        await _context.SaveChangesAsync();
     }
 
     private async Task HandlePaymentIntentFailed(Event stripeEvent)
     {
         var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
         if (paymentIntent == null) return;
+
+        var paymentType = paymentIntent.Metadata?.GetValueOrDefault("payment_type");
+
+        if (string.Equals(paymentType, "security_deposit", StringComparison.OrdinalIgnoreCase))
+        {
+            var depositPayment = await FindPaymentForDepositIntent(paymentIntent);
+            if (depositPayment != null)
+            {
+                depositPayment.SecurityDepositStatus = "failed";
+                depositPayment.SecurityDepositCaptureReason = paymentIntent.LastPaymentError?.Message;
+                await _context.SaveChangesAsync();
+            }
+
+            return;
+        }
 
         var payment = await _context.Payments
             .FirstOrDefaultAsync(p => p.StripePaymentIntentId == paymentIntent.Id);
@@ -697,6 +1038,66 @@ public class PaymentsController : ControllerBase
             payment.Status = "failed";
             payment.FailureReason = paymentIntent.LastPaymentError?.Message;
             
+            _context.Payments.Update(payment);
+            await _context.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandlePaymentIntentAmountCapturableUpdated(Event stripeEvent)
+    {
+        var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
+        if (paymentIntent == null) return;
+
+        var paymentType = paymentIntent.Metadata?.GetValueOrDefault("payment_type");
+        if (!string.Equals(paymentType, "security_deposit", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var depositPayment = await FindPaymentForDepositIntent(paymentIntent);
+        if (depositPayment == null)
+            return;
+
+        depositPayment.SecurityDepositStatus = "authorized";
+        depositPayment.SecurityDepositAuthorizedAt = DateTime.UtcNow;
+        depositPayment.SecurityDepositPaymentIntentId ??= paymentIntent.Id;
+
+        var amount = paymentIntent.Amount;
+
+        if (!depositPayment.SecurityDepositAmount.HasValue && amount > 0)
+        {
+            depositPayment.SecurityDepositAmount = amount / 100m;
+        }
+
+        await _context.SaveChangesAsync();
+    }
+
+    private async Task HandlePaymentIntentCanceled(Event stripeEvent)
+    {
+        var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
+        if (paymentIntent == null) return;
+
+        var paymentType = paymentIntent.Metadata?.GetValueOrDefault("payment_type");
+        if (string.Equals(paymentType, "security_deposit", StringComparison.OrdinalIgnoreCase))
+        {
+            var depositPayment = await FindPaymentForDepositIntent(paymentIntent);
+            if (depositPayment != null)
+            {
+                depositPayment.SecurityDepositStatus = "released";
+                depositPayment.SecurityDepositReleasedAt = DateTime.UtcNow;
+                depositPayment.SecurityDepositCaptureReason = paymentIntent.CancellationReason;
+                depositPayment.SecurityDepositChargeId = paymentIntent.LatestChargeId;
+                await _context.SaveChangesAsync();
+            }
+
+            return;
+        }
+
+        var payment = await _context.Payments
+            .FirstOrDefaultAsync(p => p.StripePaymentIntentId == paymentIntent.Id);
+
+        if (payment != null)
+        {
+            payment.Status = "canceled";
+            payment.FailureReason = paymentIntent.CancellationReason;
             _context.Payments.Update(payment);
             await _context.SaveChangesAsync();
         }
@@ -721,5 +1122,31 @@ public class PaymentsController : ControllerBase
             _context.CustomerPaymentMethods.Update(customerPaymentMethod);
             await _context.SaveChangesAsync();
         }
+    }
+
+    private async Task<Payment?> FindPaymentForDepositIntent(PaymentIntent paymentIntent)
+    {
+        var payment = await _context.Payments
+            .FirstOrDefaultAsync(p => p.SecurityDepositPaymentIntentId == paymentIntent.Id);
+
+        if (payment != null)
+            return payment;
+
+        if (paymentIntent.Metadata != null &&
+            paymentIntent.Metadata.TryGetValue("booking_id", out var bookingIdValue) &&
+            Guid.TryParse(bookingIdValue, out var bookingId))
+        {
+            payment = await _context.Payments
+                .FirstOrDefaultAsync(p => p.ReservationId == bookingId);
+
+            if (payment != null && string.IsNullOrEmpty(payment.SecurityDepositPaymentIntentId))
+            {
+                payment.SecurityDepositPaymentIntentId = paymentIntent.Id;
+            }
+
+            return payment;
+        }
+
+        return null;
     }
 }

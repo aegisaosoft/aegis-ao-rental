@@ -47,9 +47,9 @@ namespace CarRental.Api.Extensions
         /// <summary>
         /// Gets the current company from HttpContext
         /// </summary>
-        public static RentalCompany? GetCompany(this HttpContext context)
+        public static Company? GetCompany(this HttpContext context)
         {
-            return context.Items["Company"] as RentalCompany;
+            return context.Items["Company"] as Company;
         }
 
         /// <summary>

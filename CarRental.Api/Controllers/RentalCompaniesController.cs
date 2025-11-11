@@ -46,7 +46,7 @@ public class RentalCompaniesController : ControllerBase
         _encryptionService = encryptionService;
     }
 
-    private async Task<string?> ResolveStripeAccountIdAsync(RentalCompany company)
+    private async Task<string?> ResolveStripeAccountIdAsync(Company company)
     {
         if (string.IsNullOrWhiteSpace(company.StripeAccountId))
             return null;
@@ -70,7 +70,7 @@ public class RentalCompaniesController : ControllerBase
         }
     }
 
-    private async Task<string?> ReEncryptPlainStripeAccountIdAsync(RentalCompany company, string plaintext)
+    private async Task<string?> ReEncryptPlainStripeAccountIdAsync(Company company, string plaintext)
     {
         if (string.IsNullOrWhiteSpace(plaintext))
             return null;
@@ -260,7 +260,7 @@ public class RentalCompaniesController : ControllerBase
         if (existingCompany != null)
             return Conflict("Company with this email already exists");
 
-        var company = new RentalCompany
+        var company = new Company
         {
             CompanyName = createCompanyDto.CompanyName,
             Email = createCompanyDto.Email,
@@ -507,7 +507,7 @@ public class RentalCompaniesController : ControllerBase
         var hasActiveVehicles = await _context.Vehicles
             .AnyAsync(v => v.CompanyId == id && v.Status != VehicleStatus.OutOfService);
 
-        var hasActiveReservations = await _context.Reservations
+        var hasActiveReservations = await _context.Bookings
             .AnyAsync(r => r.CompanyId == id && r.Status == "Confirmed");
 
         var hasActiveRentals = await _context.Rentals
@@ -571,15 +571,15 @@ public class RentalCompaniesController : ControllerBase
         {
             TotalVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == id),
             ActiveVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == id && v.Status == VehicleStatus.Available),
-            TotalReservations = await _context.Reservations.CountAsync(r => r.CompanyId == id),
-            ActiveReservations = await _context.Reservations.CountAsync(r => r.CompanyId == id && r.Status == "Confirmed"),
+            TotalReservations = await _context.Bookings.CountAsync(r => r.CompanyId == id),
+            ActiveReservations = await _context.Bookings.CountAsync(r => r.CompanyId == id && r.Status == "Confirmed"),
             TotalRentals = await _context.Rentals.CountAsync(r => r.CompanyId == id),
             ActiveRentals = await _context.Rentals.CountAsync(r => r.CompanyId == id && r.Status == "active"),
             TotalRevenue = await _context.Payments.Where(p => p.CompanyId == id && p.Status == "succeeded")
                 .SumAsync(p => p.Amount),
             AverageRating = await _context.Reviews.Where(r => r.CompanyId == id)
                 .AverageAsync(r => (double?)r.Rating),
-            LastActivity = await _context.Reservations
+            LastActivity = await _context.Bookings
                 .Where(r => r.CompanyId == id)
                 .OrderByDescending(r => r.CreatedAt)
                 .Select(r => r.CreatedAt)
@@ -682,7 +682,7 @@ public class RentalCompaniesController : ControllerBase
         if (company == null)
             return NotFound();
 
-        var query = _context.Reservations
+        var query = _context.Bookings
             .Include(r => r.Customer)
             .Include(r => r.Vehicle)
                 .ThenInclude(v => v.VehicleModel)

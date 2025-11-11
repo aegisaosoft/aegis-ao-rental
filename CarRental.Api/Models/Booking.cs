@@ -19,7 +19,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace CarRental.Api.Models;
 
 [Table("bookings")]
-public class Reservation
+public class Booking
 {
     [Key]
     [Column("id")]
@@ -70,8 +70,7 @@ public class Reservation
     [Column("total_days")]
     public int TotalDays { get; set; }
 
-    [Required]
-    [Column(TypeName = "decimal(10,2)")]
+    [Column("subtotal", TypeName = "decimal(10,2)")]
     public decimal Subtotal { get; set; }
 
     [Column("tax_amount", TypeName = "decimal(10,2)")]
@@ -87,11 +86,15 @@ public class Reservation
     [Column("total_amount", TypeName = "decimal(10,2)")]
     public decimal TotalAmount { get; set; }
 
+    [Column("security_deposit", TypeName = "decimal(10,2)")]
+    public decimal SecurityDeposit { get; set; } = 1000m;
+
     [Required]
     [MaxLength(50)]
     [Column("status")]
     public string Status { get; set; } = "Pending";
 
+    [Column("notes")]
     public string? Notes { get; set; }
 
     [Column("created_at")]
@@ -100,7 +103,6 @@ public class Reservation
     [Column("updated_at")]
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    // Navigation properties
     [ForeignKey("CustomerId")]
     public virtual Customer Customer { get; set; } = null!;
 
@@ -108,8 +110,9 @@ public class Reservation
     public virtual Vehicle Vehicle { get; set; } = null!;
 
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
 }
+

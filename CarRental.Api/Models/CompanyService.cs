@@ -45,7 +45,7 @@ public class CompanyService
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public RentalCompany Company { get; set; } = null!;
+    public Company Company { get; set; } = null!;
 
     [ForeignKey("AdditionalServiceId")]
     public AdditionalService AdditionalService { get; set; } = null!;

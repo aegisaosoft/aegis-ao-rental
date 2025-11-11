@@ -28,14 +28,14 @@ namespace CarRental.Api.Services
 {
     public interface ICompanyService
     {
-        Task<RentalCompany?> GetCompanyByIdAsync(Guid companyId);
-        Task<RentalCompany?> GetCompanyBySubdomainAsync(string subdomain);
-        Task<RentalCompany?> GetCompanyByFullDomainAsync(string fullDomain);
+        Task<Company?> GetCompanyByIdAsync(Guid companyId);
+        Task<Company?> GetCompanyBySubdomainAsync(string subdomain);
+        Task<Company?> GetCompanyByFullDomainAsync(string fullDomain);
         Task<Dictionary<string, Guid>> GetDomainMappingAsync();
-        Task<IEnumerable<RentalCompany>> GetAllActiveCompaniesAsync();
-        Task<IEnumerable<RentalCompany>> GetAllCompaniesAsync();
-        Task<RentalCompany> CreateCompanyAsync(RentalCompany company);
-        Task<RentalCompany> UpdateCompanyAsync(RentalCompany company);
+        Task<IEnumerable<Company>> GetAllActiveCompaniesAsync();
+        Task<IEnumerable<Company>> GetAllCompaniesAsync();
+        Task<Company> CreateCompanyAsync(Company company);
+        Task<Company> UpdateCompanyAsync(Company company);
         Task DeleteCompanyAsync(Guid companyId);
         void InvalidateCache();
     }
@@ -58,13 +58,13 @@ namespace CarRental.Api.Services
             _logger = logger;
         }
 
-        public async Task<RentalCompany?> GetCompanyByIdAsync(Guid companyId)
+        public async Task<Company?> GetCompanyByIdAsync(Guid companyId)
         {
             return await _context.Companies
                 .FirstOrDefaultAsync(c => c.Id == companyId && c.IsActive);
         }
 
-        public async Task<RentalCompany?> GetCompanyBySubdomainAsync(string subdomain)
+        public async Task<Company?> GetCompanyBySubdomainAsync(string subdomain)
         {
             var normalizedSubdomain = subdomain.ToLowerInvariant().Trim();
             
@@ -75,7 +75,7 @@ namespace CarRental.Api.Services
                     c.IsActive);
         }
 
-        public async Task<RentalCompany?> GetCompanyByFullDomainAsync(string fullDomain)
+        public async Task<Company?> GetCompanyByFullDomainAsync(string fullDomain)
         {
             // Extract subdomain from full domain
             // company1.aegis-rental.com -> company1
@@ -118,7 +118,7 @@ namespace CarRental.Api.Services
             return mapping;
         }
 
-        public async Task<IEnumerable<RentalCompany>> GetAllActiveCompaniesAsync()
+        public async Task<IEnumerable<Company>> GetAllActiveCompaniesAsync()
         {
             return await _context.Companies
                 .Where(c => c.IsActive)
@@ -126,14 +126,14 @@ namespace CarRental.Api.Services
                 .ToListAsync();
         }
 
-        public async Task<IEnumerable<RentalCompany>> GetAllCompaniesAsync()
+        public async Task<IEnumerable<Company>> GetAllCompaniesAsync()
         {
             return await _context.Companies
                 .OrderBy(c => c.CompanyName)
                 .ToListAsync();
         }
 
-        public async Task<RentalCompany> CreateCompanyAsync(RentalCompany company)
+        public async Task<Company> CreateCompanyAsync(Company company)
         {
             // Ensure subdomain is lowercase and trimmed
             if (!string.IsNullOrEmpty(company.Subdomain))
@@ -175,7 +175,7 @@ namespace CarRental.Api.Services
             return company;
         }
 
-        public async Task<RentalCompany> UpdateCompanyAsync(RentalCompany company)
+        public async Task<Company> UpdateCompanyAsync(Company company)
         {
             company.Currency = CurrencyHelper.ResolveCurrency(company.Currency, company.Country);
             company.UpdatedAt = DateTime.UtcNow;

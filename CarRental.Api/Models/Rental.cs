@@ -95,7 +95,7 @@ public class Rental
     public virtual Vehicle Vehicle { get; set; } = null!;
 
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
     public virtual ICollection<Review> Reviews { get; set; } = new List<Review>();

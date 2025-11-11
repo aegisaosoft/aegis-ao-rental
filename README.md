@@ -95,12 +95,15 @@ The system uses a comprehensive PostgreSQL schema with:
 - `PUT /api/Vehicles/{id}` - Update vehicle
 - `DELETE /api/Vehicles/{id}` - Delete vehicle
 
-### Reservations
-- `GET /api/Reservations` - List reservations
-- `GET /api/Reservations/{id}` - Get reservation details
-- `POST /api/Reservations` - Create reservation
-- `PUT /api/Reservations/{id}` - Update reservation
-- `DELETE /api/Reservations/{id}` - Delete reservation
+### Bookings
+- `GET /api/Booking/bookings` - List bookings
+- `GET /api/Booking/bookings/{id}` - Get booking details
+- `POST /api/Booking/bookings` - Create booking
+- `PUT /api/Booking/bookings/{id}` - Update booking
+- `PATCH /api/Booking/bookings/{id}/status` - Update booking status
+- `POST /api/Booking/bookings/{id}/cancel` - Cancel booking
+- `GET /api/Booking/bookings/booking-number/{bookingNumber}` - Lookup by booking number
+- `DELETE /api/Booking/bookings/{id}` - Delete booking
 
 ### Rentals
 - `GET /api/Rentals` - List rentals

@@ -86,7 +86,7 @@ public class Vehicle
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 
     [ForeignKey("LocationId")]
     public virtual CompanyLocation? LocationDetails { get; set; }
@@ -94,7 +94,7 @@ public class Vehicle
     [ForeignKey("CurrentLocationId")]
     public virtual Location? CurrentLocation { get; set; }
 
-    public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
+    public virtual ICollection<Booking> Bookings { get; set; } = new List<Booking>();
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();
     public virtual ICollection<Review> Reviews { get; set; } = new List<Review>();
     

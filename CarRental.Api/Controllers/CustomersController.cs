@@ -359,7 +359,7 @@ public class CustomersController : ControllerBase
             return NotFound();
 
         // Check if customer has active reservations or rentals
-        var hasActiveReservations = await _context.Reservations
+        var hasActiveReservations = await _context.Bookings
             .AnyAsync(r => r.CustomerId == id && r.Status == "Confirmed");
 
         var hasActiveRentals = await _context.Rentals
@@ -421,7 +421,7 @@ public class CustomersController : ControllerBase
 
         var stats = new
         {
-            TotalReservations = await _context.Reservations.CountAsync(r => r.CustomerId == id),
+            TotalReservations = await _context.Bookings.CountAsync(r => r.CustomerId == id),
             TotalRentals = await _context.Rentals.CountAsync(r => r.CustomerId == id),
             TotalPayments = await _context.Payments.CountAsync(p => p.CustomerId == id),
             TotalSpent = await _context.Payments.Where(p => p.CustomerId == id && p.Status == "succeeded")

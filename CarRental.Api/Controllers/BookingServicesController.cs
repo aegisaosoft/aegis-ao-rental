@@ -131,7 +131,7 @@ public class BookingServicesController : ControllerBase
                 return BadRequest(ModelState);
 
             // Check if booking exists
-            var booking = await _context.Reservations
+            var booking = await _context.Bookings
                 .FirstOrDefaultAsync(r => r.Id == createDto.BookingId);
 
             if (booking == null)

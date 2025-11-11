@@ -39,8 +39,10 @@ public class SettingsController : ControllerBase
             PublishableKey = publishable ?? string.Empty,
             HasSecretKey = !string.IsNullOrWhiteSpace(secret),
             SecretKeyPreview = MaskSecret(secret),
+            SecretKey = secret,
             HasWebhookSecret = !string.IsNullOrWhiteSpace(webhook),
-            WebhookSecretPreview = MaskSecret(webhook)
+            WebhookSecretPreview = MaskSecret(webhook),
+            WebhookSecret = webhook
         };
 
         return Ok(response);
@@ -99,10 +101,13 @@ public class SettingsController : ControllerBase
         {
             HasAnthropicKey = !string.IsNullOrWhiteSpace(anthropic),
             AnthropicKeyPreview = MaskSecret(anthropic),
+            AnthropicApiKey = anthropic,
             HasClaudeKey = !string.IsNullOrWhiteSpace(claude),
             ClaudeKeyPreview = MaskSecret(claude),
+            ClaudeApiKey = claude,
             HasOpenAiKey = !string.IsNullOrWhiteSpace(openAi),
-            OpenAiKeyPreview = MaskSecret(openAi)
+            OpenAiKeyPreview = MaskSecret(openAi),
+            OpenAiApiKey = openAi
         };
 
         return Ok(response);

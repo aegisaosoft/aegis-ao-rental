@@ -69,6 +69,7 @@ public class CompaniesController : ControllerBase
     /// Get all companies with optional filtering
     /// </summary>
     [HttpGet]
+    [AllowAnonymous]
     public async Task<ActionResult<IEnumerable<object>>> GetAllCompanies([FromQuery] bool includeInactive = false)
     {
         try
@@ -115,7 +116,8 @@ public class CompaniesController : ControllerBase
                 blinkKey = c.BlinkKey,
                 isActive = c.IsActive,
                 createdAt = c.CreatedAt,
-                updatedAt = c.UpdatedAt
+                updatedAt = c.UpdatedAt,
+                securityDeposit = c.SecurityDeposit
             });
 
             return Ok(result);
@@ -131,6 +133,7 @@ public class CompaniesController : ControllerBase
     /// Get company by ID
     /// </summary>
     [HttpGet("{id}")]
+    [AllowAnonymous]
     public async Task<ActionResult<object>> GetCompany(Guid id)
     {
         try
@@ -173,7 +176,8 @@ public class CompaniesController : ControllerBase
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
-                updatedAt = company.UpdatedAt
+                updatedAt = company.UpdatedAt,
+                securityDeposit = company.SecurityDeposit
             };
 
             return Ok(result);
@@ -237,7 +241,7 @@ public class CompaniesController : ControllerBase
                 return Conflict(new { error = "Email already exists" });
             }
 
-            var company = new RentalCompany
+            var company = new Company
             {
                 CompanyName = request.CompanyName,
                 Email = request.Email,
@@ -265,6 +269,7 @@ public class CompaniesController : ControllerBase
                 BlinkKey = request.BlinkKey,
                 AiIntegration = NormalizeAiIntegration(request.AiIntegration),
                 Currency = CurrencyHelper.ResolveCurrency(request.Currency, request.Country),
+                SecurityDeposit = request.SecurityDeposit ?? 1000m,
                 IsActive = request.IsActive ?? true,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -317,7 +322,8 @@ public class CompaniesController : ControllerBase
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
-                updatedAt = company.UpdatedAt
+                updatedAt = company.UpdatedAt,
+                securityDeposit = company.SecurityDeposit
             };
 
             return CreatedAtAction(nameof(GetCompany), new { id = company.Id }, result);
@@ -466,6 +472,9 @@ public class CompaniesController : ControllerBase
                 company.Currency = CurrencyHelper.GetCurrencyForCountry(company.Country);
             }
 
+            if (request.SecurityDeposit.HasValue)
+                company.SecurityDeposit = request.SecurityDeposit.Value;
+
             if (request.IsActive.HasValue)
                 company.IsActive = request.IsActive.Value;
 
@@ -507,7 +516,8 @@ public class CompaniesController : ControllerBase
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
-                updatedAt = company.UpdatedAt
+                updatedAt = company.UpdatedAt,
+                securityDeposit = company.SecurityDeposit
             };
 
             return Ok(result);
@@ -577,7 +587,7 @@ public class CompaniesController : ControllerBase
             );
             
             // Try to get company from HttpContext first (set by CompanyMiddleware to avoid duplicate DB query)
-            RentalCompany? company = HttpContext.Items["Company"] as RentalCompany;
+            Company? company = HttpContext.Items["Company"] as Company;
             
             if (company == null && companyId.HasValue)
             {
@@ -1523,7 +1533,7 @@ public class CompaniesController : ControllerBase
     }
 
     // Helper method to map RentalCompany to CompanyConfigDto
-    private CompanyConfigDto MapToConfigDto(RentalCompany company)
+    private CompanyConfigDto MapToConfigDto(Company company)
     {
         return new CompanyConfigDto
         {
@@ -1552,7 +1562,8 @@ public class CompaniesController : ControllerBase
             Language = company.Language ?? "en",
             BlinkKey = company.BlinkKey,
             Currency = company.Currency,
-            AiIntegration = NormalizeAiIntegration(company.AiIntegration)
+            AiIntegration = NormalizeAiIntegration(company.AiIntegration),
+            SecurityDeposit = company.SecurityDeposit
         };
     }
 
@@ -1596,6 +1607,7 @@ public class CreateCompanyRequest
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
     public string? AiIntegration { get; set; }
+    public decimal? SecurityDeposit { get; set; }
 }
 
 public class UpdateCompanyRequest
@@ -1626,5 +1638,6 @@ public class UpdateCompanyRequest
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
     public string? AiIntegration { get; set; }
+    public decimal? SecurityDeposit { get; set; }
 }
 

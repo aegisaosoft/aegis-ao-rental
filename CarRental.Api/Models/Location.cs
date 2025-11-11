@@ -87,7 +87,7 @@ public class Location
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 
     public virtual ICollection<Vehicle> Vehicles { get; set; } = new List<Vehicle>();
 }

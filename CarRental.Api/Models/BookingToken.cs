@@ -73,7 +73,7 @@ public class BookingToken
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 
     [ForeignKey("VehicleId")]
     public virtual Vehicle Vehicle { get; set; } = null!;
@@ -95,6 +95,7 @@ public class BookingData
     public decimal InsuranceAmount { get; set; }
     public decimal AdditionalFees { get; set; }
     public decimal TotalAmount { get; set; }
+    public decimal SecurityDeposit { get; set; } = 1000m;
     public VehicleInfo? VehicleInfo { get; set; }
     public CompanyInfo? CompanyInfo { get; set; }
     public LocationInfo? PickupLocationInfo { get; set; }

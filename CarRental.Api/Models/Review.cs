@@ -58,7 +58,7 @@ public class Review
     public virtual Customer Customer { get; set; } = null!;
 
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 
     [ForeignKey("VehicleId")]
     public virtual Vehicle Vehicle { get; set; } = null!;

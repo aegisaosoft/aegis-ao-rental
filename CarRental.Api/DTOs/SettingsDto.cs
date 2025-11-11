@@ -7,8 +7,10 @@ public class StripeSettingsResponseDto
     public string PublishableKey { get; set; } = string.Empty;
     public bool HasSecretKey { get; set; }
     public string? SecretKeyPreview { get; set; }
+    public string? SecretKey { get; set; }
     public bool HasWebhookSecret { get; set; }
     public string? WebhookSecretPreview { get; set; }
+    public string? WebhookSecret { get; set; }
 }
 
 public class UpdateStripeSettingsRequestDto
@@ -26,10 +28,13 @@ public class AiSettingsResponseDto
 {
     public bool HasAnthropicKey { get; set; }
     public string? AnthropicKeyPreview { get; set; }
+    public string? AnthropicApiKey { get; set; }
     public bool HasClaudeKey { get; set; }
     public string? ClaudeKeyPreview { get; set; }
+    public string? ClaudeApiKey { get; set; }
     public bool HasOpenAiKey { get; set; }
     public string? OpenAiKeyPreview { get; set; }
+    public string? OpenAiApiKey { get; set; }
 }
 
 public class UpdateAiSettingsRequestDto

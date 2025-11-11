@@ -39,7 +39,7 @@ public class VehicleModel
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public virtual RentalCompany Company { get; set; } = null!;
+    public virtual Company Company { get; set; } = null!;
 
     [ForeignKey("ModelId")]
     public virtual Model Model { get; set; } = null!;

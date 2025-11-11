@@ -70,7 +70,7 @@ public class AdditionalService
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public RentalCompany Company { get; set; } = null!;
+    public Company Company { get; set; } = null!;
 }
 
 /// <summary>

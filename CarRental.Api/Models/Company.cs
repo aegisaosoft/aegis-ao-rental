@@ -19,7 +19,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace CarRental.Api.Models;
 
 [Table("companies")]
-public class RentalCompany
+public class Company
 {
     [Key]
     [Column("id")]
@@ -119,6 +119,9 @@ public class RentalCompany
     [Column("currency")]
     public string Currency { get; set; } = "USD";
 
+    [Column("security_deposit", TypeName = "decimal(10,2)")]
+    public decimal SecurityDeposit { get; set; } = 1000m;
+
     [MaxLength(10)]
     [Column("language")]
     public string? Language { get; set; } = "en"; // ISO 639-1 language code
@@ -142,7 +145,7 @@ public class RentalCompany
     // Navigation properties
     public virtual ICollection<Vehicle> Vehicles { get; set; } = new List<Vehicle>();
     public virtual ICollection<Location> Locations { get; set; } = new List<Location>();
-    public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
+    public virtual ICollection<Booking> Bookings { get; set; } = new List<Booking>();
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
     public virtual ICollection<Review> Reviews { get; set; } = new List<Review>();

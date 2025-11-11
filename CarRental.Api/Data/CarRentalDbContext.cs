@@ -24,14 +24,15 @@ public class CarRentalDbContext : DbContext
     {
     }
 
-    public DbSet<RentalCompany> Companies { get; set; }
+    public DbSet<Company> Companies { get; set; }
     public DbSet<Customer> Customers { get; set; }
     public DbSet<AegisUser> AegisUsers { get; set; }
     public DbSet<VehicleCategory> VehicleCategories { get; set; }
     public DbSet<Vehicle> Vehicles { get; set; }
     public DbSet<Location> Locations { get; set; }
     public DbSet<CompanyLocation> CompanyLocations { get; set; }
-    public DbSet<Reservation> Reservations { get; set; }
+    public DbSet<Booking> Bookings { get; set; }
+    public DbSet<Booking> Reservations => Bookings;
     public DbSet<Rental> Rentals { get; set; }
     public DbSet<Payment> Payments { get; set; }
     public DbSet<CustomerPaymentMethod> CustomerPaymentMethods { get; set; }
@@ -53,7 +54,7 @@ public class CarRentalDbContext : DbContext
         base.OnModelCreating(modelBuilder);
 
         // Configure UUID generation
-        modelBuilder.Entity<RentalCompany>()
+        modelBuilder.Entity<Company>()
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
@@ -172,22 +173,22 @@ public class CarRentalDbContext : DbContext
             .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
-        modelBuilder.Entity<Reservation>()
+        modelBuilder.Entity<Booking>()
             .HasOne(r => r.Customer)
-            .WithMany(c => c.Reservations)
+            .WithMany(c => c.Bookings)
             .HasForeignKey(r => r.CustomerId)
             .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);
 
-        modelBuilder.Entity<Reservation>()
+        modelBuilder.Entity<Booking>()
             .HasOne(r => r.Vehicle)
-            .WithMany(v => v.Reservations)
+            .WithMany(v => v.Bookings)
             .HasForeignKey(r => r.VehicleId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        modelBuilder.Entity<Reservation>()
+        modelBuilder.Entity<Booking>()
             .HasOne(r => r.Company)
-            .WithMany(c => c.Reservations)
+            .WithMany(c => c.Bookings)
             .HasForeignKey(r => r.CompanyId)
             .HasPrincipalKey(c => c.Id)
             .OnDelete(DeleteBehavior.Cascade);

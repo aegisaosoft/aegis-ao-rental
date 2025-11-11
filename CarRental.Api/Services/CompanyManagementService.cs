@@ -52,15 +52,15 @@ public class CompanyManagementService : ICompanyManagementService
             {
                 TotalVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == companyId),
                 ActiveVehicles = await _context.Vehicles.CountAsync(v => v.CompanyId == companyId && v.Status == VehicleStatus.Available),
-                TotalReservations = await _context.Reservations.CountAsync(r => r.CompanyId == companyId),
-                ActiveReservations = await _context.Reservations.CountAsync(r => r.CompanyId == companyId && r.Status == "Confirmed"),
+                TotalReservations = await _context.Bookings.CountAsync(r => r.CompanyId == companyId),
+                ActiveReservations = await _context.Bookings.CountAsync(r => r.CompanyId == companyId && r.Status == "Confirmed"),
                 TotalRentals = await _context.Rentals.CountAsync(r => r.CompanyId == companyId),
                 ActiveRentals = await _context.Rentals.CountAsync(r => r.CompanyId == companyId && r.Status == "active"),
                 TotalRevenue = await _context.Payments.Where(p => p.CompanyId == companyId && p.Status == "succeeded")
                     .SumAsync(p => p.Amount),
                 AverageRating = await _context.Reviews.Where(r => r.CompanyId == companyId)
                     .AverageAsync(r => (double?)r.Rating),
-                LastActivity = await _context.Reservations
+                LastActivity = await _context.Bookings
                     .Where(r => r.CompanyId == companyId)
                     .OrderByDescending(r => r.CreatedAt)
                     .Select(r => r.CreatedAt)
@@ -227,7 +227,7 @@ public class CompanyManagementService : ICompanyManagementService
     {
         try
         {
-            var query = _context.Reservations
+            var query = _context.Bookings
                 .Include(r => r.Customer)
                 .Include(r => r.Vehicle)
                     .ThenInclude(v => v.VehicleModel)
@@ -324,7 +324,7 @@ public class CompanyManagementService : ICompanyManagementService
             var hasActiveVehicles = await _context.Vehicles
                 .AnyAsync(v => v.CompanyId == companyId && v.Status != VehicleStatus.OutOfService);
 
-            var hasActiveReservations = await _context.Reservations
+            var hasActiveReservations = await _context.Bookings
                 .AnyAsync(r => r.CompanyId == companyId && r.Status == "Confirmed");
 
             var hasActiveRentals = await _context.Rentals
@@ -379,7 +379,7 @@ public class CompanyManagementService : ICompanyManagementService
     {
         try
         {
-            return await _context.Reservations
+            return await _context.Bookings
                 .CountAsync(r => r.CompanyId == companyId && r.Status == "Confirmed");
         }
         catch (Exception ex)
