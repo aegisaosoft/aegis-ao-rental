@@ -1101,6 +1101,7 @@ public class VehiclesController : ControllerBase
                 }
 
                 // Optional columns
+                var idIndex = Array.IndexOf(headers, "id");
                 var colorIndex = Array.IndexOf(headers, "color");
                 var vinIndex = Array.IndexOf(headers, "vin");
                 var mileageIndex = Array.IndexOf(headers, "mileage");
@@ -1116,8 +1117,8 @@ public class VehiclesController : ControllerBase
                     ? Array.IndexOf(headers, "dailyrate") 
                     : Array.IndexOf(headers, "daily_rate");
 
-                _logger.LogInformation("[Import] Optional columns - Color: {ColorIndex}, VIN: {VinIndex}, Mileage: {MileageIndex}, Transmission: {TransmissionIndex}, Seats: {SeatsIndex}, FuelType: {FuelTypeIndex}, State: {StateIndex}, Location: {LocationIndex}, Category: {CategoryIndex}, DailyRate: {DailyRateIndex}",
-                    colorIndex, vinIndex, mileageIndex, transmissionIndex, seatsIndex, fuelTypeIndex, stateIndex, locationIndex, categoryIndex, dailyRateIndex);
+                _logger.LogInformation("[Import] Optional columns - ID: {IdIndex}, Color: {ColorIndex}, VIN: {VinIndex}, Mileage: {MileageIndex}, Transmission: {TransmissionIndex}, Seats: {SeatsIndex}, FuelType: {FuelTypeIndex}, State: {StateIndex}, Location: {LocationIndex}, Category: {CategoryIndex}, DailyRate: {DailyRateIndex}",
+                    idIndex, colorIndex, vinIndex, mileageIndex, transmissionIndex, seatsIndex, fuelTypeIndex, stateIndex, locationIndex, categoryIndex, dailyRateIndex);
 
                 // Process each line
                 int lineNumber = 1;
@@ -1158,15 +1159,22 @@ public class VehiclesController : ControllerBase
                         _logger.LogDebug("[Import] Line {LineNumber}: Extracted - Make: {Make}, Model: {Model}, Year: {Year}, LicensePlate: {LicensePlate}",
                             lineNumber, make, modelName, yearStr, licensePlate);
 
-                        if (string.IsNullOrEmpty(make) || string.IsNullOrEmpty(modelName) || string.IsNullOrEmpty(yearStr) || string.IsNullOrEmpty(licensePlate))
+                        if (string.IsNullOrEmpty(make) || string.IsNullOrEmpty(modelName) || string.IsNullOrEmpty(licensePlate))
                         {
-                            var errorMsg = $"Line {lineNumber}: Missing required fields (make: {make}, model: {modelName}, year: {yearStr}, licenseplate: {licensePlate})";
+                            var errorMsg = $"Line {lineNumber}: Missing required fields (make: {make}, model: {modelName}, licenseplate: {licensePlate})";
                             _logger.LogWarning("[Import] {Error}", errorMsg);
                             errors.Add(errorMsg);
                             continue;
                         }
 
-                        if (!int.TryParse(yearStr, out var year) || year < 1900 || year > DateTime.Now.Year + 1)
+                        // Parse year - use current year if empty
+                        int year;
+                        if (string.IsNullOrWhiteSpace(yearStr))
+                        {
+                            year = DateTime.Now.Year;
+                            _logger.LogInformation("[Import] Line {LineNumber}: Year is empty, using current year: {Year}", lineNumber, year);
+                        }
+                        else if (!int.TryParse(yearStr, out year) || year < 1900 || year > DateTime.Now.Year + 1)
                         {
                             var errorMsg = $"Line {lineNumber}: Invalid year: {yearStr}";
                             _logger.LogWarning("[Import] {Error}", errorMsg);
@@ -1175,8 +1183,27 @@ public class VehiclesController : ControllerBase
                         }
                         _logger.LogDebug("[Import] Line {LineNumber}: Parsed year: {Year}", lineNumber, year);
 
-                        // Parse state early (needed for duplicate check)
-                        var state = stateIndex != -1 && values.Length > stateIndex ? values[stateIndex]?.Trim() : null;
+                        // Parse state early (needed for duplicate check) - ignore if column doesn't exist or is null/empty
+                        string? state = null;
+                        if (stateIndex != -1 && values.Length > stateIndex && !string.IsNullOrWhiteSpace(values[stateIndex]))
+                        {
+                            state = values[stateIndex].Trim();
+                        }
+
+                        // Parse optional ID column - if provided, check if vehicle exists and update it
+                        Guid? vehicleIdFromCsv = null;
+                        if (idIndex != -1 && values.Length > idIndex && !string.IsNullOrWhiteSpace(values[idIndex]))
+                        {
+                            if (Guid.TryParse(values[idIndex].Trim(), out var parsedId))
+                            {
+                                vehicleIdFromCsv = parsedId;
+                                _logger.LogDebug("[Import] Line {LineNumber}: Parsed vehicle ID from CSV: {VehicleId}", lineNumber, vehicleIdFromCsv);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("[Import] Line {LineNumber}: Invalid vehicle ID format in CSV: {IdValue}", lineNumber, values[idIndex]);
+                            }
+                        }
 
                         // Parse optional fields
                         int? seats = null;
@@ -1306,35 +1333,60 @@ public class VehiclesController : ControllerBase
                             }
                         }
 
-                        // Check if vehicle with same license plate and state already exists
-                        _logger.LogDebug("[Import] Line {LineNumber}: Checking if vehicle with license plate {LicensePlate} and state {State} already exists...", 
-                            lineNumber, licensePlate, state ?? "null");
-                        
-                        // Build query to check for duplicate: license plate AND state must match
-                        var existingVehicleQuery = _context.Vehicles
-                            .Where(v => v.LicensePlate == licensePlate);
-                        
-                        // If state is provided, check for matching state; if null, check for null state
-                        if (state != null)
+                        // Check if vehicle exists by ID (if ID column is provided in CSV)
+                        Vehicle? existingVehicle = null;
+                        if (vehicleIdFromCsv.HasValue)
                         {
-                            existingVehicleQuery = existingVehicleQuery.Where(v => v.State == state);
-                        }
-                        else
-                        {
-                            existingVehicleQuery = existingVehicleQuery.Where(v => v.State == null);
+                            _logger.LogDebug("[Import] Line {LineNumber}: Checking if vehicle with ID {VehicleId} exists...", 
+                                lineNumber, vehicleIdFromCsv);
+                            existingVehicle = await _context.Vehicles
+                                .FirstOrDefaultAsync(v => v.Id == vehicleIdFromCsv.Value);
+                            
+                            if (existingVehicle != null)
+                            {
+                                _logger.LogInformation("[Import] Line {LineNumber}: Vehicle with ID {VehicleId} exists, will update it", 
+                                    lineNumber, vehicleIdFromCsv);
+                                // Skip license plate check if updating by ID
+                            }
+                            else
+                            {
+                                _logger.LogDebug("[Import] Line {LineNumber}: Vehicle with ID {VehicleId} does not exist, will create new vehicle with this ID", 
+                                    lineNumber, vehicleIdFromCsv);
+                            }
                         }
                         
-                        var existingVehicle = await existingVehicleQuery.FirstOrDefaultAsync();
-                        
-                        if (existingVehicle != null)
+                        // If no ID provided or vehicle doesn't exist by ID, check by license plate and state
+                        if (existingVehicle == null)
                         {
-                            var errorMsg = $"Line {lineNumber}: Vehicle with license plate {licensePlate} and state {(state ?? "null")} already exists";
-                            _logger.LogWarning("[Import] {Error}", errorMsg);
-                            errors.Add(errorMsg);
-                            continue;
+                            _logger.LogDebug("[Import] Line {LineNumber}: Checking if vehicle with license plate {LicensePlate} and state {State} already exists...", 
+                                lineNumber, licensePlate, state ?? "null");
+                            
+                            // Build query to check for duplicate: license plate AND state must match
+                            var existingVehicleQuery = _context.Vehicles
+                                .Where(v => v.LicensePlate == licensePlate);
+                            
+                            // If state is provided, check for matching state; if null, check for null state
+                            if (state != null)
+                            {
+                                existingVehicleQuery = existingVehicleQuery.Where(v => v.State == state);
+                            }
+                            else
+                            {
+                                existingVehicleQuery = existingVehicleQuery.Where(v => v.State == null);
+                            }
+                            
+                            existingVehicle = await existingVehicleQuery.FirstOrDefaultAsync();
+                            
+                            if (existingVehicle != null)
+                            {
+                                var errorMsg = $"Line {lineNumber}: Vehicle with license plate {licensePlate} and state {(state ?? "null")} already exists";
+                                _logger.LogWarning("[Import] {Error}", errorMsg);
+                                errors.Add(errorMsg);
+                                continue;
+                            }
+                            _logger.LogDebug("[Import] Line {LineNumber}: Vehicle with license plate {LicensePlate} and state {State} is unique", 
+                                lineNumber, licensePlate, state ?? "null");
                         }
-                        _logger.LogDebug("[Import] Line {LineNumber}: Vehicle with license plate {LicensePlate} and state {State} is unique", 
-                            lineNumber, licensePlate, state ?? "null");
 
                         // Note: Model and category were already found/created/updated above (before duplicate check)
                         // This ensures model data is updated even if vehicle is a duplicate
@@ -1384,38 +1436,94 @@ public class VehiclesController : ControllerBase
                             _logger.LogDebug("[Import] Line {LineNumber}: No VIN provided (optional)", lineNumber);
                         }
 
-                        // Parse other optional fields
-                        var color = colorIndex != -1 && values.Length > colorIndex ? values[colorIndex] : null;
-                        var mileage = mileageIndex != -1 && values.Length > mileageIndex && int.TryParse(values[mileageIndex], out var parsedMileage) ? parsedMileage : 0;
-                        var transmission = transmissionIndex != -1 && values.Length > transmissionIndex ? values[transmissionIndex] : null;
-                        var location = locationIndex != -1 && values.Length > locationIndex ? values[locationIndex] : null;
+                        // Parse other optional fields - ignore if column doesn't exist or value is null/empty
+                        string? color = null;
+                        if (colorIndex != -1 && values.Length > colorIndex && !string.IsNullOrWhiteSpace(values[colorIndex]))
+                        {
+                            color = values[colorIndex].Trim();
+                        }
+                        
+                        int mileage = 0;
+                        if (mileageIndex != -1 && values.Length > mileageIndex && !string.IsNullOrWhiteSpace(values[mileageIndex]))
+                        {
+                            if (int.TryParse(values[mileageIndex], out var parsedMileage))
+                            {
+                                mileage = parsedMileage;
+                            }
+                        }
+                        
+                        string? transmission = null;
+                        if (transmissionIndex != -1 && values.Length > transmissionIndex && !string.IsNullOrWhiteSpace(values[transmissionIndex]))
+                        {
+                            transmission = values[transmissionIndex].Trim();
+                        }
+                        
+                        string? location = null;
+                        if (locationIndex != -1 && values.Length > locationIndex && !string.IsNullOrWhiteSpace(values[locationIndex]))
+                        {
+                            location = values[locationIndex].Trim();
+                        }
                         // Note: state was already parsed earlier for duplicate check
 
                         _logger.LogDebug("[Import] Line {LineNumber}: Optional fields - Color: {Color}, Mileage: {Mileage}, Transmission: {Transmission}, Seats: {Seats}, State: {State}, Location: {Location}",
                             lineNumber, color, mileage, transmission, seats, state, location);
 
-                        // Create vehicle and bind it to model via vehicle_model table
-                        _logger.LogInformation("[Import] Line {LineNumber}: Creating vehicle - LicensePlate: {LicensePlate}, Make: {Make}, Model: {Model}, Year: {Year}, VehicleModelId: {VehicleModelId}",
-                            lineNumber, licensePlate, make, modelName, year, vehicleModel.Id);
-                        var vehicle = new Vehicle
+                        // Update existing vehicle or create new one
+                        Vehicle vehicle;
+                        if (existingVehicle != null)
                         {
-                            CompanyId = parsedCompanyId,
-                            Color = color,
-                            LicensePlate = licensePlate,
-                            Vin = vin, // VIN is optional - only used for model recognition
-                            Mileage = mileage,
-                            Transmission = transmission,
-                            Seats = seats,
-                            VehicleModelId = vehicleModel.Id, // Bind vehicle to model through vehicle_model table
-                            Status = VehicleStatus.Available,
-                            State = state,
-                            Location = location
-                        };
+                            // Update existing vehicle - only update non-null values from CSV
+                            _logger.LogInformation("[Import] Line {LineNumber}: Updating existing vehicle - VehicleId: {VehicleId}, LicensePlate: {LicensePlate}, Make: {Make}, Model: {Model}, Year: {Year}",
+                                lineNumber, existingVehicle.Id, licensePlate, make, modelName, year);
+                            
+                            existingVehicle.CompanyId = parsedCompanyId;
+                            
+                            // Only update fields if they have non-null/non-empty values from CSV
+                            // This preserves existing values when CSV has null/empty or column doesn't exist
+                            if (color != null && !string.IsNullOrWhiteSpace(color)) existingVehicle.Color = color;
+                            if (!string.IsNullOrEmpty(licensePlate)) existingVehicle.LicensePlate = licensePlate;
+                            if (vin != null && !string.IsNullOrWhiteSpace(vin)) existingVehicle.Vin = vin;
+                            if (mileageIndex != -1 && mileage > 0) existingVehicle.Mileage = mileage; // Only update if column exists and value > 0
+                            if (transmission != null && !string.IsNullOrWhiteSpace(transmission)) existingVehicle.Transmission = transmission;
+                            if (seatsIndex != -1 && seats.HasValue) existingVehicle.Seats = seats; // Only update if column exists
+                            if (vehicleModel != null) existingVehicle.VehicleModelId = vehicleModel.Id;
+                            if (stateIndex != -1 && state != null && !string.IsNullOrWhiteSpace(state)) existingVehicle.State = state; // Only update if column exists
+                            if (location != null && !string.IsNullOrWhiteSpace(location)) existingVehicle.Location = location;
+                            
+                            existingVehicle.UpdatedAt = DateTime.UtcNow;
+                            
+                            vehicle = existingVehicle;
+                            importedCount++;
+                            _logger.LogInformation("[Import] Line {LineNumber}: Vehicle updated successfully - VehicleId: {VehicleId}, LicensePlate: {LicensePlate}, VehicleModelId: {VehicleModelId}",
+                                lineNumber, vehicle.Id, licensePlate, vehicleModel!.Id);
+                        }
+                        else
+                        {
+                            // Create new vehicle
+                            _logger.LogInformation("[Import] Line {LineNumber}: Creating new vehicle - LicensePlate: {LicensePlate}, Make: {Make}, Model: {Model}, Year: {Year}, VehicleModelId: {VehicleModelId}",
+                                lineNumber, licensePlate, make, modelName, year, vehicleModel!.Id);
+                            
+                            vehicle = new Vehicle
+                            {
+                                Id = vehicleIdFromCsv ?? Guid.NewGuid(), // Use ID from CSV if provided, otherwise generate new
+                                CompanyId = parsedCompanyId,
+                                Color = color,
+                                LicensePlate = licensePlate,
+                                Vin = vin, // VIN is optional - only used for model recognition
+                                Mileage = mileage,
+                                Transmission = transmission,
+                                Seats = seats,
+                                VehicleModelId = vehicleModel!.Id, // Bind vehicle to model through vehicle_model table
+                                Status = VehicleStatus.Available,
+                                State = state,
+                                Location = location
+                            };
 
-                        _context.Vehicles.Add(vehicle);
-                        importedCount++;
-                        _logger.LogInformation("[Import] Line {LineNumber}: Vehicle created successfully - LicensePlate: {LicensePlate}, VehicleId: {VehicleId}, VehicleModelId: {VehicleModelId}",
-                            lineNumber, licensePlate, vehicle.Id, vehicleModel.Id);
+                            _context.Vehicles.Add(vehicle);
+                            importedCount++;
+                            _logger.LogInformation("[Import] Line {LineNumber}: Vehicle created successfully - LicensePlate: {LicensePlate}, VehicleId: {VehicleId}, VehicleModelId: {VehicleModelId}",
+                                lineNumber, licensePlate, vehicle.Id, vehicleModel!.Id);
+                        }
                     }
                     catch (Exception ex)
                     {
