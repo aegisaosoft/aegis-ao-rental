@@ -50,10 +50,16 @@ public class JwtService : IJwtService
         var claims = new List<Claim>
         {
             new Claim(ClaimTypes.NameIdentifier, customerId),
-            new Claim(ClaimTypes.Role, role),
-            new Claim("customer_id", customerId),
-            new Claim("role", role)
+            new Claim("customer_id", customerId)
         };
+
+        // Add role claims - if mainadmin, also add admin role for compatibility
+        claims.Add(new Claim(ClaimTypes.Role, role));
+        if (role.ToLowerInvariant() == "mainadmin")
+        {
+            // Mainadmin should also have admin role
+            claims.Add(new Claim(ClaimTypes.Role, "admin"));
+        }
 
         // Add company information if provided (for workers/admins)
         if (!string.IsNullOrEmpty(companyId))

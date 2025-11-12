@@ -20,6 +20,8 @@ using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
 using System.Security.Claims;
+using System.IO;
+using System.Linq;
 
 namespace CarRental.Api.Controllers;
 
@@ -49,6 +51,152 @@ public class VehiclesController : ControllerBase
         _logger.LogInformation("All claims: {Claims}", string.Join(", ", User.Claims.Select(c => $"{c.Type}={c.Value}")));
         
         return role == "admin" || role == "mainadmin";
+    }
+
+    /// <summary>
+    /// Translate category name from Spanish, Portuguese, French, or German to English
+    /// </summary>
+    /// <param name="categoryName">Category name in any language</param>
+    /// <returns>English category name</returns>
+    private string TranslateCategoryToEnglish(string categoryName)
+    {
+        if (string.IsNullOrWhiteSpace(categoryName))
+            return categoryName;
+
+        var normalized = categoryName.Trim();
+        
+        // Dictionary mapping common vehicle category translations to English
+        // Note: Using TryAdd to avoid duplicate key errors - each key appears only once
+        var translations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        
+        // Spanish (es/sp) - with and without accents
+        translations.TryAdd("económico", "Economy");
+        translations.TryAdd("economico", "Economy");
+        translations.TryAdd("compacto", "Compact");
+        translations.TryAdd("intermedio", "Intermediate");
+        translations.TryAdd("intermedia", "Intermediate");
+        translations.TryAdd("estándar", "Standard");
+        translations.TryAdd("estandar", "Standard");
+        translations.TryAdd("full size", "Full Size");
+        translations.TryAdd("tamaño completo", "Full Size");
+        translations.TryAdd("tamano completo", "Full Size");
+        translations.TryAdd("premium", "Premium");
+        translations.TryAdd("lujo", "Luxury");
+        translations.TryAdd("suv", "SUV");
+        translations.TryAdd("todoterreno", "SUV");
+        translations.TryAdd("van", "Van");
+        translations.TryAdd("furgoneta", "Van");
+        translations.TryAdd("pickup", "Pickup");
+        translations.TryAdd("camioneta", "Pickup");
+        translations.TryAdd("convertible", "Convertible");
+        translations.TryAdd("descapotable", "Convertible");
+        translations.TryAdd("deportivo", "Sports");
+        translations.TryAdd("sports", "Sports");
+        translations.TryAdd("médio", "Intermediate");
+        translations.TryAdd("medio", "Intermediate");
+        translations.TryAdd("grande", "Full Size");
+        translations.TryAdd("esportivo", "Sports");
+        
+        // Portuguese (pt/pg) - with and without accents
+        translations.TryAdd("econômico", "Economy"); // May already exist from Spanish, but TryAdd handles it
+        translations.TryAdd("intermediário", "Intermediate");
+        translations.TryAdd("intermediario", "Intermediate");
+        translations.TryAdd("padrão", "Standard");
+        translations.TryAdd("padrao", "Standard");
+        translations.TryAdd("tamanho completo", "Full Size");
+        translations.TryAdd("luxo", "Luxury");
+        translations.TryAdd("utilitário esportivo", "SUV");
+        translations.TryAdd("utilitario esportivo", "SUV");
+        translations.TryAdd("furgão", "Van");
+        translations.TryAdd("furgao", "Van");
+        translations.TryAdd("caminhonete", "Pickup");
+        translations.TryAdd("conversível", "Convertible");
+        translations.TryAdd("conversivel", "Convertible");
+        
+        // French (fr) - with and without accents
+        translations.TryAdd("économique", "Economy");
+        translations.TryAdd("economique", "Economy");
+        translations.TryAdd("compact", "Compact");
+        translations.TryAdd("intermédiaire", "Intermediate");
+        translations.TryAdd("intermediaire", "Intermediate");
+        translations.TryAdd("standard", "Standard");
+        translations.TryAdd("pleine grandeur", "Full Size");
+        translations.TryAdd("luxe", "Luxury");
+        translations.TryAdd("vus", "SUV");
+        translations.TryAdd("fourgonnette", "Van");
+        translations.TryAdd("camionnette", "Pickup");
+        translations.TryAdd("décapotable", "Convertible");
+        translations.TryAdd("decapotable", "Convertible");
+        translations.TryAdd("sport", "Sports");
+        translations.TryAdd("sportif", "Sports");
+        
+        // German (de)
+        translations.TryAdd("wirtschaftlich", "Economy");
+        translations.TryAdd("kompakt", "Compact");
+        translations.TryAdd("mittelklasse", "Intermediate");
+        translations.TryAdd("vollgröße", "Full Size");
+        translations.TryAdd("vollgroesse", "Full Size");
+        translations.TryAdd("luxus", "Luxury");
+        translations.TryAdd("geländewagen", "SUV");
+        translations.TryAdd("gelaendewagen", "SUV");
+        translations.TryAdd("transporter", "Van");
+        translations.TryAdd("pick-up", "Pickup");
+        translations.TryAdd("cabriolet", "Convertible");
+        translations.TryAdd("sportwagen", "Sports");
+
+        // Check if translation exists
+        if (translations.TryGetValue(normalized, out var translated))
+        {
+            return translated;
+        }
+
+        // If no translation found, return original (might already be in English)
+        return normalized;
+    }
+
+    /// <summary>
+    /// Parse a CSV line handling quoted fields that may contain commas
+    /// </summary>
+    private string[] ParseCsvLine(string line)
+    {
+        var values = new List<string>();
+        var currentValue = new System.Text.StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    // Escaped quote (double quote)
+                    currentValue.Append('"');
+                    i++; // Skip next quote
+                }
+                else
+                {
+                    // Toggle quote state
+                    inQuotes = !inQuotes;
+                }
+            }
+            else if (c == ',' && !inQuotes)
+            {
+                // End of field
+                values.Add(currentValue.ToString().Trim());
+                currentValue.Clear();
+            }
+            else
+            {
+                currentValue.Append(c);
+            }
+        }
+
+        // Add the last field
+        values.Add(currentValue.ToString().Trim());
+
+        return values.ToArray();
     }
 
     /// <summary>
@@ -820,6 +968,509 @@ public class VehiclesController : ControllerBase
         {
             _logger.LogError(ex, "Error getting vehicle count");
             return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>
+    /// Import vehicles from CSV file
+    /// </summary>
+    /// <param name="file">CSV file containing vehicle data</param>
+    /// <param name="companyId">Company ID to associate vehicles with</param>
+    /// <returns>Import result with count of imported vehicles</returns>
+    [HttpPost("import")]
+    [Authorize]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(object), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(403)]
+    public async Task<IActionResult> ImportVehicles(IFormFile file, [FromForm] string? companyId = null)
+    {
+        _logger.LogInformation("=== VEHICLE IMPORT STARTED ===");
+        _logger.LogInformation("File name: {FileName}, Size: {Size} bytes, ContentType: {ContentType}", 
+            file?.FileName, file?.Length, file?.ContentType);
+        _logger.LogInformation("CompanyId from form: {CompanyId}", companyId);
+        
+        try
+        {
+            // Check admin privileges
+            _logger.LogInformation("[Import] Checking admin privileges...");
+            if (!HasAdminPrivileges())
+            {
+                _logger.LogWarning("[Import] Admin check failed - user does not have admin privileges");
+                return Forbid("Only admin and mainadmin users can import vehicles");
+            }
+            _logger.LogInformation("[Import] Admin privileges confirmed");
+
+            // Get company ID from form, query, or context
+            Guid parsedCompanyId;
+            if (!string.IsNullOrEmpty(companyId))
+            {
+                _logger.LogInformation("[Import] Parsing companyId from form parameter: {CompanyId}", companyId);
+                if (!Guid.TryParse(companyId, out parsedCompanyId))
+                {
+                    _logger.LogError("[Import] Invalid company ID format: {CompanyId}", companyId);
+                    return BadRequest("Invalid company ID format");
+                }
+            }
+            else
+            {
+                // Try to get from HttpContext (set by CompanyMiddleware)
+                var contextCompanyId = HttpContext.Items["CompanyId"]?.ToString();
+                _logger.LogInformation("[Import] CompanyId from HttpContext: {ContextCompanyId}", contextCompanyId);
+                if (string.IsNullOrEmpty(contextCompanyId) || !Guid.TryParse(contextCompanyId, out parsedCompanyId))
+                {
+                    _logger.LogError("[Import] Company ID is required but not found in form or context");
+                    return BadRequest("Company ID is required");
+                }
+            }
+            _logger.LogInformation("[Import] Using CompanyId: {CompanyId}", parsedCompanyId);
+
+            // Verify company exists
+            _logger.LogInformation("[Import] Verifying company exists...");
+            var company = await _context.Companies.FindAsync(parsedCompanyId);
+            if (company == null)
+            {
+                _logger.LogError("[Import] Company not found: {CompanyId}", parsedCompanyId);
+                return BadRequest("Company not found");
+            }
+            _logger.LogInformation("[Import] Company found: {CompanyName} (ID: {CompanyId})", company.CompanyName, parsedCompanyId);
+
+            // Verify user can edit vehicles for this company
+            _logger.LogInformation("[Import] Checking if user can edit vehicles for company...");
+            if (!CanEditCompanyVehicles(parsedCompanyId))
+            {
+                _logger.LogWarning("[Import] User cannot edit vehicles for company {CompanyId}", parsedCompanyId);
+                return Forbid("You can only import vehicles for your own company");
+            }
+            _logger.LogInformation("[Import] User has permission to edit vehicles for this company");
+
+            // Validate file
+            _logger.LogInformation("[Import] Validating file...");
+            if (file == null || file.Length == 0)
+            {
+                _logger.LogError("[Import] No file uploaded or file is empty");
+                return BadRequest("No file uploaded");
+            }
+
+            if (!file.FileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogError("[Import] File is not a CSV: {FileName}", file.FileName);
+                return BadRequest("File must be a CSV file");
+            }
+            _logger.LogInformation("[Import] File validation passed: {FileName}, {Size} bytes", file.FileName, file.Length);
+
+            // Read CSV file
+            var vehicles = new List<object>();
+            var importedCount = 0;
+            var errors = new List<string>();
+
+            _logger.LogInformation("[Import] Starting CSV file reading...");
+            using (var reader = new StreamReader(file.OpenReadStream()))
+            {
+                // Read header line
+                var headerLine = await reader.ReadLineAsync();
+                if (string.IsNullOrEmpty(headerLine))
+                {
+                    _logger.LogError("[Import] CSV file is empty - no header line found");
+                    return BadRequest("CSV file is empty");
+                }
+
+                _logger.LogInformation("[Import] Header line: {HeaderLine}", headerLine);
+                var headerValues = ParseCsvLine(headerLine);
+                var headers = headerValues.Select(h => h.Trim().ToLowerInvariant()).ToArray();
+                _logger.LogInformation("[Import] Parsed {Count} headers: {Headers}", headers.Length, string.Join(", ", headers));
+
+                // Find required column indices
+                _logger.LogInformation("[Import] Finding column indices...");
+                var makeIndex = Array.IndexOf(headers, "make");
+                var modelIndex = Array.IndexOf(headers, "model");
+                var yearIndex = Array.IndexOf(headers, "year");
+                var licensePlateIndex = Array.IndexOf(headers, "licenseplate") != -1 
+                    ? Array.IndexOf(headers, "licenseplate") 
+                    : Array.IndexOf(headers, "license_plate");
+
+                _logger.LogInformation("[Import] Required columns - Make: {MakeIndex}, Model: {ModelIndex}, Year: {YearIndex}, LicensePlate: {LicensePlateIndex}",
+                    makeIndex, modelIndex, yearIndex, licensePlateIndex);
+
+                if (makeIndex == -1 || modelIndex == -1 || yearIndex == -1 || licensePlateIndex == -1)
+                {
+                    _logger.LogError("[Import] Missing required columns. Make: {MakeIndex}, Model: {ModelIndex}, Year: {YearIndex}, LicensePlate: {LicensePlateIndex}",
+                        makeIndex, modelIndex, yearIndex, licensePlateIndex);
+                    return BadRequest("CSV must contain columns: make, model, year, licenseplate (or license_plate)");
+                }
+
+                // Optional columns
+                var colorIndex = Array.IndexOf(headers, "color");
+                var vinIndex = Array.IndexOf(headers, "vin");
+                var mileageIndex = Array.IndexOf(headers, "mileage");
+                var transmissionIndex = Array.IndexOf(headers, "transmission");
+                var seatsIndex = Array.IndexOf(headers, "seats");
+                var fuelTypeIndex = Array.IndexOf(headers, "fueltype") != -1 
+                    ? Array.IndexOf(headers, "fueltype") 
+                    : Array.IndexOf(headers, "fuel_type");
+                var stateIndex = Array.IndexOf(headers, "state");
+                var locationIndex = Array.IndexOf(headers, "location");
+                var categoryIndex = Array.IndexOf(headers, "category");
+                var dailyRateIndex = Array.IndexOf(headers, "dailyrate") != -1 
+                    ? Array.IndexOf(headers, "dailyrate") 
+                    : Array.IndexOf(headers, "daily_rate");
+
+                _logger.LogInformation("[Import] Optional columns - Color: {ColorIndex}, VIN: {VinIndex}, Mileage: {MileageIndex}, Transmission: {TransmissionIndex}, Seats: {SeatsIndex}, FuelType: {FuelTypeIndex}, State: {StateIndex}, Location: {LocationIndex}, Category: {CategoryIndex}, DailyRate: {DailyRateIndex}",
+                    colorIndex, vinIndex, mileageIndex, transmissionIndex, seatsIndex, fuelTypeIndex, stateIndex, locationIndex, categoryIndex, dailyRateIndex);
+
+                // Process each line
+                int lineNumber = 1;
+                int totalLines = 0;
+                _logger.LogInformation("[Import] Starting to process CSV rows...");
+                
+                while (!reader.EndOfStream)
+                {
+                    lineNumber++;
+                    var line = await reader.ReadLineAsync();
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        _logger.LogDebug("[Import] Line {LineNumber}: Skipping empty line", lineNumber);
+                        continue;
+                    }
+
+                    totalLines++;
+                    _logger.LogInformation("[Import] Processing line {LineNumber}: {Line}", lineNumber, line);
+
+                    try
+                    {
+                        // Parse CSV line handling quoted fields
+                        var values = ParseCsvLine(line);
+                        _logger.LogDebug("[Import] Line {LineNumber}: Parsed {Count} values", lineNumber, values.Length);
+
+                        if (values.Length <= Math.Max(makeIndex, Math.Max(modelIndex, Math.Max(yearIndex, licensePlateIndex))))
+                        {
+                            errors.Add($"Line {lineNumber}: Not enough columns");
+                            continue;
+                        }
+
+                        // Get and uppercase make and model
+                        var make = values[makeIndex]?.ToUpperInvariant().Trim();
+                        var modelName = values[modelIndex]?.ToUpperInvariant().Trim();
+                        var yearStr = values[yearIndex]?.Trim();
+                        var licensePlate = values[licensePlateIndex]?.Trim();
+
+                        _logger.LogDebug("[Import] Line {LineNumber}: Extracted - Make: {Make}, Model: {Model}, Year: {Year}, LicensePlate: {LicensePlate}",
+                            lineNumber, make, modelName, yearStr, licensePlate);
+
+                        if (string.IsNullOrEmpty(make) || string.IsNullOrEmpty(modelName) || string.IsNullOrEmpty(yearStr) || string.IsNullOrEmpty(licensePlate))
+                        {
+                            var errorMsg = $"Line {lineNumber}: Missing required fields (make: {make}, model: {modelName}, year: {yearStr}, licenseplate: {licensePlate})";
+                            _logger.LogWarning("[Import] {Error}", errorMsg);
+                            errors.Add(errorMsg);
+                            continue;
+                        }
+
+                        if (!int.TryParse(yearStr, out var year) || year < 1900 || year > DateTime.Now.Year + 1)
+                        {
+                            var errorMsg = $"Line {lineNumber}: Invalid year: {yearStr}";
+                            _logger.LogWarning("[Import] {Error}", errorMsg);
+                            errors.Add(errorMsg);
+                            continue;
+                        }
+                        _logger.LogDebug("[Import] Line {LineNumber}: Parsed year: {Year}", lineNumber, year);
+
+                        // Parse state early (needed for duplicate check)
+                        var state = stateIndex != -1 && values.Length > stateIndex ? values[stateIndex]?.Trim() : null;
+
+                        // Parse optional fields
+                        int? seats = null;
+                        if (seatsIndex != -1 && values.Length > seatsIndex && int.TryParse(values[seatsIndex], out var parsedSeats))
+                        {
+                            seats = parsedSeats;
+                            _logger.LogDebug("[Import] Line {LineNumber}: Parsed seats: {Seats}", lineNumber, seats);
+                        }
+
+                        // Parse fuel type
+                        string? fuelType = null;
+                        if (fuelTypeIndex != -1 && values.Length > fuelTypeIndex && !string.IsNullOrWhiteSpace(values[fuelTypeIndex]))
+                        {
+                            fuelType = values[fuelTypeIndex].Trim();
+                            _logger.LogDebug("[Import] Line {LineNumber}: Parsed fuel type: {FuelType}", lineNumber, fuelType);
+                        }
+
+                        // Parse and translate category (needed for model creation/update)
+                        Guid? categoryId = null;
+                        if (categoryIndex != -1 && values.Length > categoryIndex && !string.IsNullOrWhiteSpace(values[categoryIndex]))
+                        {
+                            var categoryName = values[categoryIndex].Trim();
+                            _logger.LogDebug("[Import] Line {LineNumber}: Processing category: {CategoryName}", lineNumber, categoryName);
+                            var englishCategoryName = TranslateCategoryToEnglish(categoryName);
+                            _logger.LogDebug("[Import] Line {LineNumber}: Translated category to English: {EnglishCategoryName}", lineNumber, englishCategoryName);
+                            
+                            // Find or create category
+                            var category = await _context.VehicleCategories
+                                .FirstOrDefaultAsync(c => c.CategoryName.ToUpper() == englishCategoryName.ToUpper());
+                            
+                            if (category == null)
+                            {
+                                _logger.LogInformation("[Import] Line {LineNumber}: Creating new category: {CategoryName} (translated from: {Original})", 
+                                    lineNumber, englishCategoryName, categoryName);
+                                category = new VehicleCategory
+                                {
+                                    CategoryName = englishCategoryName
+                                };
+                                _context.VehicleCategories.Add(category);
+                                await _context.SaveChangesAsync();
+                                _logger.LogInformation("[Import] Line {LineNumber}: Created category with ID: {CategoryId}", lineNumber, category.Id);
+                            }
+                            else
+                            {
+                                _logger.LogDebug("[Import] Line {LineNumber}: Found existing category: {CategoryName} (ID: {CategoryId})", 
+                                    lineNumber, englishCategoryName, category.Id);
+                            }
+                            
+                            categoryId = category.Id;
+                        }
+                        else
+                        {
+                            _logger.LogDebug("[Import] Line {LineNumber}: No category provided", lineNumber);
+                        }
+
+                        // Find or create model and update if needed (do this BEFORE duplicate check so model is updated even if vehicle exists)
+                        _logger.LogDebug("[Import] Line {LineNumber}: Looking for model - Make: {Make}, Model: {Model}, Year: {Year}", 
+                            lineNumber, make, modelName, year);
+                        var model = await _context.Models
+                            .FirstOrDefaultAsync(m => 
+                                m.Make.ToUpper() == make && 
+                                m.ModelName.ToUpper() == modelName && 
+                                m.Year == year);
+
+                        if (model == null)
+                        {
+                            // Create new model
+                            _logger.LogInformation("[Import] Line {LineNumber}: Model not found, creating new model - {Make} {Model} {Year}", 
+                                lineNumber, make, modelName, year);
+                            model = new Model
+                            {
+                                Make = make,
+                                ModelName = modelName,
+                                Year = year,
+                                FuelType = fuelType,
+                                Transmission = transmissionIndex != -1 && values.Length > transmissionIndex ? values[transmissionIndex] : null,
+                                Seats = seats,
+                                CategoryId = categoryId
+                            };
+                            _logger.LogInformation("[Import] Line {LineNumber}: Creating model with FuelType: {FuelType}, Seats: {Seats}", 
+                                lineNumber, fuelType, seats);
+                            _context.Models.Add(model);
+                            await _context.SaveChangesAsync();
+                            _logger.LogInformation("[Import] Line {LineNumber}: Created new model with ID: {ModelId}, Make: {Make}, Model: {Model}, Year: {Year}, CategoryId: {CategoryId}", 
+                                lineNumber, model.Id, make, modelName, year, categoryId);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("[Import] Line {LineNumber}: Found existing model with ID: {ModelId}, Make: {Make}, Model: {Model}, Year: {Year}", 
+                                lineNumber, model.Id, make, modelName, year);
+                            
+                            bool modelUpdated = false;
+                            
+                            // Update category if provided and different
+                            if (categoryId.HasValue && model.CategoryId != categoryId)
+                            {
+                                _logger.LogInformation("[Import] Line {LineNumber}: Updating model category from {OldCategoryId} to {NewCategoryId}", 
+                                    lineNumber, model.CategoryId, categoryId);
+                                model.CategoryId = categoryId;
+                                modelUpdated = true;
+                            }
+                            
+                            // Update seats if model has null seats and CSV has seats value
+                            if (model.Seats == null && seats.HasValue)
+                            {
+                                _logger.LogInformation("[Import] Line {LineNumber}: Updating model seats from null to {Seats}", 
+                                    lineNumber, seats);
+                                model.Seats = seats;
+                                modelUpdated = true;
+                            }
+                            
+                            // Update fuel type if model has null fuel type and CSV has fuel type value
+                            if (string.IsNullOrEmpty(model.FuelType) && !string.IsNullOrEmpty(fuelType))
+                            {
+                                _logger.LogInformation("[Import] Line {LineNumber}: Updating model fuel type from null to {FuelType}", 
+                                    lineNumber, fuelType);
+                                model.FuelType = fuelType;
+                                modelUpdated = true;
+                            }
+                            
+                            // Save changes if model was updated
+                            if (modelUpdated)
+                            {
+                                await _context.SaveChangesAsync();
+                                _logger.LogInformation("[Import] Line {LineNumber}: Updated existing model - Make: {Make}, Model: {ModelName}, Year: {Year}", 
+                                    lineNumber, make, modelName, year);
+                            }
+                        }
+
+                        // Check if vehicle with same license plate and state already exists
+                        _logger.LogDebug("[Import] Line {LineNumber}: Checking if vehicle with license plate {LicensePlate} and state {State} already exists...", 
+                            lineNumber, licensePlate, state ?? "null");
+                        
+                        // Build query to check for duplicate: license plate AND state must match
+                        var existingVehicleQuery = _context.Vehicles
+                            .Where(v => v.LicensePlate == licensePlate);
+                        
+                        // If state is provided, check for matching state; if null, check for null state
+                        if (state != null)
+                        {
+                            existingVehicleQuery = existingVehicleQuery.Where(v => v.State == state);
+                        }
+                        else
+                        {
+                            existingVehicleQuery = existingVehicleQuery.Where(v => v.State == null);
+                        }
+                        
+                        var existingVehicle = await existingVehicleQuery.FirstOrDefaultAsync();
+                        
+                        if (existingVehicle != null)
+                        {
+                            var errorMsg = $"Line {lineNumber}: Vehicle with license plate {licensePlate} and state {(state ?? "null")} already exists";
+                            _logger.LogWarning("[Import] {Error}", errorMsg);
+                            errors.Add(errorMsg);
+                            continue;
+                        }
+                        _logger.LogDebug("[Import] Line {LineNumber}: Vehicle with license plate {LicensePlate} and state {State} is unique", 
+                            lineNumber, licensePlate, state ?? "null");
+
+                        // Note: Model and category were already found/created/updated above (before duplicate check)
+                        // This ensures model data is updated even if vehicle is a duplicate
+
+                        // Find or create vehicle_model catalog entry (required for binding vehicle to model)
+                        _logger.LogDebug("[Import] Line {LineNumber}: Looking for vehicle_model entry - ModelId: {ModelId}, CompanyId: {CompanyId}", 
+                            lineNumber, model.Id, parsedCompanyId);
+                        var vehicleModel = await _context.VehicleModels
+                            .FirstOrDefaultAsync(vm => vm.ModelId == model.Id && vm.CompanyId == parsedCompanyId);
+
+                        if (vehicleModel == null)
+                        {
+                            var dailyRate = dailyRateIndex != -1 && values.Length > dailyRateIndex && decimal.TryParse(values[dailyRateIndex], out var rate) ? rate : 0m;
+                            _logger.LogInformation("[Import] Line {LineNumber}: Vehicle_model not found, creating new entry - ModelId: {ModelId}, CompanyId: {CompanyId}, DailyRate: {DailyRate}", 
+                                lineNumber, model.Id, parsedCompanyId, dailyRate);
+                            vehicleModel = new VehicleModel
+                            {
+                                CompanyId = parsedCompanyId,
+                                ModelId = model.Id,
+                                DailyRate = dailyRate
+                            };
+                            _context.VehicleModels.Add(vehicleModel);
+                            await _context.SaveChangesAsync();
+                            _logger.LogInformation("[Import] Line {LineNumber}: Created vehicle_model entry with ID: {VehicleModelId}, ModelId: {ModelId}, CompanyId: {CompanyId}, DailyRate: {DailyRate}", 
+                                lineNumber, vehicleModel.Id, model.Id, parsedCompanyId, dailyRate);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("[Import] Line {LineNumber}: Found existing vehicle_model entry with ID: {VehicleModelId}, ModelId: {ModelId}, CompanyId: {CompanyId}", 
+                                lineNumber, vehicleModel.Id, model.Id, parsedCompanyId);
+                        }
+
+                        // Parse VIN (optional - only for model recognition, not required for vehicle)
+                        string? vin = null;
+                        if (vinIndex != -1 && values.Length > vinIndex && !string.IsNullOrWhiteSpace(values[vinIndex]))
+                        {
+                            vin = values[vinIndex].Trim();
+                            // Only set VIN if it's not empty after trimming
+                            if (string.IsNullOrEmpty(vin))
+                            {
+                                vin = null;
+                            }
+                            _logger.LogDebug("[Import] Line {LineNumber}: VIN provided: {Vin}", lineNumber, vin);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("[Import] Line {LineNumber}: No VIN provided (optional)", lineNumber);
+                        }
+
+                        // Parse other optional fields
+                        var color = colorIndex != -1 && values.Length > colorIndex ? values[colorIndex] : null;
+                        var mileage = mileageIndex != -1 && values.Length > mileageIndex && int.TryParse(values[mileageIndex], out var parsedMileage) ? parsedMileage : 0;
+                        var transmission = transmissionIndex != -1 && values.Length > transmissionIndex ? values[transmissionIndex] : null;
+                        var location = locationIndex != -1 && values.Length > locationIndex ? values[locationIndex] : null;
+                        // Note: state was already parsed earlier for duplicate check
+
+                        _logger.LogDebug("[Import] Line {LineNumber}: Optional fields - Color: {Color}, Mileage: {Mileage}, Transmission: {Transmission}, Seats: {Seats}, State: {State}, Location: {Location}",
+                            lineNumber, color, mileage, transmission, seats, state, location);
+
+                        // Create vehicle and bind it to model via vehicle_model table
+                        _logger.LogInformation("[Import] Line {LineNumber}: Creating vehicle - LicensePlate: {LicensePlate}, Make: {Make}, Model: {Model}, Year: {Year}, VehicleModelId: {VehicleModelId}",
+                            lineNumber, licensePlate, make, modelName, year, vehicleModel.Id);
+                        var vehicle = new Vehicle
+                        {
+                            CompanyId = parsedCompanyId,
+                            Color = color,
+                            LicensePlate = licensePlate,
+                            Vin = vin, // VIN is optional - only used for model recognition
+                            Mileage = mileage,
+                            Transmission = transmission,
+                            Seats = seats,
+                            VehicleModelId = vehicleModel.Id, // Bind vehicle to model through vehicle_model table
+                            Status = VehicleStatus.Available,
+                            State = state,
+                            Location = location
+                        };
+
+                        _context.Vehicles.Add(vehicle);
+                        importedCount++;
+                        _logger.LogInformation("[Import] Line {LineNumber}: Vehicle created successfully - LicensePlate: {LicensePlate}, VehicleId: {VehicleId}, VehicleModelId: {VehicleModelId}",
+                            lineNumber, licensePlate, vehicle.Id, vehicleModel.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        var errorMsg = $"Line {lineNumber}: Error processing - {ex.Message}";
+                        _logger.LogError(ex, "[Import] {Error}", errorMsg);
+                        errors.Add(errorMsg);
+                    }
+                }
+
+                _logger.LogInformation("[Import] Finished processing {TotalLines} lines. Imported: {ImportedCount}, Errors: {ErrorCount}", 
+                    totalLines, importedCount, errors.Count);
+
+                // Save all vehicles
+                _logger.LogInformation("[Import] Saving all vehicles to database...");
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("[Import] All vehicles saved successfully");
+
+                _logger.LogInformation("=== VEHICLE IMPORT COMPLETED ===");
+                _logger.LogInformation("Total lines processed: {TotalLines}", totalLines);
+                _logger.LogInformation("Successfully imported: {ImportedCount} vehicles", importedCount);
+                _logger.LogInformation("Errors encountered: {ErrorCount}", errors.Count);
+                if (errors.Count > 0)
+                {
+                    _logger.LogWarning("[Import] Error details: {Errors}", string.Join("; ", errors));
+                }
+
+                return Ok(new
+                {
+                    count = importedCount,
+                    errors = errors,
+                    totalLines = totalLines,
+                    message = $"Successfully imported {importedCount} vehicle(s)" + (errors.Count > 0 ? $" with {errors.Count} error(s)" : "")
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "=== VEHICLE IMPORT FAILED ===");
+            _logger.LogError(ex, "[Import] Fatal error importing vehicles: {Message}", ex.Message);
+            _logger.LogError(ex, "[Import] Inner exception: {InnerException}", ex.InnerException?.Message ?? "None");
+            _logger.LogError(ex, "[Import] Stack trace: {StackTrace}", ex.StackTrace);
+            
+            // Return more detailed error information for debugging
+            var errorDetails = new
+            {
+                message = ex.Message,
+                innerException = ex.InnerException?.Message,
+                stackTrace = ex.StackTrace
+            };
+            
+            return StatusCode(500, new
+            {
+                message = "Internal server error during vehicle import",
+                error = errorDetails
+            });
         }
     }
 }
