@@ -19,6 +19,8 @@ public class RecommendationsController : ControllerBase
     private readonly ISettingsService _settingsService;
 
     private const string AnthropicApiKeySetting = "anthropic.apiKey";
+    private const string ClaudeApiKeySetting = "claude.apiKey";
+    private const string OpenAIApiKeySetting = "openai.apiKey";
 
     public RecommendationsController(
         IHttpClientFactory httpClientFactory,
@@ -56,36 +58,66 @@ public class RecommendationsController : ControllerBase
 
         var mode = (request.Mode ?? "claude").Trim().ToLowerInvariant();
 
+        // Free mode: Use rule-based recommendations (no API key needed)
         if (string.Equals(mode, "free", StringComparison.Ordinal))
         {
             var freeResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, request.Language);
             return Ok(freeResult);
         }
 
+        var languageCode = string.IsNullOrWhiteSpace(request.Language)
+            ? "en"
+            : request.Language.Trim().ToLowerInvariant();
+
         try
         {
-            var apiKey = await _settingsService.GetValueAsync(AnthropicApiKeySetting);
+            // Premium mode (3rd mode): Use OpenAI (ChatGPT), NOT Anthropic
+            if (string.Equals(mode, "premium", StringComparison.Ordinal))
+            {
+                var openAiApiKey = await _settingsService.GetValueAsync(OpenAIApiKeySetting);
+                if (string.IsNullOrWhiteSpace(openAiApiKey))
+                {
+                    _logger.LogWarning("OpenAI API key missing for premium mode. Falling back to rule-based logic.");
+                    var fallbackResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
+                    return Ok(fallbackResult);
+                }
+
+                _logger.LogInformation("Premium mode: Using OpenAI (ChatGPT) API, NOT Anthropic");
+                return await GetOpenAIRecommendations(request, vehicles, languageCode, openAiApiKey);
+            }
+
+            // Claude mode (2nd mode): Use Anthropic Claude AI API (NOT OpenAI/ChatGPT)
+            // Anthropic Claude is the full name - made by Anthropic
+            // Try claude.apiKey first, then fallback to anthropic.apiKey
+            var apiKey = await _settingsService.GetValueAsync(ClaudeApiKeySetting);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _logger.LogWarning("Anthropic API key missing. Falling back to rule-based logic.");
-                var fallbackResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, request.Language);
+                apiKey = await _settingsService.GetValueAsync(AnthropicApiKeySetting);
+            }
+
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                _logger.LogWarning("Claude/Anthropic API key missing. Falling back to rule-based logic.");
+                var fallbackResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
                 return Ok(fallbackResult);
             }
+
+            _logger.LogInformation("Claude mode: Using Anthropic Claude AI API (NOT OpenAI). Key length: {KeyLength} (first 10 chars: {KeyPrefix})", 
+                apiKey?.Length ?? 0, 
+                apiKey?.Length > 10 ? apiKey.Substring(0, 10) + "..." : "N/A");
 
             var httpClient = _httpClientFactory.CreateClient();
             httpClient.DefaultRequestHeaders.Add("x-api-key", apiKey);
             httpClient.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-
-            var languageCode = string.IsNullOrWhiteSpace(request.Language)
-                ? "en"
-                : request.Language.Trim().ToLowerInvariant();
 
             var prompts = GetLanguagePrompts(languageCode);
             var prompt = BuildPrompt(request, prompts, languageCode, mode, vehicles);
 
             var payload = new AnthropicMessageRequest
             {
-                Model = "claude-sonnet-4-20250514",
+                // Best option - Claude Sonnet 4.5 (smartest, most efficient)
+                Model = "claude-sonnet-4-5-20250929",
+                // Alternative - Claude Haiku 4.5 (faster, more economical): "claude-haiku-4-5-20251001"
                 MaxTokens = 2048,
                 Temperature = 0.7m,
                 Messages = new[]
@@ -98,6 +130,10 @@ public class RecommendationsController : ControllerBase
                 }
             };
 
+            _logger.LogInformation("Calling Anthropic Claude AI API endpoint: https://api.anthropic.com/v1/messages with model: {Model}, prompt length: {PromptLength}", 
+                payload.Model, 
+                prompt?.Length ?? 0);
+
             using var response = await httpClient.PostAsJsonAsync(
                 "https://api.anthropic.com/v1/messages",
                 payload);
@@ -106,9 +142,14 @@ public class RecommendationsController : ControllerBase
             {
                 var failureBody = await response.Content.ReadAsStringAsync();
                 _logger.LogError(
-                    "Anthropic API call failed with status {StatusCode}. Body: {Body}",
+                    "❌ Anthropic Claude AI API call failed with status {StatusCode} {StatusText}. Response body: {Body}",
                     response.StatusCode,
+                    response.ReasonPhrase ?? "Unknown",
                     failureBody);
+                _logger.LogError("Request URL: https://api.anthropic.com/v1/messages");
+                _logger.LogError("Request headers: x-api-key present: {HasKey}, anthropic-version: {Version}", 
+                    httpClient.DefaultRequestHeaders.Contains("x-api-key"),
+                    httpClient.DefaultRequestHeaders.GetValues("anthropic-version").FirstOrDefault() ?? "Not set");
                 var fallbackResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
                 fallbackResult.Summary = string.Concat(
                     fallbackResult.Summary,
@@ -193,9 +234,55 @@ public class RecommendationsController : ControllerBase
             recommendations.Mode = mode;
             return Ok(recommendations);
         }
+        catch (HttpRequestException httpEx)
+        {
+            _logger.LogError(httpEx, 
+                "❌ HTTP error calling Anthropic Claude AI API. Message: {Message}, InnerException: {InnerException}, StatusCode: {StatusCode}", 
+                httpEx.Message,
+                httpEx.InnerException?.Message ?? "None",
+                httpEx.Data.Contains("StatusCode") ? httpEx.Data["StatusCode"] : "Unknown");
+            _logger.LogError("Full HTTP exception details: {Exception}", httpEx.ToString());
+            var fallback = BuildRuleBasedRecommendations(
+                request.Requirements,
+                (request.AvailableVehicles ?? new List<VehicleData>())
+                    .Select(NormalizeVehicle)
+                    .Where(v => v is not null)
+                    .Select(v => v!)
+                    .ToList(),
+                request.Language);
+            fallback.Summary = string.Concat(
+                fallback.Summary,
+                " ",
+                GetLanguagePrompts(request.Language ?? "en").FallbackNotice);
+            return Ok(fallback);
+        }
+        catch (TaskCanceledException timeoutEx)
+        {
+            _logger.LogError(timeoutEx, "⏱️ Timeout calling Anthropic Claude AI API. The request took too long to complete. CancellationToken: {IsCancellationRequested}", 
+                timeoutEx.CancellationToken.IsCancellationRequested);
+            var fallback = BuildRuleBasedRecommendations(
+                request.Requirements,
+                (request.AvailableVehicles ?? new List<VehicleData>())
+                    .Select(NormalizeVehicle)
+                    .Where(v => v is not null)
+                    .Select(v => v!)
+                    .ToList(),
+                request.Language);
+            fallback.Summary = string.Concat(
+                fallback.Summary,
+                " ",
+                GetLanguagePrompts(request.Language ?? "en").FallbackNotice);
+            return Ok(fallback);
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting AI recommendations");
+            _logger.LogError(ex, 
+                "❌ Unexpected error getting AI recommendations. Type: {ExceptionType}, Message: {Message}, InnerException: {InnerException}, StackTrace: {StackTrace}", 
+                ex.GetType().Name, 
+                ex.Message,
+                ex.InnerException?.Message ?? "None",
+                ex.StackTrace);
+            _logger.LogError("Full exception details: {Exception}", ex.ToString());
             var fallback = BuildRuleBasedRecommendations(
                 request.Requirements,
                 (request.AvailableVehicles ?? new List<VehicleData>())
@@ -347,6 +434,181 @@ public class RecommendationsController : ControllerBase
         "de" => "German",
         _ => "English"
     };
+
+    private async Task<IActionResult> GetOpenAIRecommendations(
+        AIRecommendationRequest request,
+        List<NormalizedVehicle> vehicles,
+        string languageCode,
+        string apiKey)
+    {
+        try
+        {
+            _logger.LogInformation("Calling OpenAI (ChatGPT) API - Premium mode. Key length: {KeyLength}", apiKey?.Length ?? 0);
+            
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+
+            var prompts = GetLanguagePrompts(languageCode);
+            
+            // Build user prompt (without system role, as it's separate for OpenAI)
+            var vehiclesJson = JsonSerializer.Serialize(
+                vehicles,
+                new JsonSerializerOptions { WriteIndented = true });
+
+            var userPrompt = new StringBuilder();
+            userPrompt.AppendLine(prompts.CustomerRequirements);
+            userPrompt.AppendLine(request.Requirements);
+            userPrompt.AppendLine(prompts.AvailableVehicles);
+            userPrompt.AppendLine(vehiclesJson);
+            userPrompt.AppendLine(prompts.Instructions);
+            userPrompt.AppendLine($"Mode selected: premium");
+            userPrompt.AppendLine($"IMPORTANT: Respond in {GetLanguageName(languageCode)} language.");
+            userPrompt.AppendLine("Format your response as JSON:");
+            userPrompt.AppendLine(@"{");
+            userPrompt.AppendLine(@"  ""recommendations"": [");
+            userPrompt.AppendLine(@"    {");
+            userPrompt.AppendLine(@"      ""vehicleId"": ""123"",");
+            userPrompt.AppendLine(@"      ""make"": ""Toyota"",");
+            userPrompt.AppendLine(@"      ""model"": ""Camry"",");
+            userPrompt.AppendLine(@"      ""rank"": 1,");
+            userPrompt.AppendLine(@"      ""matchScore"": 95,");
+            userPrompt.AppendLine(@"      ""reasoning"": ""Detailed explanation..."",");
+            userPrompt.AppendLine(@"      ""pros"": [""reason 1"", ""reason 2""],");
+            userPrompt.AppendLine(@"      ""cons"": [""consideration 1""],");
+            userPrompt.AppendLine(@"      ""totalCost"": 450.00");
+            userPrompt.AppendLine(@"    }");
+            userPrompt.AppendLine(@"  ],");
+            userPrompt.AppendLine(@"  ""summary"": ""Overall recommendation summary""");
+            userPrompt.AppendLine(@"}");
+            userPrompt.AppendLine("Respond ONLY with valid JSON, no additional text.");
+
+            var payload = new OpenAIRequest
+            {
+                Model = "gpt-4o",
+                MaxTokens = 2048,
+                Temperature = 0.7m,
+                Messages = new[]
+                {
+                    new OpenAIMessage
+                    {
+                        Role = "system",
+                        Content = prompts.SystemRole
+                    },
+                    new OpenAIMessage
+                    {
+                        Role = "user",
+                        Content = userPrompt.ToString()
+                    }
+                },
+                ResponseFormat = new OpenAIResponseFormat { Type = "json_object" }
+            };
+
+            _logger.LogInformation("Calling OpenAI API endpoint: https://api.openai.com/v1/chat/completions with model: {Model}", payload.Model);
+
+            using var response = await httpClient.PostAsJsonAsync(
+                "https://api.openai.com/v1/chat/completions",
+                payload);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var failureBody = await response.Content.ReadAsStringAsync();
+                _logger.LogError(
+                    "OpenAI API call failed with status {StatusCode}. Body: {Body}",
+                    response.StatusCode,
+                    failureBody);
+                var fallbackResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
+                fallbackResult.Summary = string.Concat(
+                    fallbackResult.Summary,
+                    " ",
+                    GetLanguagePrompts(languageCode).FallbackNotice);
+                return Ok(fallbackResult);
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<OpenAIResponse>(
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (result is null || result.Choices is null || result.Choices.Count == 0)
+            {
+                _logger.LogError("OpenAI API returned an empty response.");
+                var fallbackResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
+                fallbackResult.Summary = string.Concat(
+                    fallbackResult.Summary,
+                    " ",
+                    GetLanguagePrompts(languageCode).FallbackNotice);
+                return Ok(fallbackResult);
+            }
+
+            var textContent = result.Choices[0].Message?.Content;
+
+            if (string.IsNullOrWhiteSpace(textContent))
+            {
+                _logger.LogError("OpenAI API returned no text content.");
+                var fallbackResult = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
+                fallbackResult.Summary = string.Concat(
+                    fallbackResult.Summary,
+                    " ",
+                    GetLanguagePrompts(languageCode).FallbackNotice);
+                return Ok(fallbackResult);
+            }
+
+            var jsonText = textContent
+                .Replace("```json", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Replace("```", string.Empty, StringComparison.OrdinalIgnoreCase)
+                .Trim();
+
+            AIRecommendationResult? recommendations;
+            try
+            {
+                recommendations = JsonSerializer.Deserialize<AIRecommendationResult>(
+                    jsonText,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (JsonException jsonEx)
+            {
+                _logger.LogError(jsonEx, "Failed to parse OpenAI response JSON: {Raw}", jsonText);
+                recommendations = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
+                recommendations.Summary = string.Concat(
+                    recommendations.Summary,
+                    " ",
+                    GetLanguagePrompts(languageCode).FallbackNotice);
+                return Ok(recommendations);
+            }
+
+            if (recommendations is null)
+            {
+                _logger.LogError("OpenAI recommendation result was null after parsing.");
+                return StatusCode(500, "OpenAI returned no recommendations.");
+            }
+
+            if (result.Usage is not null)
+            {
+                // OpenAI pricing: GPT-4o is $2.50/$10 per 1M tokens (input/output)
+                var estimatedCost =
+                    (result.Usage.PromptTokens * 2.50m / 1000000m) +
+                    (result.Usage.CompletionTokens * 10.00m / 1000000m);
+
+                _logger.LogInformation(
+                    "OpenAI Recommendations completed. Mode: premium, Language: {Language}, PromptTokens: {PromptTokens}, CompletionTokens: {CompletionTokens}, EstimatedCost: {Cost:F4}",
+                    languageCode,
+                    result.Usage.PromptTokens,
+                    result.Usage.CompletionTokens,
+                    estimatedCost);
+            }
+
+            recommendations.Mode = "premium";
+            return Ok(recommendations);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting OpenAI recommendations");
+            var fallback = BuildRuleBasedRecommendations(request.Requirements, vehicles, languageCode);
+            fallback.Summary = string.Concat(
+                fallback.Summary,
+                " ",
+                GetLanguagePrompts(languageCode).FallbackNotice);
+            return Ok(fallback);
+        }
+    }
 
     private static AIRecommendationResult BuildRuleBasedRecommendations(
         string requirements,
@@ -681,4 +943,65 @@ public class NormalizedVehicle
     public string Transmission { get; set; } = string.Empty;
     public string FuelType { get; set; } = string.Empty;
     public List<string> Features { get; set; } = new();
+}
+
+// OpenAI API Models
+public class OpenAIRequest
+{
+    [JsonPropertyName("model")]
+    public string Model { get; set; } = string.Empty;
+
+    [JsonPropertyName("max_tokens")]
+    public int MaxTokens { get; set; } = 2048;
+
+    [JsonPropertyName("temperature")]
+    public decimal Temperature { get; set; } = 0.7m;
+
+    [JsonPropertyName("messages")]
+    public OpenAIMessage[] Messages { get; set; } = Array.Empty<OpenAIMessage>();
+
+    [JsonPropertyName("response_format")]
+    public OpenAIResponseFormat? ResponseFormat { get; set; }
+}
+
+public class OpenAIMessage
+{
+    [JsonPropertyName("role")]
+    public string Role { get; set; } = string.Empty;
+
+    [JsonPropertyName("content")]
+    public string Content { get; set; } = string.Empty;
+}
+
+public class OpenAIResponseFormat
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "json_object";
+}
+
+public class OpenAIResponse
+{
+    [JsonPropertyName("choices")]
+    public List<OpenAIChoice> Choices { get; set; } = new();
+
+    [JsonPropertyName("usage")]
+    public OpenAIUsage? Usage { get; set; }
+}
+
+public class OpenAIChoice
+{
+    [JsonPropertyName("message")]
+    public OpenAIMessage? Message { get; set; }
+}
+
+public class OpenAIUsage
+{
+    [JsonPropertyName("prompt_tokens")]
+    public int PromptTokens { get; set; }
+
+    [JsonPropertyName("completion_tokens")]
+    public int CompletionTokens { get; set; }
+
+    [JsonPropertyName("total_tokens")]
+    public int TotalTokens { get; set; }
 }

@@ -220,6 +220,40 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
         };
+        
+        // Add event handlers to log authentication failures
+        options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+                logger.LogWarning("JWT Authentication failed: {Error}", context.Exception.Message);
+                logger.LogWarning("Exception type: {ExceptionType}", context.Exception.GetType().Name);
+                if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenExpiredException)
+                {
+                    logger.LogWarning("Token is expired");
+                }
+                else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidSignatureException)
+                {
+                    logger.LogWarning("Token signature is invalid");
+                }
+                else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidIssuerException)
+                {
+                    logger.LogWarning("Token issuer is invalid");
+                }
+                else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidAudienceException)
+                {
+                    logger.LogWarning("Token audience is invalid");
+                }
+                return Task.CompletedTask;
+            },
+            OnChallenge = context =>
+            {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+                logger.LogWarning("JWT Challenge triggered: {Error}, {ErrorDescription}", context.Error, context.ErrorDescription);
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();
