@@ -177,6 +177,9 @@ builder.Services.AddSingleton<IEncryptionService, EncryptionService>();
 // Add Settings Service
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 
+// Add Translation Service
+builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
+
 // Add Company Management Service
 builder.Services.AddScoped<ICompanyManagementService, CompanyManagementService>();
 

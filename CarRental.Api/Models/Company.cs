@@ -78,7 +78,7 @@ public class Company
     [Column("background_link")]
     public string? BackgroundLink { get; set; }
 
-    [Column("about")]
+    [Column("about", TypeName = "jsonb")]
     public string? About { get; set; }
 
     [Column("booking_integrated")]

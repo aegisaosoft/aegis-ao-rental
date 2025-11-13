@@ -20,6 +20,7 @@ public class SettingsController : ControllerBase
     private const string AnthropicApiKeySetting = "anthropic.apiKey";
     private const string ClaudeApiKeySetting = "claude.apiKey";
     private const string OpenAIApiKeySetting = "openai.apiKey";
+    private const string GoogleTranslateApiKeySetting = "google.translate.key";
 
     public SettingsController(ISettingsService settingsService, ILogger<SettingsController> logger)
     {
@@ -151,6 +152,44 @@ public class SettingsController : ControllerBase
         {
             _logger.LogError(ex, "Failed to update AI settings");
             return StatusCode(500, new { error = "Failed to update AI settings." });
+        }
+    }
+
+    [HttpGet("google-translate")]
+    public async Task<ActionResult<GoogleTranslateSettingsResponseDto>> GetGoogleTranslateSettings()
+    {
+        var apiKey = await _settingsService.GetValueAsync(GoogleTranslateApiKeySetting);
+
+        var response = new GoogleTranslateSettingsResponseDto
+        {
+            HasApiKey = !string.IsNullOrWhiteSpace(apiKey),
+            ApiKeyPreview = MaskSecret(apiKey),
+            ApiKey = apiKey
+        };
+
+        return Ok(response);
+    }
+
+    [HttpPut("google-translate")]
+    public async Task<IActionResult> UpdateGoogleTranslateSettings([FromBody] UpdateGoogleTranslateSettingsRequestDto request)
+    {
+        try
+        {
+            if (request.RemoveApiKey)
+            {
+                await _settingsService.SetValueAsync(GoogleTranslateApiKeySetting, null);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.ApiKey))
+            {
+                await _settingsService.SetValueAsync(GoogleTranslateApiKeySetting, request.ApiKey.Trim());
+            }
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update Google Translate settings");
+            return StatusCode(500, new { error = "Failed to update Google Translate settings." });
         }
     }
 

@@ -47,3 +47,16 @@ public class UpdateAiSettingsRequestDto
     public bool RemoveClaudeApiKey { get; set; }
     public bool RemoveOpenAiApiKey { get; set; }
 }
+
+public class GoogleTranslateSettingsResponseDto
+{
+    public bool HasApiKey { get; set; }
+    public string? ApiKeyPreview { get; set; }
+    public string? ApiKey { get; set; }
+}
+
+public class UpdateGoogleTranslateSettingsRequestDto
+{
+    public string? ApiKey { get; set; }
+    public bool RemoveApiKey { get; set; }
+}

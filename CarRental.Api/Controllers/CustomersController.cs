@@ -118,6 +118,76 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
+    /// Get customers who have bookings for a specific company with pagination
+    /// </summary>
+    [HttpGet("with-bookings/{companyId}")]
+    public async Task<ActionResult<object>> GetCustomersWithBookings(
+        Guid companyId,
+        string? search = null,
+        int page = 1,
+        int pageSize = 20)
+    {
+        // Get distinct customer IDs who have bookings for this company
+        var customerIdsWithBookings = await _context.Bookings
+            .Where(b => b.CompanyId == companyId)
+            .Select(b => b.CustomerId)
+            .Distinct()
+            .ToListAsync();
+
+        // Query customers who have bookings
+        var query = _context.Customers
+            .Where(c => customerIdsWithBookings.Contains(c.Id));
+
+        // Apply search filter if provided
+        if (!string.IsNullOrEmpty(search))
+        {
+            query = query.Where(c => 
+                c.FirstName.Contains(search) || 
+                c.LastName.Contains(search) || 
+                c.Email.Contains(search));
+        }
+
+        // Get total count for pagination
+        var totalCount = await query.CountAsync();
+
+        // Get paginated customers
+        var customers = await query
+            .OrderBy(c => c.LastName)
+            .ThenBy(c => c.FirstName)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(c => new CustomerDto
+            {
+                CustomerId = c.Id,
+                Email = c.Email,
+                FirstName = c.FirstName,
+                LastName = c.LastName,
+                Phone = c.Phone,
+                DateOfBirth = c.DateOfBirth,
+                Address = c.Address,
+                City = c.City,
+                State = c.State,
+                Country = c.Country,
+                PostalCode = c.PostalCode,
+                StripeCustomerId = c.StripeCustomerId,
+                IsVerified = c.IsVerified,
+                CustomerType = c.CustomerType.ToString(),
+                CreatedAt = c.CreatedAt,
+                UpdatedAt = c.UpdatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new
+        {
+            items = customers,
+            totalCount = totalCount,
+            page = page,
+            pageSize = pageSize,
+            totalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+        });
+    }
+
+    /// <summary>
     /// Get a specific customer by ID
     /// </summary>
     [HttpGet("{id}")]
