@@ -50,11 +50,9 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
     options.ValueLengthLimit = 524_288_000;
     options.MultipartHeadersLengthLimit = 524_288_000;
 });
-// Only register Swagger services in Development to avoid issues in production
-if (builder.Environment.IsDevelopment())
-{
-    builder.Services.AddEndpointsApiExplorer();
-    builder.Services.AddSwaggerGen(c =>
+// Register Swagger services for all environments
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
     {
         c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
         {
@@ -94,7 +92,6 @@ if (builder.Environment.IsDevelopment())
         
         // No longer need SwaggerFileOperationFilter since we use [FromForm] attributes
     });
-}
 
 // Add Database Configuration Service
 builder.Services.AddScoped<IDatabaseConfigService, DatabaseConfigService>();
@@ -303,9 +300,18 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 startupLogger.LogInformation("Adding exception handling middleware...");
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-// 2. HTTPS Redirection (early in pipeline)
-startupLogger.LogInformation("Configuring HTTPS redirection...");
-app.UseHttpsRedirection();
+// 2. HTTPS Redirection (early in pipeline, but skip in Azure App Service)
+// Azure App Service handles HTTPS termination, so we only redirect in non-Azure environments
+var websiteInstanceId = builder.Configuration["WEBSITE_INSTANCE_ID"];
+if (string.IsNullOrEmpty(websiteInstanceId))
+{
+    startupLogger.LogInformation("Configuring HTTPS redirection...");
+    app.UseHttpsRedirection();
+}
+else
+{
+    startupLogger.LogInformation("Skipping HTTPS redirection (Azure App Service environment detected)");
+}
 
 // 3. Static files for uploads (serve from wwwroot/public)
 startupLogger.LogInformation("Configuring static files...");
@@ -338,25 +344,22 @@ app.UseAuthorization();
 startupLogger.LogInformation("Adding company middleware...");
 app.UseCompanyMiddleware();
 
-// 7. Swagger (only in Development - file uploads cause issues in production)
-if (app.Environment.IsDevelopment())
+// 7. Swagger (enabled in all environments for API documentation)
+try
 {
-    try
+    startupLogger.LogInformation("Configuring Swagger...");
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
     {
-        startupLogger.LogInformation("Configuring Swagger...");
-        app.UseSwagger();
-        app.UseSwaggerUI(c =>
-        {
-            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
-            c.RoutePrefix = "swagger"; // Access at /swagger
-            c.DocumentTitle = "Car Rental API Documentation";
-        });
-        startupLogger.LogInformation("Swagger configured successfully");
-    }
-    catch (Exception ex)
-    {
-        startupLogger.LogWarning(ex, "Swagger failed to initialize");
-    }
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
+        c.RoutePrefix = "swagger"; // Access at /swagger
+        c.DocumentTitle = "Car Rental API Documentation";
+    });
+    startupLogger.LogInformation("Swagger configured successfully");
+}
+catch (Exception ex)
+{
+    startupLogger.LogWarning(ex, "Swagger failed to initialize");
 }
 
 // 8. Health Checks (before controllers, for Azure probes)
