@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using CarRental.Api.Data;
+using CarRental.Api.DTOs;
 using CarRental.Api.Models;
 
 namespace CarRental.Api.Controllers;
@@ -48,11 +49,18 @@ public class LocationsController : ControllerBase
     /// <summary>
     /// Check if the current user can edit locations for a specific company
     /// </summary>
-    /// <param name="companyId">Company ID to check</param>
+    /// <param name="companyId">Company ID to check (nullable for regular locations)</param>
     /// <returns>True if user can edit locations for this company</returns>
-    private bool CanEditCompanyLocations(Guid companyId)
+    private bool CanEditCompanyLocations(Guid? companyId)
     {
         var role = User.FindFirst(ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+        
+        // If companyId is null (regular location), only mainadmin can edit
+        if (!companyId.HasValue)
+        {
+            return role == "mainadmin";
+        }
+
         var userCompanyId = User.FindFirst("company_id")?.Value;
 
         // Mainadmin can edit all locations
@@ -61,7 +69,7 @@ public class LocationsController : ControllerBase
 
         // Admin can only edit locations from their own company
         if (role == "admin" && userCompanyId != null)
-            return Guid.TryParse(userCompanyId, out var parsedCompanyId) && parsedCompanyId == companyId;
+            return Guid.TryParse(userCompanyId, out var parsedCompanyId) && parsedCompanyId == companyId.Value;
 
         return false;
     }
@@ -174,21 +182,43 @@ public class LocationsController : ControllerBase
 
     // GET: api/Locations/pickup
     [HttpGet("pickup")]
-    public async Task<ActionResult<IEnumerable<Location>>> GetPickupLocations([FromQuery] Guid? companyId = null)
+    [AllowAnonymous] // Allow anonymous access for public pickup locations
+    public async Task<ActionResult<IEnumerable<LocationDto>>> GetPickupLocations()
     {
         try
         {
             var query = _context.Locations
-                .Where(l => l.IsPickupLocation && l.IsActive);
-
-            if (companyId.HasValue)
-                query = query.Where(l => l.CompanyId == companyId.Value);
+                .AsNoTracking() // Don't track entities to avoid circular references
+                .Where(l => l.IsActive); // Show all active locations
 
             var locations = await query
                 .OrderBy(l => l.LocationName)
                 .ToListAsync();
 
-            return Ok(locations);
+            // Map to DTOs to avoid circular references
+            var locationDtos = locations.Select(l => new LocationDto
+            {
+                LocationId = l.Id,
+                CompanyId = l.CompanyId, // This will be null for regular locations - it should be included in JSON
+                LocationName = l.LocationName,
+                Address = l.Address,
+                City = l.City,
+                State = l.State,
+                Country = l.Country,
+                PostalCode = l.PostalCode,
+                Phone = l.Phone,
+                Email = l.Email,
+                Latitude = l.Latitude,
+                Longitude = l.Longitude,
+                IsActive = l.IsActive,
+                IsPickupLocation = l.IsPickupLocation,
+                IsReturnLocation = l.IsReturnLocation,
+                OpeningHours = l.OpeningHours,
+                CreatedAt = l.CreatedAt,
+                UpdatedAt = l.UpdatedAt
+            }).ToList();
+
+            return Ok(locationDtos);
         }
         catch (Exception ex)
         {
@@ -199,21 +229,51 @@ public class LocationsController : ControllerBase
 
     // GET: api/Locations/return
     [HttpGet("return")]
-    public async Task<ActionResult<IEnumerable<Location>>> GetReturnLocations([FromQuery] Guid? companyId = null)
+    [AllowAnonymous] // Allow anonymous access for public return locations
+    public async Task<ActionResult<IEnumerable<LocationDto>>> GetReturnLocations([FromQuery] Guid? companyId = null)
     {
         try
         {
             var query = _context.Locations
+                .AsNoTracking() // Don't track entities to avoid circular references
                 .Where(l => l.IsReturnLocation && l.IsActive);
 
-            if (companyId.HasValue)
+            // Only filter by companyId if it's explicitly provided (not null)
+            // If companyId is null/not provided, don't add any companyId filter - show all return locations
+            if (companyId.HasValue && companyId.Value != Guid.Empty)
+            {
                 query = query.Where(l => l.CompanyId == companyId.Value);
+            }
+            // When companyId is not provided, don't filter by companyId at all - show all return locations
 
             var locations = await query
                 .OrderBy(l => l.LocationName)
                 .ToListAsync();
 
-            return Ok(locations);
+            // Map to DTOs to avoid circular references
+            var locationDtos = locations.Select(l => new LocationDto
+            {
+                LocationId = l.Id,
+                CompanyId = l.CompanyId,
+                LocationName = l.LocationName,
+                Address = l.Address,
+                City = l.City,
+                State = l.State,
+                Country = l.Country,
+                PostalCode = l.PostalCode,
+                Phone = l.Phone,
+                Email = l.Email,
+                Latitude = l.Latitude,
+                Longitude = l.Longitude,
+                IsActive = l.IsActive,
+                IsPickupLocation = l.IsPickupLocation,
+                IsReturnLocation = l.IsReturnLocation,
+                OpeningHours = l.OpeningHours,
+                CreatedAt = l.CreatedAt,
+                UpdatedAt = l.UpdatedAt
+            }).ToList();
+
+            return Ok(locationDtos);
         }
         catch (Exception ex)
         {
@@ -225,7 +285,7 @@ public class LocationsController : ControllerBase
     // POST: api/Locations
     [HttpPost]
     [Authorize]
-    public async Task<ActionResult<Location>> CreateLocation([FromBody] Location location)
+    public async Task<ActionResult<LocationDto>> CreateLocation([FromBody] CreateLocationDto dto)
     {
         try
         {
@@ -234,28 +294,71 @@ public class LocationsController : ControllerBase
                 return Forbid();
 
             // Check if user can edit locations for this company
-            if (!CanEditCompanyLocations(location.CompanyId))
+            if (!CanEditCompanyLocations(dto.CompanyId))
                 return Forbid();
 
-            // Validate company exists
-            var company = await _context.Companies.FindAsync(location.CompanyId);
-            if (company == null)
+            // If companyId is provided, verify it exists
+            if (dto.CompanyId.HasValue)
             {
-                return BadRequest(new { message = $"Company with ID {location.CompanyId} not found" });
+                var companyExists = await _context.Companies.AnyAsync(c => c.Id == dto.CompanyId.Value);
+                if (!companyExists)
+                {
+                    return BadRequest(new { message = "Company not found" });
+                }
             }
 
-            // Set timestamps
-            location.Id = Guid.NewGuid();
-            location.CreatedAt = DateTime.UtcNow;
-            location.UpdatedAt = DateTime.UtcNow;
+            var locationId = Guid.NewGuid();
+            var location = new Location
+            {
+                Id = locationId,
+                CompanyId = dto.CompanyId,
+                LocationName = dto.LocationName,
+                Address = dto.Address,
+                City = dto.City,
+                State = dto.State,
+                Country = dto.Country,
+                PostalCode = dto.PostalCode,
+                Phone = dto.Phone,
+                Email = dto.Email,
+                Latitude = dto.Latitude,
+                Longitude = dto.Longitude,
+                IsActive = dto.IsActive,
+                IsPickupLocation = dto.IsPickupLocation,
+                IsReturnLocation = dto.IsReturnLocation,
+                OpeningHours = dto.OpeningHours,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
 
             _context.Locations.Add(location);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Created location {LocationId} for company {CompanyId}", 
-                location.Id, location.CompanyId);
+            _logger.LogInformation("Created location {LocationId} for company {CompanyId}", location.Id, dto.CompanyId);
 
-            return CreatedAtAction(nameof(GetLocation), new { id = location.Id }, location);
+            // Map to DTO to avoid circular references
+            var locationDto = new LocationDto
+            {
+                LocationId = location.Id,
+                CompanyId = location.CompanyId,
+                LocationName = location.LocationName,
+                Address = location.Address,
+                City = location.City,
+                State = location.State,
+                Country = location.Country,
+                PostalCode = location.PostalCode,
+                Phone = location.Phone,
+                Email = location.Email,
+                Latitude = location.Latitude,
+                Longitude = location.Longitude,
+                IsActive = location.IsActive,
+                IsPickupLocation = location.IsPickupLocation,
+                IsReturnLocation = location.IsReturnLocation,
+                OpeningHours = location.OpeningHours,
+                CreatedAt = location.CreatedAt,
+                UpdatedAt = location.UpdatedAt
+            };
+
+            return CreatedAtAction(nameof(GetLocation), new { id = location.Id }, locationDto);
         }
         catch (Exception ex)
         {
@@ -267,13 +370,8 @@ public class LocationsController : ControllerBase
     // PUT: api/Locations/{id}
     [HttpPut("{id}")]
     [Authorize]
-    public async Task<IActionResult> UpdateLocation(Guid id, [FromBody] Location location)
+    public async Task<IActionResult> UpdateLocation(Guid id, [FromBody] UpdateLocationDto dto)
     {
-        if (id != location.Id)
-        {
-            return BadRequest(new { message = "Location ID mismatch" });
-        }
-
         try
         {
             // Check if user has admin privileges
@@ -290,32 +388,33 @@ public class LocationsController : ControllerBase
             if (!CanEditCompanyLocations(existingLocation.CompanyId))
                 return Forbid();
 
-            // Validate company exists if it's being changed
-            if (existingLocation.CompanyId != location.CompanyId)
+            // Verify company exists if companyId is provided and changed
+            if (dto.CompanyId.HasValue && existingLocation.CompanyId != dto.CompanyId)
             {
-                var company = await _context.Companies.FindAsync(location.CompanyId);
-                if (company == null)
+                var companyExists = await _context.Companies.AnyAsync(c => c.Id == dto.CompanyId.Value);
+                if (!companyExists)
                 {
-                    return BadRequest(new { message = $"Company with ID {location.CompanyId} not found" });
+                    return BadRequest(new { message = "Company not found" });
                 }
             }
 
             // Update properties
-            existingLocation.CompanyId = location.CompanyId;
-            existingLocation.LocationName = location.LocationName;
-            existingLocation.Address = location.Address;
-            existingLocation.City = location.City;
-            existingLocation.State = location.State;
-            existingLocation.Country = location.Country;
-            existingLocation.PostalCode = location.PostalCode;
-            existingLocation.Phone = location.Phone;
-            existingLocation.Email = location.Email;
-            existingLocation.Latitude = location.Latitude;
-            existingLocation.Longitude = location.Longitude;
-            existingLocation.IsActive = location.IsActive;
-            existingLocation.IsPickupLocation = location.IsPickupLocation;
-            existingLocation.IsReturnLocation = location.IsReturnLocation;
-            existingLocation.OpeningHours = location.OpeningHours;
+            // Keep companyId as null for regular locations
+            existingLocation.CompanyId = dto.CompanyId;
+            existingLocation.LocationName = dto.LocationName;
+            existingLocation.Address = dto.Address;
+            existingLocation.City = dto.City;
+            existingLocation.State = dto.State;
+            existingLocation.Country = dto.Country;
+            existingLocation.PostalCode = dto.PostalCode;
+            existingLocation.Phone = dto.Phone;
+            existingLocation.Email = dto.Email;
+            existingLocation.Latitude = dto.Latitude;
+            existingLocation.Longitude = dto.Longitude;
+            existingLocation.IsActive = dto.IsActive;
+            existingLocation.IsPickupLocation = dto.IsPickupLocation;
+            existingLocation.IsReturnLocation = dto.IsReturnLocation;
+            existingLocation.OpeningHours = dto.OpeningHours;
             existingLocation.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();

@@ -25,9 +25,9 @@ public class Location
     [Column("id")]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    [Required]
+    // CompanyId is optional for regular locations (can be null for pickup locations)
     [Column("company_id")]
-    public Guid CompanyId { get; set; }
+    public Guid? CompanyId { get; set; }
 
     [Required]
     [MaxLength(255)]
@@ -87,7 +87,7 @@ public class Location
 
     // Navigation properties
     [ForeignKey("CompanyId")]
-    public virtual Company Company { get; set; } = null!;
+    public virtual Company? Company { get; set; }
 
     public virtual ICollection<Vehicle> Vehicles { get; set; } = new List<Vehicle>();
 }

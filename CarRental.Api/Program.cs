@@ -41,6 +41,12 @@ builder.Services.AddControllers(options =>
 {
     // Add standardized response filter to wrap all responses
     options.Filters.Add<StandardizedResponseFilter>();
+})
+.AddJsonOptions(options =>
+{
+    // Configure JSON serialization to handle circular references
+    options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+    options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
 });
 
 // Configure file upload limits

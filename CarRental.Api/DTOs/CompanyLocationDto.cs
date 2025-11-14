@@ -17,12 +17,12 @@ using System.ComponentModel.DataAnnotations;
 
 namespace CarRental.Api.DTOs;
 
-public class LocationDto
+public class CompanyLocationDto
 {
     public Guid? LocationId { get; set; }
 
-    // CompanyId is optional for regular locations (can be null for pickup locations)
-    public Guid? CompanyId { get; set; }
+    [Required]
+    public Guid CompanyId { get; set; }
 
     [Required]
     [MaxLength(255)]
@@ -61,6 +61,8 @@ public class LocationDto
     public bool IsPickupLocation { get; set; } = true;
 
     public bool IsReturnLocation { get; set; } = true;
+
+    public bool IsOffice { get; set; } = false;
 
     public string? OpeningHours { get; set; }
 
@@ -71,10 +73,10 @@ public class LocationDto
     public DateTime? UpdatedAt { get; set; }
 }
 
-public class CreateLocationDto
+public class CreateCompanyLocationDto
 {
-    // CompanyId is optional for regular locations (can be null for pickup locations)
-    public Guid? CompanyId { get; set; }
+    [Required]
+    public Guid CompanyId { get; set; }
 
     [Required]
     [MaxLength(255)]
@@ -113,14 +115,16 @@ public class CreateLocationDto
     public bool IsPickupLocation { get; set; } = true;
 
     public bool IsReturnLocation { get; set; } = true;
+
+    public bool IsOffice { get; set; } = false;
 
     public string? OpeningHours { get; set; }
 }
 
-public class UpdateLocationDto
+public class UpdateCompanyLocationDto
 {
-    // CompanyId is optional for regular locations (can be null for pickup locations)
-    public Guid? CompanyId { get; set; }
+    [Required]
+    public Guid CompanyId { get; set; }
 
     [Required]
     [MaxLength(255)]
@@ -159,6 +163,8 @@ public class UpdateLocationDto
     public bool IsPickupLocation { get; set; } = true;
 
     public bool IsReturnLocation { get; set; } = true;
+
+    public bool IsOffice { get; set; } = false;
 
     public string? OpeningHours { get; set; }
 }

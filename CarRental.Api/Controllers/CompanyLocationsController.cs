@@ -69,7 +69,7 @@ public class CompanyLocationsController : ControllerBase
 
     // GET: api/CompanyLocations
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<CompanyLocation>>> GetCompanyLocations(
+    public async Task<ActionResult<IEnumerable<CompanyLocationDto>>> GetCompanyLocations(
         [FromQuery] Guid? companyId = null,
         [FromQuery] bool? isActive = null,
         [FromQuery] bool? isPickupLocation = null,
@@ -78,7 +78,7 @@ public class CompanyLocationsController : ControllerBase
         try
         {
             var query = _context.CompanyLocations
-                .Include(cl => cl.Company)
+                .AsNoTracking() // Don't track entities to avoid circular references
                 .AsQueryable();
 
             // Apply filters
@@ -98,7 +98,31 @@ public class CompanyLocationsController : ControllerBase
                 .OrderBy(cl => cl.LocationName)
                 .ToListAsync();
 
-            return Ok(locations);
+            // Map to DTOs to avoid circular references
+            var locationDtos = locations.Select(l => new CompanyLocationDto
+            {
+                LocationId = l.Id,
+                CompanyId = l.CompanyId,
+                LocationName = l.LocationName,
+                Address = l.Address,
+                City = l.City,
+                State = l.State,
+                Country = l.Country,
+                PostalCode = l.PostalCode,
+                Phone = l.Phone,
+                Email = l.Email,
+                Latitude = l.Latitude,
+                Longitude = l.Longitude,
+                IsActive = l.IsActive,
+                IsPickupLocation = l.IsPickupLocation,
+                IsReturnLocation = l.IsReturnLocation,
+                IsOffice = l.IsOffice,
+                OpeningHours = l.OpeningHours,
+                CreatedAt = l.CreatedAt,
+                UpdatedAt = l.UpdatedAt
+            }).ToList();
+
+            return Ok(locationDtos);
         }
         catch (Exception ex)
         {
@@ -109,18 +133,42 @@ public class CompanyLocationsController : ControllerBase
 
     // GET: api/CompanyLocations/{id}
     [HttpGet("{id}")]
-    public async Task<ActionResult<CompanyLocation>> GetCompanyLocation(Guid id)
+    public async Task<ActionResult<CompanyLocationDto>> GetCompanyLocation(Guid id)
     {
         try
         {
             var location = await _context.CompanyLocations
-                .Include(cl => cl.Company)
+                .AsNoTracking() // Don't track entities to avoid circular references
                 .FirstOrDefaultAsync(cl => cl.Id == id);
 
             if (location == null)
                 return NotFound(new { message = "Company location not found" });
 
-            return Ok(location);
+            // Map to DTO to avoid circular references
+            var locationDto = new CompanyLocationDto
+            {
+                LocationId = location.Id,
+                CompanyId = location.CompanyId,
+                LocationName = location.LocationName,
+                Address = location.Address,
+                City = location.City,
+                State = location.State,
+                Country = location.Country,
+                PostalCode = location.PostalCode,
+                Phone = location.Phone,
+                Email = location.Email,
+                Latitude = location.Latitude,
+                Longitude = location.Longitude,
+                IsActive = location.IsActive,
+                IsPickupLocation = location.IsPickupLocation,
+                IsReturnLocation = location.IsReturnLocation,
+                IsOffice = location.IsOffice,
+                OpeningHours = location.OpeningHours,
+                CreatedAt = location.CreatedAt,
+                UpdatedAt = location.UpdatedAt
+            };
+
+            return Ok(locationDto);
         }
         catch (Exception ex)
         {
@@ -132,7 +180,7 @@ public class CompanyLocationsController : ControllerBase
     // POST: api/CompanyLocations
     [HttpPost]
     [Authorize]
-    public async Task<ActionResult<LocationDto>> CreateCompanyLocation([FromBody] CreateLocationDto dto)
+    public async Task<ActionResult<CompanyLocationDto>> CreateCompanyLocation([FromBody] CreateCompanyLocationDto dto)
     {
         try
         {
@@ -151,8 +199,36 @@ public class CompanyLocationsController : ControllerBase
                 return BadRequest(new { message = "Company not found" });
             }
 
+            var locationId = Guid.NewGuid();
             var location = new CompanyLocation
             {
+                Id = locationId,
+                CompanyId = dto.CompanyId,
+                LocationName = dto.LocationName,
+                Address = dto.Address,
+                City = dto.City,
+                State = dto.State,
+                Country = dto.Country,
+                PostalCode = dto.PostalCode,
+                Phone = dto.Phone,
+                Email = dto.Email,
+                Latitude = dto.Latitude,
+                Longitude = dto.Longitude,
+                IsActive = dto.IsActive,
+                IsPickupLocation = dto.IsPickupLocation,
+                IsReturnLocation = dto.IsReturnLocation,
+                IsOffice = dto.IsOffice,
+                OpeningHours = dto.OpeningHours,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _context.CompanyLocations.Add(location);
+
+            // Also create corresponding Location record with the same ID
+            var locationRecord = new Location
+            {
+                Id = locationId,
                 CompanyId = dto.CompanyId,
                 LocationName = dto.LocationName,
                 Address = dto.Address,
@@ -172,12 +248,12 @@ public class CompanyLocationsController : ControllerBase
                 UpdatedAt = DateTime.UtcNow
             };
 
-            _context.CompanyLocations.Add(location);
+            _context.Locations.Add(locationRecord);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Created company location {LocationId} for company {CompanyId}", location.Id, dto.CompanyId);
+            _logger.LogInformation("Created company location {LocationId} for company {CompanyId} and synced to locations table", location.Id, dto.CompanyId);
 
-            var locationDto = new LocationDto
+            var locationDto = new CompanyLocationDto
             {
                 LocationId = location.Id,
                 CompanyId = location.CompanyId,
@@ -194,6 +270,7 @@ public class CompanyLocationsController : ControllerBase
                 IsActive = location.IsActive,
                 IsPickupLocation = location.IsPickupLocation,
                 IsReturnLocation = location.IsReturnLocation,
+                IsOffice = location.IsOffice,
                 OpeningHours = location.OpeningHours,
                 CreatedAt = location.CreatedAt,
                 UpdatedAt = location.UpdatedAt
@@ -211,7 +288,7 @@ public class CompanyLocationsController : ControllerBase
     // PUT: api/CompanyLocations/{id}
     [HttpPut("{id}")]
     [Authorize]
-    public async Task<IActionResult> UpdateCompanyLocation(Guid id, [FromBody] UpdateLocationDto dto)
+    public async Task<IActionResult> UpdateCompanyLocation(Guid id, [FromBody] UpdateCompanyLocationDto dto)
     {
         try
         {
@@ -254,12 +331,61 @@ public class CompanyLocationsController : ControllerBase
             location.IsActive = dto.IsActive;
             location.IsPickupLocation = dto.IsPickupLocation;
             location.IsReturnLocation = dto.IsReturnLocation;
+            location.IsOffice = dto.IsOffice;
             location.OpeningHours = dto.OpeningHours;
             location.UpdatedAt = DateTime.UtcNow;
 
+            // Also update corresponding Location record with the same ID
+            var locationRecord = await _context.Locations.FindAsync(id);
+            if (locationRecord != null)
+            {
+                locationRecord.CompanyId = dto.CompanyId;
+                locationRecord.LocationName = dto.LocationName;
+                locationRecord.Address = dto.Address;
+                locationRecord.City = dto.City;
+                locationRecord.State = dto.State;
+                locationRecord.Country = dto.Country;
+                locationRecord.PostalCode = dto.PostalCode;
+                locationRecord.Phone = dto.Phone;
+                locationRecord.Email = dto.Email;
+                locationRecord.Latitude = dto.Latitude;
+                locationRecord.Longitude = dto.Longitude;
+                locationRecord.IsActive = dto.IsActive;
+                locationRecord.IsPickupLocation = dto.IsPickupLocation;
+                locationRecord.IsReturnLocation = dto.IsReturnLocation;
+                locationRecord.OpeningHours = dto.OpeningHours;
+                locationRecord.UpdatedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                // If Location record doesn't exist, create it
+                locationRecord = new Location
+                {
+                    Id = id,
+                    CompanyId = dto.CompanyId,
+                    LocationName = dto.LocationName,
+                    Address = dto.Address,
+                    City = dto.City,
+                    State = dto.State,
+                    Country = dto.Country,
+                    PostalCode = dto.PostalCode,
+                    Phone = dto.Phone,
+                    Email = dto.Email,
+                    Latitude = dto.Latitude,
+                    Longitude = dto.Longitude,
+                    IsActive = dto.IsActive,
+                    IsPickupLocation = dto.IsPickupLocation,
+                    IsReturnLocation = dto.IsReturnLocation,
+                    OpeningHours = dto.OpeningHours,
+                    CreatedAt = location.CreatedAt,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.Locations.Add(locationRecord);
+            }
+
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Updated company location {LocationId}", id);
+            _logger.LogInformation("Updated company location {LocationId} and synced to locations table", id);
 
             return NoContent();
         }
@@ -295,12 +421,22 @@ public class CompanyLocationsController : ControllerBase
             var vehicleCount = await _context.Vehicles.CountAsync(v => v.LocationId == id);
             _logger.LogInformation("Deleting company location {LocationId} with {VehicleCount} vehicles assigned", id, vehicleCount);
 
-            // Delete the location - database will automatically set vehicles.location_id to NULL
+            // Update corresponding Location record with the same ID to set companyId to null
+            // This converts it from a company location to a regular pickup location
+            var locationRecord = await _context.Locations.FindAsync(id);
+            if (locationRecord != null)
+            {
+                locationRecord.CompanyId = null;
+                locationRecord.UpdatedAt = DateTime.UtcNow;
+                _logger.LogInformation("Updated location {LocationId} companyId set to null (converted to regular location)", id);
+            }
+
+            // Delete the company location - database will automatically set vehicles.location_id to NULL
             // due to OnDelete(DeleteBehavior.SetNull) foreign key constraint
             _context.CompanyLocations.Remove(location);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Deleted company location {LocationId}, {VehicleCount} vehicles updated (location_id set to NULL)", id, vehicleCount);
+            _logger.LogInformation("Deleted company location {LocationId} and updated corresponding location record (companyId set to null), {VehicleCount} vehicles updated (location_id set to NULL)", id, vehicleCount);
 
             return NoContent();
         }

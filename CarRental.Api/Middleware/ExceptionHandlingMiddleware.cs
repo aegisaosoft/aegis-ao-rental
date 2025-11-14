@@ -50,6 +50,15 @@ public class ExceptionHandlingMiddleware
 
     private static Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
+        // Check if the response has already started
+        // If it has, we can't modify headers or status code
+        if (context.Response.HasStarted)
+        {
+            // Response has already started, can't modify headers
+            // Just return without trying to write a response
+            return Task.CompletedTask;
+        }
+
         var code = HttpStatusCode.InternalServerError; // 500 if unexpected
         var message = "An error occurred while processing your request.";
 
@@ -84,9 +93,26 @@ public class ExceptionHandlingMiddleware
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         });
 
-        context.Response.ContentType = "application/json";
-        context.Response.StatusCode = (int)code;
-        return context.Response.WriteAsync(result);
+        try
+        {
+            // Set headers and status code before writing
+            // Check again if response has started (race condition protection)
+            if (!context.Response.HasStarted)
+            {
+                context.Response.ContentType = "application/json";
+                context.Response.StatusCode = (int)code;
+                return context.Response.WriteAsync(result);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Headers are read-only, response has started
+            // Can't do anything, just return
+            return Task.CompletedTask;
+        }
+
+        // If we get here, response has started between checks
+        return Task.CompletedTask;
     }
 }
 

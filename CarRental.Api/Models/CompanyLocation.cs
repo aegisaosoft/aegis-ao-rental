@@ -76,6 +76,9 @@ public class CompanyLocation
     [Column("is_return_location")]
     public bool IsReturnLocation { get; set; } = true;
 
+    [Column("is_office")]
+    public bool IsOffice { get; set; } = false;
+
     [Column("opening_hours")]
     public string? OpeningHours { get; set; }
 
