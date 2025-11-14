@@ -1617,6 +1617,7 @@ public class CreateCompanyRequest
     public bool? IsActive { get; set; }
     public string? AiIntegration { get; set; }
     public decimal? SecurityDeposit { get; set; }
+    public string? TermsOfUse { get; set; }
 }
 
 public class UpdateCompanyRequest
@@ -1648,5 +1649,6 @@ public class UpdateCompanyRequest
     public bool? IsActive { get; set; }
     public string? AiIntegration { get; set; }
     public decimal? SecurityDeposit { get; set; }
+    public string? TermsOfUse { get; set; }
 }
 

@@ -289,6 +289,7 @@ public class CompanyConfigDto
     public string AiIntegration { get; set; } = "claude";
     public decimal SecurityDeposit { get; set; } = 1000m;
     public bool IsSecurityDepositMandatory { get; set; } = false;
+    public string? TermsOfUse { get; set; }
 }
 
 // DTO for company list (admin)
