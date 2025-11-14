@@ -384,11 +384,17 @@ public class LocationsController : ControllerBase
                 return NotFound(new { message = $"Location with ID {id} not found" });
             }
 
-            // Check if user can edit locations for this company
+            // Prohibit editing locations that have a CompanyId - these must be managed via CompanyLocations endpoint
+            if (existingLocation.CompanyId.HasValue)
+            {
+                return BadRequest(new { message = "Cannot edit company locations via this endpoint. Use the CompanyLocations endpoint instead." });
+            }
+
+            // Check if user can edit locations for this company (should be null for regular locations)
             if (!CanEditCompanyLocations(existingLocation.CompanyId))
                 return Forbid();
 
-            // Verify company exists if companyId is provided and changed
+            // Verify company exists if companyId is provided and changed (should not happen for regular locations)
             if (dto.CompanyId.HasValue && existingLocation.CompanyId != dto.CompanyId)
             {
                 var companyExists = await _context.Companies.AnyAsync(c => c.Id == dto.CompanyId.Value);
@@ -398,9 +404,15 @@ public class LocationsController : ControllerBase
                 }
             }
 
+            // Prohibit setting CompanyId on regular locations via this endpoint
+            if (dto.CompanyId.HasValue)
+            {
+                return BadRequest(new { message = "Cannot assign company to regular locations via this endpoint. Use the CompanyLocations endpoint instead." });
+            }
+
             // Update properties
-            // Keep companyId as null for regular locations
-            existingLocation.CompanyId = dto.CompanyId;
+            // Keep companyId as null for regular locations (already verified above)
+            existingLocation.CompanyId = null; // Always null for regular locations
             existingLocation.LocationName = dto.LocationName;
             existingLocation.Address = dto.Address;
             existingLocation.City = dto.City;
@@ -458,7 +470,13 @@ public class LocationsController : ControllerBase
                 return NotFound(new { message = $"Location with ID {id} not found" });
             }
 
-            // Check if user can edit locations for this company
+            // Prohibit deleting locations that have a CompanyId - these must be managed via CompanyLocations endpoint
+            if (location.CompanyId.HasValue)
+            {
+                return BadRequest(new { message = "Cannot delete company locations via this endpoint. Use the CompanyLocations endpoint instead." });
+            }
+
+            // Check if user can edit locations for this company (should be null for regular locations)
             if (!CanEditCompanyLocations(location.CompanyId))
                 return Forbid();
 
