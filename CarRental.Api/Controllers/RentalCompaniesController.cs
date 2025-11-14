@@ -143,6 +143,8 @@ public class RentalCompaniesController : ControllerBase
                 CustomCss = c.CustomCss,
                 Country = c.Country,
                 BlinkKey = c.BlinkKey,
+                SecurityDeposit = c.SecurityDeposit,
+                IsSecurityDepositMandatory = c.IsSecurityDepositMandatory ?? true,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -191,6 +193,8 @@ public class RentalCompaniesController : ControllerBase
             CustomCss = company.CustomCss,
             Country = company.Country,
             BlinkKey = company.BlinkKey,
+            SecurityDeposit = company.SecurityDeposit,
+            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -239,6 +243,8 @@ public class RentalCompaniesController : ControllerBase
             CustomCss = company.CustomCss,
             Country = company.Country,
             BlinkKey = company.BlinkKey,
+            SecurityDeposit = company.SecurityDeposit,
+            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -285,6 +291,8 @@ public class RentalCompaniesController : ControllerBase
             CustomCss = createCompanyDto.CustomCss,
             Country = createCompanyDto.Country,
             Currency = CurrencyHelper.ResolveCurrency(createCompanyDto.Currency, createCompanyDto.Country),
+            SecurityDeposit = createCompanyDto.SecurityDeposit ?? 1000m,
+            IsSecurityDepositMandatory = createCompanyDto.IsSecurityDepositMandatory ?? true,
             IsActive = true
         };
 
@@ -338,6 +346,8 @@ public class RentalCompaniesController : ControllerBase
                 CustomCss = company.CustomCss,
                 Country = company.Country,
                 BlinkKey = company.BlinkKey,
+                SecurityDeposit = company.SecurityDeposit,
+                IsSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -457,6 +467,12 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;
+
+        if (updateCompanyDto.SecurityDeposit.HasValue)
+            company.SecurityDeposit = updateCompanyDto.SecurityDeposit.Value;
+
+        if (updateCompanyDto.IsSecurityDepositMandatory.HasValue)
+            company.IsSecurityDepositMandatory = updateCompanyDto.IsSecurityDepositMandatory.Value;
 
         company.UpdatedAt = DateTime.UtcNow;
 

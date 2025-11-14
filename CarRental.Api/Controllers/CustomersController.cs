@@ -61,15 +61,19 @@ public class CustomersController : ControllerBase
     /// Get all customers with optional filtering
     /// </summary>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<CustomerDto>>> GetCustomers(
+    public async Task<ActionResult<object>> GetCustomers(
         string? search = null,
         bool? isVerified = null,
         string? state = null,
         string? country = null,
+        Guid? companyId = null,
+        string? excludeRole = null,
         int page = 1,
         int pageSize = 20)
     {
-        var query = _context.Customers.AsQueryable();
+        try
+        {
+            var query = _context.Customers.AsQueryable();
 
         if (!string.IsNullOrEmpty(search))
         {
@@ -87,6 +91,21 @@ public class CustomersController : ControllerBase
 
         if (!string.IsNullOrEmpty(country))
             query = query.Where(c => c.Country == country);
+
+        // Filter by companyId if provided
+        if (companyId.HasValue)
+        {
+            query = query.Where(c => c.CompanyId == companyId.Value);
+        }
+
+        // Exclude specific role if provided (e.g., exclude 'customer' to get only employees)
+        if (!string.IsNullOrEmpty(excludeRole))
+        {
+            query = query.Where(c => c.Role != excludeRole);
+        }
+
+        // Get total count for pagination
+        var totalCount = await query.CountAsync();
 
         var customers = await query
             .OrderBy(c => c.LastName)
@@ -109,12 +128,39 @@ public class CustomersController : ControllerBase
                 StripeCustomerId = c.StripeCustomerId,
                 IsVerified = c.IsVerified,
                 CustomerType = c.CustomerType.ToString(),
+                Role = c.Role,
+                CompanyId = c.CompanyId,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
             })
             .ToListAsync();
 
-        return Ok(customers);
+            return Ok(new
+            {
+                items = customers,
+                totalCount = totalCount,
+                page = page,
+                pageSize = pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting customers. CompanyId: {CompanyId}, ExcludeRole: {ExcludeRole}, Page: {Page}, PageSize: {PageSize}", 
+                companyId, excludeRole, page, pageSize);
+            _logger.LogError("Exception details: {Message}, StackTrace: {StackTrace}", ex.Message, ex.StackTrace);
+            
+            // Check if it's a database column error
+            if (ex.Message.Contains("is_security_deposit_mandatory") || (ex.Message.Contains("column") && ex.Message.Contains("does not exist")))
+            {
+                return StatusCode(500, new { 
+                    error = "Database schema error: Missing column 'is_security_deposit_mandatory'. Please run the migration script: add_is_security_deposit_mandatory_to_companies.sql",
+                    details = ex.Message 
+                });
+            }
+            
+            return StatusCode(500, new { error = "An error occurred while retrieving customers", details = ex.Message });
+        }
     }
 
     /// <summary>
@@ -124,6 +170,7 @@ public class CustomersController : ControllerBase
     public async Task<ActionResult<object>> GetCustomersWithBookings(
         Guid companyId,
         string? search = null,
+        string? excludeRole = null,
         int page = 1,
         int pageSize = 20)
     {
@@ -136,7 +183,13 @@ public class CustomersController : ControllerBase
 
         // Query customers who have bookings
         var query = _context.Customers
-            .Where(c => customerIdsWithBookings.Contains(c.Id));
+            .Where(c => customerIdsWithBookings.Contains(c.Id) && c.CompanyId == companyId);
+
+        // Exclude specific role if provided (e.g., exclude 'customer' to get only employees)
+        if (!string.IsNullOrEmpty(excludeRole))
+        {
+            query = query.Where(c => c.Role != excludeRole);
+        }
 
         // Apply search filter if provided
         if (!string.IsNullOrEmpty(search))
@@ -172,6 +225,8 @@ public class CustomersController : ControllerBase
                 StripeCustomerId = c.StripeCustomerId,
                 IsVerified = c.IsVerified,
                 CustomerType = c.CustomerType.ToString(),
+                Role = c.Role,
+                CompanyId = c.CompanyId,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
             })
@@ -386,6 +441,27 @@ public class CustomersController : ControllerBase
         {
             if (Enum.TryParse<CustomerType>(updateCustomerDto.CustomerType, out var customerType))
                 customer.CustomerType = customerType;
+        }
+
+        // Update role if provided
+        if (!string.IsNullOrEmpty(updateCustomerDto.Role))
+        {
+            customer.Role = updateCustomerDto.Role;
+            // If role is being set to "customer", set company ID to null
+            if (updateCustomerDto.Role == "customer")
+            {
+                customer.CompanyId = null;
+            }
+        }
+
+        // Update company ID if provided (only if role is not "customer")
+        // When role is being set to an employee role, CompanyId should be provided
+        if (!string.IsNullOrEmpty(updateCustomerDto.Role) && updateCustomerDto.Role != "customer")
+        {
+            if (updateCustomerDto.CompanyId.HasValue)
+            {
+                customer.CompanyId = updateCustomerDto.CompanyId.Value;
+            }
         }
 
         customer.UpdatedAt = DateTime.UtcNow;

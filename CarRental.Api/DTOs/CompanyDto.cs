@@ -62,12 +62,16 @@ public class RentalCompanyDto
     
     public string? About { get; set; }
     
+    public string? TermsOfUse { get; set; }
+    
     public string? BookingIntegrated { get; set; }
 
     [MaxLength(3)]
     public string Currency { get; set; } = "USD";
 
     public decimal SecurityDeposit { get; set; } = 1000m;
+
+    public bool IsSecurityDepositMandatory { get; set; } = true;
     
     public string? CompanyPath { get; set; }
     
@@ -139,6 +143,8 @@ public class CreateRentalCompanyDto
     
     public string? About { get; set; }
     
+    public string? TermsOfUse { get; set; }
+    
     public string? BookingIntegrated { get; set; }
     
     public string? CompanyPath { get; set; }
@@ -167,6 +173,8 @@ public class CreateRentalCompanyDto
     public string? Currency { get; set; }
 
     public decimal? SecurityDeposit { get; set; }
+
+    public bool? IsSecurityDepositMandatory { get; set; }
 
     public string? BlinkKey { get; set; } // BlinkID license key for the company
 }
@@ -210,6 +218,8 @@ public class UpdateRentalCompanyDto
     
     public string? About { get; set; }
     
+    public string? TermsOfUse { get; set; }
+    
     public string? BookingIntegrated { get; set; }
     
     public string? CompanyPath { get; set; }
@@ -240,6 +250,8 @@ public class UpdateRentalCompanyDto
     public string? BlinkKey { get; set; } // BlinkID license key for the company
 
     public decimal? SecurityDeposit { get; set; }
+
+    public bool? IsSecurityDepositMandatory { get; set; }
     
     [MaxLength(20)]
     public string? AiIntegration { get; set; }
@@ -276,6 +288,7 @@ public class CompanyConfigDto
     public string Currency { get; set; } = "USD";
     public string AiIntegration { get; set; } = "claude";
     public decimal SecurityDeposit { get; set; } = 1000m;
+    public bool IsSecurityDepositMandatory { get; set; } = false;
 }
 
 // DTO for company list (admin)
@@ -292,6 +305,7 @@ public class CompanyListDto
     public string Currency { get; set; } = "USD";
     public string AiIntegration { get; set; } = "claude";
     public decimal SecurityDeposit { get; set; } = 1000m;
+    public bool IsSecurityDepositMandatory { get; set; } = false;
     public DateTime CreatedAt { get; set; }
 }
 
@@ -331,4 +345,5 @@ public class CompanyDetailDto
     public string Currency { get; set; } = "USD";
     public string AiIntegration { get; set; } = "claude";
     public decimal SecurityDeposit { get; set; } = 1000m;
+    public bool IsSecurityDepositMandatory { get; set; } = true;
 }

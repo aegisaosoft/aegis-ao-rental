@@ -139,4 +139,8 @@ public class UpdateCustomerDto
     public string? PostalCode { get; set; }
     
     public string? CustomerType { get; set; }
+    
+    public string? Role { get; set; }
+    
+    public Guid? CompanyId { get; set; }
 }

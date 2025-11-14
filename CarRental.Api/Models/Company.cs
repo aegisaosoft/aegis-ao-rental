@@ -81,6 +81,9 @@ public class Company
     [Column("about", TypeName = "jsonb")]
     public string? About { get; set; }
 
+    [Column("terms_of_use", TypeName = "jsonb")]
+    public string? TermsOfUse { get; set; }
+
     [Column("booking_integrated")]
     public string? BookingIntegrated { get; set; }
 
@@ -121,6 +124,9 @@ public class Company
 
     [Column("security_deposit", TypeName = "decimal(10,2)")]
     public decimal SecurityDeposit { get; set; } = 1000m;
+
+    [Column("is_security_deposit_mandatory")]
+    public bool? IsSecurityDepositMandatory { get; set; } = true;
 
     [MaxLength(10)]
     [Column("language")]

@@ -255,6 +255,8 @@ public class VehiclesController : ControllerBase
     /// <param name="licensePlate">Filter by license plate</param>
     /// <param name="minPrice">Minimum daily rate</param>
     /// <param name="maxPrice">Maximum daily rate</param>
+    /// <param name="availableFrom">Start date for availability check (pickup date)</param>
+    /// <param name="availableTo">End date for availability check (return date)</param>
     /// <param name="page">Page number</param>
     /// <param name="pageSize">Page size</param>
     /// <returns>List of vehicles</returns>
@@ -272,13 +274,15 @@ public class VehiclesController : ControllerBase
         [FromQuery] string? location = null,
         [FromQuery] decimal? minPrice = null,
         [FromQuery] decimal? maxPrice = null,
+        [FromQuery] DateTime? availableFrom = null,
+        [FromQuery] DateTime? availableTo = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
         try
         {
-            _logger.LogInformation("GetVehicles called with companyId={CompanyId}, status={Status}, pageSize={PageSize}", 
-                companyId, status, pageSize);
+            _logger.LogInformation("GetVehicles called with companyId={CompanyId}, status={Status}, availableFrom={AvailableFrom}, availableTo={AvailableTo}, pageSize={PageSize}", 
+                companyId, status, availableFrom, availableTo, pageSize);
 
             // Query vehicles with joins to vehicle_model (Model loaded separately)
             var query = _context.Vehicles
@@ -327,6 +331,73 @@ public class VehiclesController : ControllerBase
             {
                 query = query.Where(v => v.LicensePlate != null && 
                     EF.Functions.ILike(v.LicensePlate, $"%{licensePlate}%"));
+            }
+
+            // Filter out vehicles that are booked for the requested dates
+            // A vehicle is unavailable if it has a booking that overlaps with the requested date range
+            // and the booking status is one that makes the vehicle unavailable
+            if (availableFrom.HasValue && availableTo.HasValue)
+            {
+                var unavailableStatuses = new[] { BookingStatus.Pending, BookingStatus.Confirmed, BookingStatus.PickedUp };
+                
+                // Normalize request dates: pickup at start of day, return at end of day
+                // This ensures we catch all bookings that overlap with the requested dates
+                var requestPickupDateStart = availableFrom.Value.Date; // Start of pickup day (00:00:00)
+                var requestReturnDateEnd = availableTo.Value.Date.AddDays(1); // Start of day after return (00:00:00, exclusive)
+                
+                _logger.LogInformation("Checking vehicle availability for dates: Pickup={RequestPickupDateStart:yyyy-MM-dd} to Return={RequestReturnDateEnd:yyyy-MM-dd}", 
+                    requestPickupDateStart, requestReturnDateEnd.AddDays(-1));
+                
+                // Get vehicle IDs that have overlapping bookings
+                // Standard overlap logic: Two date ranges [A_start, A_end] and [B_start, B_end] overlap if:
+                // A_start <= B_end AND A_end >= B_start
+                // For car rentals: A booking from Jan 14-15 means vehicle is unavailable from Jan 14 00:00:00 to Jan 15 23:59:59
+                // So we need to check if booking's date range overlaps with requested date range
+                // Request: Jan 14-21 (pickup Jan 14 00:00:00, return Jan 21 23:59:59)
+                // Booking: Jan 14-15 (pickup Jan 14 00:00:00, return Jan 15 23:59:59)
+                // Overlap check: requestPickupDateStart <= bookingReturnDate AND bookingPickupDate <= requestReturnDateEnd
+                // Since ReturnDate might be stored as start of day (Jan 15 00:00:00), we need to treat it as end of day
+                // So we check: requestPickupDateStart <= (bookingReturnDate + 1 day) AND bookingPickupDate < (requestReturnDateEnd)
+                // Which simplifies to: requestPickupDateStart <= bookingReturnDate.AddDays(1) AND bookingPickupDate < requestReturnDateEnd
+                // But we can't use AddDays in EF Core easily, so we'll use:
+                // bookingReturnDate >= requestPickupDateStart AND bookingPickupDate < requestReturnDateEnd
+                // This works because if ReturnDate is Jan 15 00:00:00, and requestPickupDateStart is Jan 14 00:00:00,
+                // then bookingReturnDate (Jan 15) >= requestPickupDateStart (Jan 14) is true
+                var unavailableVehicleIds = await _context.Bookings
+                    .Where(b => unavailableStatuses.Contains(b.Status) &&
+                                // Booking's pickup date is before the end of requested return date
+                                b.PickupDate < requestReturnDateEnd &&
+                                // Booking's return date is on or after the start of requested pickup date
+                                // Note: Even if ReturnDate is stored as start of day (e.g., Jan 15 00:00:00),
+                                // this comparison works because Jan 15 00:00:00 >= Jan 14 00:00:00 is true
+                                b.ReturnDate >= requestPickupDateStart)
+                    .Select(b => new { b.VehicleId, b.PickupDate, b.ReturnDate, b.Status })
+                    .ToListAsync();
+
+                var vehicleIds = unavailableVehicleIds.Select(b => b.VehicleId).Distinct().ToList();
+
+                _logger.LogInformation("Found {Count} bookings with overlapping dates. Vehicle IDs: {VehicleIds}", 
+                    unavailableVehicleIds.Count, string.Join(", ", vehicleIds));
+                
+                if (unavailableVehicleIds.Any())
+                {
+                    _logger.LogInformation("Overlapping bookings details: {Details}", 
+                        string.Join("; ", unavailableVehicleIds.Select(b => 
+                            $"VehicleId={b.VehicleId}, Pickup={b.PickupDate:yyyy-MM-dd}, Return={b.ReturnDate:yyyy-MM-dd}, Status={b.Status}")));
+                }
+
+                // Exclude vehicles with overlapping bookings
+                if (vehicleIds.Any())
+                {
+                    query = query.Where(v => !vehicleIds.Contains(v.Id));
+                    _logger.LogInformation("Filtered out {Count} vehicles due to date conflicts for dates {AvailableFrom:yyyy-MM-dd} to {AvailableTo:yyyy-MM-dd}", 
+                        vehicleIds.Count, requestPickupDateStart, availableTo.Value.Date);
+                }
+                else
+                {
+                    _logger.LogInformation("No vehicles filtered out - no overlapping bookings found for dates {AvailableFrom:yyyy-MM-dd} to {AvailableTo:yyyy-MM-dd}", 
+                        requestPickupDateStart, availableTo.Value.Date);
+                }
             }
 
             // Note: categoryId filtering will be done after fetching vehicles

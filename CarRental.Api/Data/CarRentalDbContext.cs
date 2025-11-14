@@ -58,6 +58,18 @@ public class CarRentalDbContext : DbContext
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
 
+        // TEMPORARY: Ignore IsSecurityDepositMandatory until migration is run
+        // TODO: Remove .Ignore() and uncomment the property configuration after running:
+        // add_is_security_deposit_mandatory_to_companies.sql
+        modelBuilder.Entity<Company>()
+            .Ignore(e => e.IsSecurityDepositMandatory);
+        
+        // Uncomment this after running the migration:
+        // modelBuilder.Entity<Company>()
+        //     .Property(e => e.IsSecurityDepositMandatory)
+        //     .HasDefaultValue(true)
+        //     .IsRequired(false);
+
         modelBuilder.Entity<Customer>()
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");

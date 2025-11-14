@@ -117,7 +117,8 @@ public class CompaniesController : ControllerBase
                 isActive = c.IsActive,
                 createdAt = c.CreatedAt,
                 updatedAt = c.UpdatedAt,
-                securityDeposit = c.SecurityDeposit
+                securityDeposit = c.SecurityDeposit,
+                isSecurityDepositMandatory = c.IsSecurityDepositMandatory ?? true
             });
 
             return Ok(result);
@@ -177,7 +178,8 @@ public class CompaniesController : ControllerBase
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
-                securityDeposit = company.SecurityDeposit
+                securityDeposit = company.SecurityDeposit,
+                isSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true
             };
 
             return Ok(result);
@@ -255,6 +257,7 @@ public class CompaniesController : ControllerBase
                 Motto = request.Motto,
                 MottoDescription = request.MottoDescription,
                 About = request.About,
+                TermsOfUse = request.TermsOfUse,
                 Website = request.Website,
                 CustomCss = request.CustomCss,
                 VideoLink = request.VideoLink,
@@ -323,7 +326,8 @@ public class CompaniesController : ControllerBase
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
-                securityDeposit = company.SecurityDeposit
+                securityDeposit = company.SecurityDeposit,
+                isSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true
             };
 
             return CreatedAtAction(nameof(GetCompany), new { id = company.Id }, result);
@@ -423,6 +427,9 @@ public class CompaniesController : ControllerBase
             if (request.About != null)
                 company.About = request.About;
 
+            if (request.TermsOfUse != null)
+                company.TermsOfUse = request.TermsOfUse;
+
             if (request.Website != null)
                 company.Website = request.Website;
 
@@ -517,7 +524,8 @@ public class CompaniesController : ControllerBase
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
-                securityDeposit = company.SecurityDeposit
+                securityDeposit = company.SecurityDeposit,
+                isSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true
             };
 
             return Ok(result);
@@ -1549,6 +1557,7 @@ public class CompaniesController : ControllerBase
             Motto = company.Motto,
             MottoDescription = company.MottoDescription,
             About = company.About,
+            TermsOfUse = company.TermsOfUse,
             VideoLink = company.VideoLink,
             BannerLink = company.BannerLink,
             BackgroundLink = company.BackgroundLink,

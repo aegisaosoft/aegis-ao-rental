@@ -93,6 +93,16 @@ public class StandardizedResponseFilter : IActionFilter
         else if (context.Result is StatusCodeResult statusCodeResult)
         {
             statusCode = statusCodeResult.StatusCode;
+            // For 204 No Content, don't wrap - return as-is
+            if (statusCode == 204)
+            {
+                return;
+            }
+        }
+        else if (context.Result is NoContentResult)
+        {
+            // NoContentResult should return 204 with no body - don't wrap it
+            return;
         }
         else if (context.Result is NotFoundObjectResult notFoundObjectResult)
         {

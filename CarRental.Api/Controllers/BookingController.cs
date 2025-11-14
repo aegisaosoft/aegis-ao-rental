@@ -428,12 +428,6 @@ public class BookingController : ControllerBase
                 return BadRequest("Booking data is incomplete for this token.");
             }
 
-            var defaultSecurityDeposit = bookingToken.Company?.SecurityDeposit ?? 1000m;
-            if (bookingData.SecurityDeposit <= 0)
-            {
-                bookingData.SecurityDeposit = defaultSecurityDeposit;
-            }
-
             // Debug info before payment processing
             _logger.LogInformation(
                 "[Booking] Preparing payment. BookingTokenId: {BookingTokenId}, Amount: {Amount}, CompanyId: {CompanyId}, VehicleId: {VehicleId}",
@@ -474,7 +468,7 @@ public class BookingController : ControllerBase
                 InsuranceAmount = bookingData.InsuranceAmount,
                 AdditionalFees = bookingData.AdditionalFees,
                 TotalAmount = bookingData.TotalAmount,
-                SecurityDeposit = bookingData.SecurityDeposit > 0 ? bookingData.SecurityDeposit : 1000m,
+                SecurityDeposit = 0m,
                 Status = BookingStatus.Pending,
                 Notes = processDto.CustomerNotes
             };
@@ -525,19 +519,8 @@ public class BookingController : ControllerBase
                 StripePaymentIntentId = paymentIntent.Id,
                 StripePaymentMethodId = processDto.PaymentMethodId,
                 Status = "succeeded",
-                ProcessedAt = DateTime.UtcNow,
-                SecurityDepositAmount = bookingData.SecurityDeposit > 0 ? bookingData.SecurityDeposit : null,
-                SecurityDepositStatus = bookingData.SecurityDeposit > 0 ? "scheduled" : null
+                ProcessedAt = DateTime.UtcNow
             };
-
-            if (bookingData.SecurityDeposit > 0)
-            {
-                _logger.LogInformation(
-                    "[Booking] Scheduled security deposit authorization of {SecurityDeposit} for reservation {ReservationId} (pickup on {PickupDate:yyyy-MM-dd}).",
-                    bookingData.SecurityDeposit,
-                    reservation.Id,
-                    reservation.PickupDate);
-            }
 
             _context.Payments.Add(payment);
 
@@ -560,9 +543,6 @@ public class BookingController : ControllerBase
             // Mark booking token as used
             bookingToken.IsUsed = true;
             bookingToken.UsedAt = DateTime.UtcNow;
-
-            // Update vehicle status if needed
-            bookingToken.Vehicle.Status = VehicleStatus.Rented;
 
             await _context.SaveChangesAsync();
 
@@ -1022,7 +1002,7 @@ public class BookingController : ControllerBase
                     : "Unknown Vehicle",
                 LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
-                CompanyName = reservation.Company.CompanyName,
+                CompanyName = reservation.Company?.CompanyName ?? "",
                 BookingNumber = reservation.BookingNumber,
                 AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
@@ -1108,7 +1088,7 @@ public class BookingController : ControllerBase
                 InsuranceAmount = createReservationDto.InsuranceAmount,
                 AdditionalFees = createReservationDto.AdditionalFees,
                 TotalAmount = totalAmount,
-                SecurityDeposit = createReservationDto.SecurityDeposit ?? company.SecurityDeposit,
+                SecurityDeposit = 0m,
                 Notes = createReservationDto.Notes
             };
 
@@ -1137,7 +1117,7 @@ public class BookingController : ControllerBase
                     : "Unknown Vehicle",
                 LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
-                CompanyName = reservation.Company.CompanyName,
+                CompanyName = reservation.Company?.CompanyName ?? "",
                 BookingNumber = reservation.BookingNumber,
                 AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
@@ -1261,7 +1241,7 @@ public class BookingController : ControllerBase
                     : "Unknown Vehicle",
                 LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
-                CompanyName = reservation.Company.CompanyName,
+                CompanyName = reservation.Company?.CompanyName ?? "",
                 BookingNumber = reservation.BookingNumber,
                 AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
@@ -1316,6 +1296,7 @@ public class BookingController : ControllerBase
                 .Include(r => r.Vehicle)
                     .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
+                .Include(r => r.Payments)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (reservation == null)
@@ -1336,6 +1317,117 @@ public class BookingController : ControllerBase
                 var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
                 if (vehicle != null)
                     vehicle.Status = VehicleStatus.Rented;
+
+                // Charge security deposit when booking status changes to PickedUp
+                if (reservation.SecurityDeposit == 0)
+                {
+                    var securityDepositAmount = reservation.Company?.SecurityDeposit ?? 1000m;
+                    
+                    if (securityDepositAmount > 0 && !string.IsNullOrEmpty(reservation.Customer.StripeCustomerId))
+                    {
+                        try
+                        {
+                            // Get the payment method from the original booking payment
+                            var originalPayment = reservation.Payments
+                                .Where(p => p.Status == "succeeded" && !string.IsNullOrEmpty(p.StripePaymentMethodId))
+                                .OrderByDescending(p => p.CreatedAt)
+                                .FirstOrDefault();
+
+                            string? paymentMethodId = originalPayment?.StripePaymentMethodId;
+
+                            if (!string.IsNullOrEmpty(paymentMethodId))
+                            {
+                                // Create payment intent for security deposit
+                                var securityDepositIntent = await _stripeService.CreatePaymentIntentAsync(
+                                    securityDepositAmount,
+                                    "USD",
+                                    reservation.Customer.StripeCustomerId,
+                                    paymentMethodId,
+                                    metadata: new Dictionary<string, string>
+                                    {
+                                        { "booking_id", reservation.Id.ToString() },
+                                        { "payment_type", "security_deposit" },
+                                        { "booking_number", reservation.BookingNumber }
+                                    },
+                                    captureImmediately: true);
+
+                                // Confirm the payment intent
+                                var confirmedIntent = await _stripeService.ConfirmPaymentIntentAsync(securityDepositIntent.Id);
+
+                                if (confirmedIntent.Status == "succeeded")
+                                {
+                                    // Update booking with security deposit amount
+                                    reservation.SecurityDeposit = securityDepositAmount;
+
+                                    // Create or update payment record for security deposit
+                                    var securityDepositPayment = reservation.Payments
+                                        .FirstOrDefault(p => p.PaymentType == "security_deposit");
+
+                                    if (securityDepositPayment == null)
+                                    {
+                                        securityDepositPayment = new Payment
+                                        {
+                                            CustomerId = reservation.CustomerId,
+                                            CompanyId = reservation.CompanyId,
+                                            ReservationId = reservation.Id,
+                                            Amount = securityDepositAmount,
+                                            Currency = "USD",
+                                            PaymentType = "security_deposit",
+                                            PaymentMethod = "card",
+                                            StripePaymentIntentId = confirmedIntent.Id,
+                                            StripePaymentMethodId = paymentMethodId,
+                                            Status = "succeeded",
+                                            ProcessedAt = DateTime.UtcNow,
+                                            SecurityDepositAmount = securityDepositAmount,
+                                            SecurityDepositStatus = "captured",
+                                            SecurityDepositPaymentIntentId = confirmedIntent.Id,
+                                            SecurityDepositChargeId = confirmedIntent.LatestChargeId,
+                                            SecurityDepositAuthorizedAt = DateTime.UtcNow,
+                                            SecurityDepositCapturedAt = DateTime.UtcNow
+                                        };
+                                        _context.Payments.Add(securityDepositPayment);
+                                    }
+                                    else
+                                    {
+                                        securityDepositPayment.SecurityDepositAmount = securityDepositAmount;
+                                        securityDepositPayment.SecurityDepositStatus = "captured";
+                                        securityDepositPayment.SecurityDepositPaymentIntentId = confirmedIntent.Id;
+                                        securityDepositPayment.SecurityDepositChargeId = confirmedIntent.LatestChargeId;
+                                        securityDepositPayment.SecurityDepositAuthorizedAt = DateTime.UtcNow;
+                                        securityDepositPayment.SecurityDepositCapturedAt = DateTime.UtcNow;
+                                        securityDepositPayment.Status = "succeeded";
+                                        securityDepositPayment.ProcessedAt = DateTime.UtcNow;
+                                    }
+
+                                    _logger.LogInformation(
+                                        "[Booking] Security deposit of {Amount} charged for booking {BookingId} when status changed to PickedUp",
+                                        securityDepositAmount,
+                                        reservation.Id);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning(
+                                        "[Booking] Failed to charge security deposit for booking {BookingId}. Payment intent status: {Status}",
+                                        reservation.Id,
+                                        confirmedIntent.Status);
+                                }
+                            }
+                            else
+                            {
+                                _logger.LogWarning(
+                                    "[Booking] No payment method found for booking {BookingId} to charge security deposit",
+                                    reservation.Id);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex,
+                                "[Booking] Error charging security deposit for booking {BookingId} when status changed to PickedUp",
+                                reservation.Id);
+                            // Continue with status update even if security deposit charge fails
+                        }
+                    }
+                }
             }
             else if (status == "Returned" || status == "Cancelled")
             {
@@ -1358,7 +1450,7 @@ public class BookingController : ControllerBase
                     : "Unknown Vehicle",
                 LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
-                CompanyName = reservation.Company.CompanyName,
+                CompanyName = reservation.Company?.CompanyName ?? "",
                 BookingNumber = reservation.BookingNumber,
                 AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
@@ -1440,7 +1532,7 @@ public class BookingController : ControllerBase
                     : "Unknown Vehicle",
                 LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
-                CompanyName = reservation.Company.CompanyName,
+                CompanyName = reservation.Company?.CompanyName ?? "",
                 BookingNumber = reservation.BookingNumber,
                 AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
@@ -1505,7 +1597,7 @@ public class BookingController : ControllerBase
                     : "Unknown Vehicle",
                 LicensePlate = reservation.Vehicle?.LicensePlate ?? "",
                 CompanyId = reservation.CompanyId,
-                CompanyName = reservation.Company.CompanyName,
+                CompanyName = reservation.Company?.CompanyName ?? "",
                 BookingNumber = reservation.BookingNumber,
                 AltBookingNumber = reservation.AltBookingNumber,
                 PickupDate = reservation.PickupDate,
