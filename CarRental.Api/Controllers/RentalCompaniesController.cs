@@ -509,6 +509,44 @@ public class RentalCompaniesController : ControllerBase
     }
 
     /// <summary>
+    /// Clear the About field for a rental company
+    /// </summary>
+    [HttpDelete("{id}/about")]
+    [ActionName("ClearAbout")]
+    public async Task<IActionResult> ClearRentalCompanyAbout(Guid id)
+    {
+        try
+        {
+            var company = await _context.Companies.FindAsync(id);
+
+            if (company == null)
+            {
+                return NotFound();
+            }
+
+            company.About = null;
+            company.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("About field cleared for rental company {CompanyId}", id);
+
+            return Ok(new
+            {
+                id = company.Id,
+                companyName = company.CompanyName,
+                about = (string?)null,
+                updatedAt = company.UpdatedAt
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error clearing about field for rental company {CompanyId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
     /// Delete a rental company
     /// </summary>
     [HttpDelete("{id}")]
