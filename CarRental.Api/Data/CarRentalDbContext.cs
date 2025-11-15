@@ -48,6 +48,26 @@ public class CarRentalDbContext : DbContext
     public DbSet<Model> Models { get; set; }
     public DbSet<VehicleModel> VehicleModels { get; set; }
     public DbSet<Setting> Settings { get; set; }
+    
+    // Stripe & Payment Tables
+    public DbSet<Currency> Currencies { get; set; }
+    public DbSet<StripeTransfer> StripeTransfers { get; set; }
+    public DbSet<StripePayoutRecord> StripePayoutRecords { get; set; }
+    public DbSet<StripeBalanceTransaction> StripeBalanceTransactions { get; set; }
+    public DbSet<StripeOnboardingSession> StripeOnboardingSessions { get; set; }
+    public DbSet<StripeAccountCapability> StripeAccountCapabilities { get; set; }
+    public DbSet<WebhookEvent> WebhookEvents { get; set; }
+    public DbSet<RefundRecord> RefundRecords { get; set; }
+    public DbSet<DisputeRecord> DisputeRecords { get; set; }
+    public DbSet<DisputeEvidenceFile> DisputeEvidenceFiles { get; set; }
+    
+    // Analytics Tables
+    public DbSet<RefundAnalytics> RefundAnalytics { get; set; }
+    public DbSet<DisputeAnalytics> DisputeAnalytics { get; set; }
+    
+    // Insurance & License Tables
+    public DbSet<AutoInsuranceCard> AutoInsuranceCards { get; set; }
+    public DbSet<LicenseScan> LicenseScans { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -720,5 +740,263 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.HasIndex(s => s.Key).IsUnique();
         });
+
+        // Configure Currency entity
+        modelBuilder.Entity<Currency>(entity =>
+        {
+            entity.HasKey(e => e.Code);
+            entity.Property(e => e.Code).HasMaxLength(3).IsRequired();
+            entity.Property(e => e.Name).IsRequired();
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()");
+        });
+
+        // Configure StripeTransfer entity
+        modelBuilder.Entity<StripeTransfer>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.Amount).HasPrecision(10, 2);
+            entity.Property(e => e.PlatformFee).HasPrecision(10, 2);
+            entity.Property(e => e.NetAmount).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => e.StripeTransferId).IsUnique();
+            entity.HasIndex(e => e.BookingId);
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.Status);
+        });
+
+        // Configure StripePayoutRecord entity
+        modelBuilder.Entity<StripePayoutRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.Amount).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => e.StripePayoutId).IsUnique();
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.Status);
+        });
+
+        // Configure StripeBalanceTransaction entity
+        modelBuilder.Entity<StripeBalanceTransaction>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.Amount).HasPrecision(10, 2);
+            entity.Property(e => e.Net).HasPrecision(10, 2);
+            entity.Property(e => e.Fee).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => e.StripeBalanceTransactionId).IsUnique();
+            entity.HasIndex(e => e.CompanyId);
+        });
+
+        // Configure StripeOnboardingSession entity
+        modelBuilder.Entity<StripeOnboardingSession>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.Completed);
+        });
+
+        // Configure StripeAccountCapability entity
+        modelBuilder.Entity<StripeAccountCapability>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => new { e.CompanyId, e.CapabilityName }).IsUnique();
+            entity.HasIndex(e => e.Status);
+        });
+
+        // Configure WebhookEvent entity
+        modelBuilder.Entity<WebhookEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => e.StripeEventId).IsUnique();
+            entity.HasIndex(e => e.EventType);
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.BookingId);
+            entity.HasIndex(e => e.Processed);
+        });
+
+        // Configure RefundRecord entity
+        modelBuilder.Entity<RefundRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.Amount).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => e.StripeRefundId).IsUnique();
+            entity.HasIndex(e => e.BookingId);
+        });
+
+        // Configure DisputeRecord entity
+        modelBuilder.Entity<DisputeRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.Amount).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => e.StripeDisputeId).IsUnique();
+            entity.HasIndex(e => e.BookingId);
+            entity.HasIndex(e => e.Status);
+        });
+
+        // Configure DisputeEvidenceFile entity
+        modelBuilder.Entity<DisputeEvidenceFile>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.HasIndex(e => e.DisputeId);
+            
+            entity.HasOne(e => e.Dispute)
+                .WithMany(d => d.EvidenceFiles)
+                .HasForeignKey(e => e.DisputeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure RefundAnalytics entity
+        modelBuilder.Entity<RefundAnalytics>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.TotalRefundAmount).HasPrecision(10, 2);
+            entity.Property(e => e.SecurityDepositRefundAmount).HasPrecision(10, 2);
+            entity.Property(e => e.RentalAdjustmentAmount).HasPrecision(10, 2);
+            entity.Property(e => e.CancellationRefundAmount).HasPrecision(10, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => new { e.CompanyId, e.PeriodStart, e.PeriodEnd }).IsUnique();
+        });
+
+        // Configure DisputeAnalytics entity
+        modelBuilder.Entity<DisputeAnalytics>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.TotalDisputedAmount).HasPrecision(10, 2);
+            entity.Property(e => e.TotalLostAmount).HasPrecision(10, 2);
+            entity.Property(e => e.AvgResolutionDays).HasPrecision(5, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+            entity.HasIndex(e => new { e.CompanyId, e.PeriodStart, e.PeriodEnd }).IsUnique();
+        });
+
+        // Configure AutoInsuranceCard entity
+        modelBuilder.Entity<AutoInsuranceCard>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.OcrConfidence).HasPrecision(5, 2);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.HasIndex(e => e.CustomerId);
+            entity.HasIndex(e => e.ExpirationDate);
+            entity.HasIndex(e => e.PolicyNumber);
+            
+            entity.HasOne(e => e.Customer)
+                .WithMany()
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure LicenseScan entity
+        modelBuilder.Entity<LicenseScan>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.ScanDate).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.ValidationErrors).HasColumnType("text[]");
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.CustomerId);
+            entity.HasIndex(e => e.CustomerLicenseId);
+            entity.HasIndex(e => new { e.CompanyId, e.ScanDate });
+            
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+            
+            entity.HasOne(e => e.Customer)
+                .WithMany()
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
+            
+            entity.HasOne(e => e.CustomerLicense)
+                .WithMany()
+                .HasForeignKey(e => e.CustomerLicenseId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // Update Company configuration for Stripe properties
+        modelBuilder.Entity<Company>()
+            .Property(e => e.PlatformFeePercentage)
+            .HasPrecision(5, 2);
+
+        modelBuilder.Entity<Company>()
+            .Property(e => e.StripeRequirementsCurrentlyDue)
+            .HasColumnType("text[]");
+
+        modelBuilder.Entity<Company>()
+            .Property(e => e.StripeRequirementsEventuallyDue)
+            .HasColumnType("text[]");
+
+        modelBuilder.Entity<Company>()
+            .Property(e => e.StripeRequirementsPastDue)
+            .HasColumnType("text[]");
+
+        // Update Booking configuration for new properties
+        modelBuilder.Entity<Booking>()
+            .Property(e => e.PlatformFeeAmount)
+            .HasPrecision(10, 2);
+
+        modelBuilder.Entity<Booking>()
+            .Property(e => e.NetAmount)
+            .HasPrecision(10, 2);
+
+        modelBuilder.Entity<Booking>()
+            .HasIndex(e => e.PaymentIntentId);
+
+        modelBuilder.Entity<Booking>()
+            .HasIndex(e => e.SetupIntentId);
+
+        modelBuilder.Entity<Booking>()
+            .HasIndex(e => e.StripeCustomerId);
+
+        modelBuilder.Entity<Booking>()
+            .HasIndex(e => e.StripeTransferId);
+
+        modelBuilder.Entity<Booking>()
+            .HasIndex(e => e.SecurityDepositPaymentIntentId);
+
+        // Update Payment configuration for new properties
+        modelBuilder.Entity<Payment>()
+            .Property(e => e.PlatformFeeAmount)
+            .HasPrecision(10, 2);
+
+        modelBuilder.Entity<Payment>()
+            .HasIndex(e => e.DestinationAccountId);
+
+        modelBuilder.Entity<Payment>()
+            .HasIndex(e => e.TransferGroup);
+
+        modelBuilder.Entity<Payment>()
+            .HasIndex(e => e.StripeTransferId);
+
+        // Update CustomerLicense configuration for CompanyId
+        modelBuilder.Entity<CustomerLicense>()
+            .HasOne(cl => cl.Company)
+            .WithMany()
+            .HasForeignKey(cl => cl.CompanyId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<CustomerLicense>()
+            .HasIndex(cl => cl.CompanyId);
     }
 }

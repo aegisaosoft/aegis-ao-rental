@@ -19,9 +19,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
+using CarRental.Api.DTOs.Stripe;
 using CarRental.Api.Models;
 using CarRental.Api.Services;
 using CarRental.Api.Helpers;
+using Stripe;
 
 namespace CarRental.Api.Controllers;
 
@@ -33,17 +35,20 @@ public class RentalCompaniesController : ControllerBase
     private readonly IStripeService _stripeService;
     private readonly ILogger<RentalCompaniesController> _logger;
     private readonly IEncryptionService _encryptionService;
+    private readonly IStripeConnectService _stripeConnectService;
 
     public RentalCompaniesController(
         CarRentalDbContext context, 
         IStripeService stripeService, 
         ILogger<RentalCompaniesController> logger,
-        IEncryptionService encryptionService)
+        IEncryptionService encryptionService,
+        IStripeConnectService stripeConnectService)
     {
         _context = context;
         _stripeService = stripeService;
         _logger = logger;
         _encryptionService = encryptionService;
+        _stripeConnectService = stripeConnectService;
     }
 
     private async Task<string?> ResolveStripeAccountIdAsync(Company company)
@@ -132,6 +137,7 @@ public class RentalCompaniesController : ControllerBase
                 Texts = c.Texts,
                 BackgroundLink = c.BackgroundLink,
                 About = c.About,
+                TermsOfUse = c.TermsOfUse,
                 BookingIntegrated = c.BookingIntegrated,
                 CompanyPath = c.CompanyPath,
                 Subdomain = c.Subdomain,
@@ -182,6 +188,7 @@ public class RentalCompaniesController : ControllerBase
             Texts = company.Texts,
             BackgroundLink = company.BackgroundLink,
             About = company.About,
+            TermsOfUse = company.TermsOfUse,
             BookingIntegrated = company.BookingIntegrated,
             CompanyPath = company.CompanyPath,
             Subdomain = company.Subdomain,
@@ -232,6 +239,7 @@ public class RentalCompaniesController : ControllerBase
             Texts = company.Texts,
             BackgroundLink = company.BackgroundLink,
             About = company.About,
+            TermsOfUse = company.TermsOfUse,
             BookingIntegrated = company.BookingIntegrated,
             CompanyPath = company.CompanyPath,
             Subdomain = company.Subdomain,
@@ -306,7 +314,8 @@ public class RentalCompaniesController : ControllerBase
             {
                 var stripeAccount = await _stripeService.CreateConnectedAccountAsync(
                     company.Email, 
-                    "US"); // Default to US, country can be specified per location
+                    "individual",
+                    createCompanyDto.Country ?? "US"); // Use country from DTO or default to US
                 
                 company.StripeAccountId = _encryptionService.Encrypt(stripeAccount.Id);
                 _context.Companies.Update(company);
@@ -335,6 +344,7 @@ public class RentalCompaniesController : ControllerBase
                 Texts = company.Texts,
                 BackgroundLink = company.BackgroundLink,
                 About = company.About,
+                TermsOfUse = company.TermsOfUse,
                 BookingIntegrated = company.BookingIntegrated,
                 CompanyPath = company.CompanyPath,
                 Subdomain = company.Subdomain,
@@ -426,6 +436,9 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.About != null)
             company.About = updateCompanyDto.About;
 
+        if (updateCompanyDto.TermsOfUse != null)
+            company.TermsOfUse = updateCompanyDto.TermsOfUse;
+
         if (updateCompanyDto.BookingIntegrated != null)
             company.BookingIntegrated = updateCompanyDto.BookingIntegrated;
 
@@ -489,7 +502,7 @@ public class RentalCompaniesController : ControllerBase
                 {
                     try
                     {
-                        await _stripeService.GetConnectedAccountAsync(stripeAccountId);
+                        await _stripeService.GetAccountAsync(stripeAccountId);
                         // Additional Stripe account updates can be added here
                     }
                     catch (Exception ex)
@@ -542,6 +555,84 @@ public class RentalCompaniesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error clearing about field for rental company {CompanyId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Update only the Terms of Use field for a rental company
+    /// </summary>
+    [HttpPut("{id}/terms-of-use")]
+    public async Task<IActionResult> UpdateRentalCompanyTermsOfUse(Guid id, [FromBody] UpdateTermsOfUseDto dto)
+    {
+        try
+        {
+            var company = await _context.Companies.FindAsync(id);
+
+            if (company == null)
+            {
+                return NotFound();
+            }
+
+            // Allow setting to null by checking if the property was provided
+            // If TermsOfUse is explicitly null in the request, clear it
+            // If it's a string (empty or with content), set it
+            company.TermsOfUse = dto.TermsOfUse;
+            company.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Terms of Use updated for rental company {CompanyId}", id);
+
+            return Ok(new
+            {
+                id = company.Id,
+                companyName = company.CompanyName,
+                termsOfUse = company.TermsOfUse,
+                updatedAt = company.UpdatedAt
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating Terms of Use for rental company {CompanyId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Clear the Terms of Use field for a rental company
+    /// </summary>
+    [HttpDelete("{id}/terms-of-use")]
+    [ActionName("ClearTermsOfUse")]
+    public async Task<IActionResult> ClearRentalCompanyTermsOfUse(Guid id)
+    {
+        try
+        {
+            var company = await _context.Companies.FindAsync(id);
+
+            if (company == null)
+            {
+                return NotFound();
+            }
+
+            company.TermsOfUse = null;
+            company.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Terms of Use cleared for rental company {CompanyId}", id);
+
+            return Ok(new
+            {
+                id = company.Id,
+                companyName = company.CompanyName,
+                termsOfUse = (string?)null,
+                updatedAt = company.UpdatedAt
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error clearing Terms of Use for rental company {CompanyId}", id);
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
@@ -855,44 +946,57 @@ public class RentalCompaniesController : ControllerBase
     }
 
     /// <summary>
-    /// Setup Stripe Connect account for company
+    /// Create Stripe Connect account for company
     /// </summary>
-    [HttpPost("{id}/stripe/setup")]
-    public async Task<ActionResult<object>> SetupStripeAccount(Guid id)
+    [HttpPost("{id}/stripe/connect/create")]
+    public async Task<ActionResult<object>> CreateConnectAccount(Guid id)
     {
-        var company = await _context.Companies.FindAsync(id);
-        if (company == null)
-            return NotFound();
+        var (success, accountId, error) = await _stripeConnectService.CreateConnectedAccountAsync(id);
+        
+        if (!success)
+            return BadRequest(new { error });
 
-        if (!string.IsNullOrEmpty(company.StripeAccountId))
-            return Conflict("Company already has a Stripe account.");
-
-        try
+        return Ok(new
         {
-            var stripeAccount = await _stripeService.CreateConnectedAccountAsync(company.Email, "US");
-            company.StripeAccountId = _encryptionService.Encrypt(stripeAccount.Id);
-            _context.Companies.Update(company);
-            await _context.SaveChangesAsync();
-
-            return Ok(new
-            {
-                HasStripeAccount = true,
-                Status = stripeAccount.DetailsSubmitted ? "completed" : "pending",
-                RequiresAction = !stripeAccount.DetailsSubmitted
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error setting up Stripe account for company {CompanyId}", id);
-            return BadRequest($"Error setting up Stripe account: {ex.Message}");
-        }
+            success = true,
+            accountId = accountId,
+            message = "Stripe Connect account created successfully"
+        });
     }
 
     /// <summary>
-    /// Get Stripe Connect account status
+    /// Start Stripe Connect onboarding flow
     /// </summary>
-    [HttpGet("{id}/stripe/status")]
-    public async Task<ActionResult<object>> GetStripeAccountStatus(Guid id)
+    [HttpPost("{id}/stripe/connect/onboard")]
+    public async Task<ActionResult<object>> StartOnboarding(
+        Guid id, 
+        [FromBody] CreateAccountLinkDto dto)
+    {
+        if (string.IsNullOrEmpty(dto.ReturnUrl) || string.IsNullOrEmpty(dto.RefreshUrl))
+            return BadRequest("ReturnUrl and RefreshUrl are required");
+
+        var (success, onboardingUrl, error) = await _stripeConnectService.StartOnboardingAsync(
+            id, 
+            dto.ReturnUrl, 
+            dto.RefreshUrl
+        );
+
+        if (!success)
+            return BadRequest(new { error });
+
+        return Ok(new
+        {
+            success = true,
+            onboardingUrl = onboardingUrl,
+            expiresAt = DateTime.UtcNow.AddHours(1)
+        });
+    }
+
+    /// <summary>
+    /// Complete onboarding (called after user returns from Stripe)
+    /// </summary>
+    [HttpPost("{id}/stripe/connect/complete-onboarding")]
+    public async Task<ActionResult<object>> CompleteOnboarding(Guid id)
     {
         var company = await _context.Companies.FindAsync(id);
         if (company == null)
@@ -905,25 +1009,207 @@ public class RentalCompaniesController : ControllerBase
         {
             var stripeAccountId = await ResolveStripeAccountIdAsync(company);
             if (string.IsNullOrEmpty(stripeAccountId))
-                return BadRequest("Unable to retrieve Stripe account ID for this company");
+                return BadRequest("Unable to retrieve Stripe account ID");
 
-            var stripeAccount = await _stripeService.GetConnectedAccountAsync(stripeAccountId);
+            // Sync account status from Stripe
+            await _stripeConnectService.SyncAccountStatusAsync(stripeAccountId);
+
+            // Mark onboarding session as complete
+            var session = await _context.StripeOnboardingSessions
+                .Where(s => s.CompanyId == id && !s.Completed)
+                .OrderByDescending(s => s.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (session != null)
+            {
+                session.Completed = true;
+                session.CompletedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            // Get updated status
+            var status = await _stripeConnectService.GetAccountStatusAsync(id);
 
             return Ok(new
             {
-                HasStripeAccount = true,
-                Status = stripeAccount.DetailsSubmitted ? "completed" : "pending",
-                ChargesEnabled = stripeAccount.ChargesEnabled,
-                PayoutsEnabled = stripeAccount.PayoutsEnabled,
-                RequiresAction = !stripeAccount.DetailsSubmitted,
-                Country = stripeAccount.Country,
-                Created = stripeAccount.Created
+                success = true,
+                status = status,
+                message = "Onboarding completed successfully"
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting Stripe account status for company {CompanyId}", id);
-            return BadRequest($"Error getting Stripe account status: {ex.Message}");
+            _logger.LogError(ex, "Error completing onboarding for company {CompanyId}", id);
+            return BadRequest(new { error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Get detailed Stripe Connect account status
+    /// </summary>
+    [HttpGet("{id}/stripe/connect/status")]
+    public async Task<ActionResult<DTOs.Stripe.StripeAccountStatusDto>> GetConnectAccountStatus(Guid id)
+    {
+        var status = await _stripeConnectService.GetAccountStatusAsync(id);
+        return Ok(status);
+    }
+
+    /// <summary>
+    /// Sync account status from Stripe
+    /// </summary>
+    [HttpPost("{id}/stripe/connect/sync")]
+    public async Task<ActionResult<object>> SyncAccountStatus(Guid id)
+    {
+        var company = await _context.Companies.FindAsync(id);
+        if (company == null)
+            return NotFound();
+
+        if (string.IsNullOrEmpty(company.StripeAccountId))
+            return BadRequest("Company does not have a Stripe account");
+
+        try
+        {
+            var stripeAccountId = await ResolveStripeAccountIdAsync(company);
+            if (string.IsNullOrEmpty(stripeAccountId))
+                return BadRequest("Unable to retrieve Stripe account ID");
+
+            await _stripeConnectService.SyncAccountStatusAsync(stripeAccountId);
+
+            var status = await _stripeConnectService.GetAccountStatusAsync(id);
+
+            return Ok(new
+            {
+                success = true,
+                status = status,
+                syncedAt = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error syncing account status for company {CompanyId}", id);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get Stripe Connect dashboard link (for Express accounts)
+    /// </summary>
+    [HttpPost("{id}/stripe/connect/dashboard-link")]
+    public async Task<ActionResult<object>> GetDashboardLink(Guid id)
+    {
+        var company = await _context.Companies.FindAsync(id);
+        if (company == null)
+            return NotFound();
+
+        if (string.IsNullOrEmpty(company.StripeAccountId))
+            return BadRequest("Company does not have a Stripe account");
+
+        try
+        {
+            var stripeAccountId = await ResolveStripeAccountIdAsync(company);
+            if (string.IsNullOrEmpty(stripeAccountId))
+                return BadRequest("Unable to retrieve Stripe account ID");
+
+            // Create login link for Express dashboard
+            var loginLinkService = new AccountLinkService();
+            var options = new AccountLinkCreateOptions
+            {
+                Account = stripeAccountId,
+                RefreshUrl = $"{Request.Scheme}://{Request.Host}/company/{id}/stripe/refresh",
+                ReturnUrl = $"{Request.Scheme}://{Request.Host}/company/{id}/stripe/return",
+                Type = "account_onboarding"
+            };
+
+            var loginLink = await loginLinkService.CreateAsync(options);
+
+            return Ok(new
+            {
+                success = true,
+                url = loginLink.Url,
+                expiresAt = DateTime.UtcNow.AddHours(1)
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating dashboard link for company {CompanyId}", id);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get company financial summary with platform fees
+    /// </summary>
+    [HttpGet("{id}/financials")]
+    public async Task<ActionResult<object>> GetFinancials(
+        Guid id,
+        DateTime? fromDate = null,
+        DateTime? toDate = null)
+    {
+        var company = await _context.Companies
+            .Include(c => c.Bookings)
+            .FirstOrDefaultAsync(c => c.Id == id);
+
+        if (company == null)
+            return NotFound();
+
+        var query = _context.Bookings
+            .Where(b => b.CompanyId == id && 
+                       (b.Status == BookingStatus.Confirmed || 
+                        b.Status == BookingStatus.PickedUp || 
+                        b.Status == BookingStatus.Returned));
+
+        if (fromDate.HasValue)
+            query = query.Where(b => b.CreatedAt >= fromDate.Value);
+
+        if (toDate.HasValue)
+            query = query.Where(b => b.CreatedAt <= toDate.Value);
+
+        var bookings = await query.ToListAsync();
+
+        var totalRevenue = bookings.Sum(b => b.TotalAmount);
+        var platformFees = bookings.Sum(b => b.PlatformFeeAmount);
+        var netRevenue = bookings.Sum(b => b.NetAmount ?? 0m);
+
+        var transfers = await _context.StripeTransfers
+            .Where(t => t.CompanyId == id)
+            .ToListAsync();
+
+        var transferredAmount = transfers
+            .Where(t => t.Status == "paid")
+            .Sum(t => t.NetAmount);
+
+        var pendingTransfers = transfers
+            .Where(t => t.Status == "pending")
+            .Sum(t => t.NetAmount);
+
+        return Ok(new
+        {
+            companyId = id,
+            companyName = company.CompanyName,
+            platformFeePercentage = company.PlatformFeePercentage,
+            period = new
+            {
+                from = fromDate ?? bookings.Min(b => (DateTime?)b.CreatedAt),
+                to = toDate ?? bookings.Max(b => (DateTime?)b.CreatedAt)
+            },
+            revenue = new
+            {
+                totalRevenue = totalRevenue,
+                platformFees = platformFees,
+                netRevenue = netRevenue
+            },
+            transfers = new
+            {
+                transferred = transferredAmount,
+                pending = pendingTransfers,
+                totalTransfers = transfers.Count
+            },
+            bookings = new
+            {
+                total = bookings.Count,
+                confirmed = bookings.Count(b => b.Status == BookingStatus.Confirmed),
+                completed = bookings.Count(b => b.Status == BookingStatus.Returned)
+            }
+        });
     }
 }

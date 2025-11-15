@@ -174,6 +174,9 @@ builder.Services.AddSingleton<ISessionService, SessionService>();
 // Add Stripe Service
 builder.Services.AddScoped<IStripeService, StripeService>();
 
+// Add Stripe Connect Service
+builder.Services.AddScoped<IStripeConnectService, StripeConnectService>();
+
 // Add Encryption Service
 builder.Services.AddSingleton<IEncryptionService, EncryptionService>();
 

@@ -40,9 +40,37 @@ public interface IStripeService
     Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId);
     Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null);
     Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount);
-    Task<Account> CreateConnectedAccountAsync(string email, string country = "US");
+    
+    // Stripe Connect methods
+    Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country);
+    Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl);
+    Task<Account> GetAccountAsync(string accountId);
+    Task<Account> UpdateAccountAsync(string accountId);
+    
+    // Legacy methods (kept for backward compatibility)
+    [Obsolete("Use GetAccountAsync instead.")]
     Task<Account> GetConnectedAccountAsync(string accountId);
-    Task<Transfer> CreateTransferAsync(string accountId, long amount, string currency = "usd");
+    
+    [Obsolete("Use CreateConnectedAccountAsync(string email, string accountType, string country) instead.")]
+    Task<Account> CreateConnectedAccountLegacyAsync(string email, string country = "US");
+    
+    // Transfer methods
+    Task<Transfer> CreateTransferAsync(string destinationAccountId, long amount, string currency, string transferGroup);
+    Task<Transfer> GetTransferAsync(string transferId);
+    
+    // Legacy transfer method (kept for backward compatibility)
+    [Obsolete("Use CreateTransferAsync(string destinationAccountId, long amount, string currency, string transferGroup) instead.")]
+    Task<Transfer> CreateTransferLegacyAsync(string accountId, long amount, string currency = "usd");
+    
+    // Security deposit with Connect
+    Task<PaymentIntent> CreateSecurityDepositAsync(
+        string customerId, 
+        decimal amount, 
+        string currency, 
+        string paymentMethodId,
+        string connectedAccountId,
+        Dictionary<string, string> metadata);
+    
     Task<WebhookEndpoint> CreateWebhookEndpointAsync(string url, string[] events);
     Task<Event> ConstructWebhookEventAsync(string payload, string signature, string webhookSecret);
     Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null);
@@ -395,15 +423,16 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<Account> CreateConnectedAccountAsync(string email, string country = "US")
+    // Stripe Connect methods - new implementations
+    public async Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country)
     {
         await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CreateConnectedAccountAsync email={Email} country={Country}", email, country);
+        _logger.LogWarning("[Stripe] CreateConnectedAccountAsync email={Email} accountType={AccountType} country={Country}", email, accountType, country);
         try
         {
-            var accountOptions = new AccountCreateOptions
+            var options = new AccountCreateOptions
             {
-                Type = "express",
+                Type = accountType, // "express" or "standard"
                 Country = country,
                 Email = email,
                 Capabilities = new AccountCapabilitiesOptions
@@ -419,8 +448,8 @@ public class StripeService : IStripeService
                 }
             };
 
-            var account = await new AccountService().CreateAsync(accountOptions);
-            return account;
+            var service = new AccountService();
+            return await service.CreateAsync(options);
         }
         catch (StripeException ex)
         {
@@ -429,43 +458,160 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<Account> GetConnectedAccountAsync(string accountId)
+    public async Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl)
     {
         await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] GetConnectedAccountAsync accountId={AccountId}", accountId);
+        _logger.LogWarning("[Stripe] CreateAccountLinkAsync accountId={AccountId}", accountId);
         try
         {
-            var account = await new AccountService().GetAsync(accountId);
-            return account;
+            var options = new AccountLinkCreateOptions
+            {
+                Account = accountId,
+                RefreshUrl = refreshUrl,
+                ReturnUrl = returnUrl,
+                Type = "account_onboarding"
+            };
+
+            var service = new AccountLinkService();
+            return await service.CreateAsync(options);
         }
         catch (StripeException ex)
         {
-            _logger.LogError(ex, "Error retrieving connected account {AccountId}", accountId);
-            throw new InvalidOperationException($"Failed to retrieve connected account: {ex.Message}", ex);
+            _logger.LogError(ex, "Error creating account link for {AccountId}", accountId);
+            throw new InvalidOperationException($"Failed to create account link: {ex.Message}", ex);
         }
     }
 
-    public async Task<Transfer> CreateTransferAsync(string accountId, long amount, string currency = "usd")
+    public async Task<Account> GetAccountAsync(string accountId)
     {
         await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CreateTransferAsync accountId={AccountId} amount={Amount} currency={Currency}", accountId, amount, currency);
+        _logger.LogWarning("[Stripe] GetAccountAsync accountId={AccountId}", accountId);
         try
         {
-            var transferOptions = new TransferCreateOptions
-            {
-                Amount = amount,
-                Currency = currency,
-                Destination = accountId
-            };
-
-            var transfer = await new TransferService().CreateAsync(transferOptions);
-            return transfer;
+            var service = new AccountService();
+            return await service.GetAsync(accountId);
         }
         catch (StripeException ex)
         {
-            _logger.LogError(ex, "Error creating transfer to account {AccountId}", accountId);
+            _logger.LogError(ex, "Error retrieving account {AccountId}", accountId);
+            throw new InvalidOperationException($"Failed to retrieve account: {ex.Message}", ex);
+        }
+    }
+
+    public async Task<Account> UpdateAccountAsync(string accountId)
+    {
+        await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] UpdateAccountAsync accountId={AccountId}", accountId);
+        try
+        {
+            // For now, just return the account - update logic can be added later
+            var service = new AccountService();
+            return await service.GetAsync(accountId);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Error updating account {AccountId}", accountId);
+            throw new InvalidOperationException($"Failed to update account: {ex.Message}", ex);
+        }
+    }
+
+    public async Task<Transfer> CreateTransferAsync(string destinationAccountId, long amount, string currency, string transferGroup)
+    {
+        await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateTransferAsync destinationAccountId={DestinationAccountId} amount={Amount} currency={Currency} transferGroup={TransferGroup}", 
+            destinationAccountId, amount, currency, transferGroup);
+        try
+        {
+            var options = new TransferCreateOptions
+            {
+                Amount = amount,
+                Currency = currency,
+                Destination = destinationAccountId,
+                TransferGroup = transferGroup
+            };
+
+            var service = new TransferService();
+            return await service.CreateAsync(options);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Error creating transfer to account {AccountId}", destinationAccountId);
             throw new InvalidOperationException($"Failed to create transfer: {ex.Message}", ex);
         }
+    }
+
+    public async Task<Transfer> GetTransferAsync(string transferId)
+    {
+        await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] GetTransferAsync transferId={TransferId}", transferId);
+        try
+        {
+            var service = new TransferService();
+            return await service.GetAsync(transferId);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Error retrieving transfer {TransferId}", transferId);
+            throw new InvalidOperationException($"Failed to retrieve transfer: {ex.Message}", ex);
+        }
+    }
+
+    public async Task<PaymentIntent> CreateSecurityDepositAsync(
+        string customerId,
+        decimal amount,
+        string currency,
+        string paymentMethodId,
+        string connectedAccountId,
+        Dictionary<string, string> metadata)
+    {
+        await EnsureInitializedAsync();
+        _logger.LogWarning("[Stripe] CreateSecurityDepositAsync customerId={CustomerId} amount={Amount} currency={Currency} connectedAccountId={ConnectedAccountId}", 
+            customerId, amount, currency, connectedAccountId);
+        try
+        {
+            var options = new PaymentIntentCreateOptions
+            {
+                Amount = (long)(amount * 100),
+                Currency = currency.ToLower(),
+                Customer = customerId,
+                PaymentMethod = paymentMethodId,
+                CaptureMethod = "manual", // Authorization only
+                Confirm = true,
+                Metadata = metadata,
+                TransferData = new PaymentIntentTransferDataOptions
+                {
+                    Destination = connectedAccountId
+                }
+            };
+
+            var service = new PaymentIntentService();
+            return await service.CreateAsync(options);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Error creating security deposit payment intent for customer {CustomerId}", customerId);
+            throw new InvalidOperationException($"Failed to create security deposit: {ex.Message}", ex);
+        }
+    }
+
+    // Legacy methods (kept for backward compatibility)
+    [Obsolete("Use CreateConnectedAccountAsync(string email, string accountType, string country) instead.")]
+    public async Task<Account> CreateConnectedAccountLegacyAsync(string email, string country = "US")
+    {
+        return await CreateConnectedAccountAsync(email, "express", country);
+    }
+
+    [Obsolete("Use GetAccountAsync instead.")]
+    public async Task<Account> GetConnectedAccountAsync(string accountId)
+    {
+        return await GetAccountAsync(accountId);
+    }
+
+    [Obsolete("Use CreateTransferAsync(string destinationAccountId, long amount, string currency, string transferGroup) instead.")]
+    public async Task<Transfer> CreateTransferLegacyAsync(string accountId, long amount, string currency = "usd")
+    {
+        // Call the new method with empty transfer group for backward compatibility
+        return await CreateTransferAsync(accountId, amount, currency, $"legacy_{DateTime.UtcNow.Ticks}");
     }
 
     public async Task<WebhookEndpoint> CreateWebhookEndpointAsync(string url, string[] events)
@@ -530,3 +676,4 @@ public class StripeService : IStripeService
         }
     }
 }
+

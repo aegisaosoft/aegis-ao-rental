@@ -29,6 +29,10 @@ public class CustomerLicense
     [Column("customer_id")]
     public Guid CustomerId { get; set; }
 
+    [Required]
+    [Column("company_id")]
+    public Guid CompanyId { get; set; }
+
     // License Identity
     [Required]
     [MaxLength(50)]
@@ -132,4 +136,7 @@ public class CustomerLicense
     // Navigation properties
     [ForeignKey("CustomerId")]
     public virtual Customer Customer { get; set; } = null!;
+
+    [ForeignKey("CompanyId")]
+    public virtual Company? Company { get; set; }
 }

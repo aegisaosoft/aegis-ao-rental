@@ -14,6 +14,7 @@
  */
 
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace CarRental.Api.DTOs;
 
@@ -218,6 +219,7 @@ public class UpdateRentalCompanyDto
     
     public string? About { get; set; }
     
+    [JsonPropertyName("termsOfUse")]
     public string? TermsOfUse { get; set; }
     
     public string? BookingIntegrated { get; set; }
@@ -257,6 +259,12 @@ public class UpdateRentalCompanyDto
     public string? AiIntegration { get; set; }
     
     public bool? IsActive { get; set; }
+}
+
+public class UpdateTermsOfUseDto
+{
+    [JsonPropertyName("termsOfUse")]
+    public string? TermsOfUse { get; set; }
 }
 
 // DTO for company configuration (public API - used by frontend)

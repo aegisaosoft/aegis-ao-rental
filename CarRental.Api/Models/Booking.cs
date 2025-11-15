@@ -86,6 +86,10 @@ public class Booking
     [Column("total_amount", TypeName = "decimal(10,2)")]
     public decimal TotalAmount { get; set; }
 
+    [MaxLength(3)]
+    [Column("currency")]
+    public string? Currency { get; set; } = "USD";
+
     [Column("security_deposit", TypeName = "decimal(10,2)")]
     public decimal SecurityDeposit { get; set; } = 1000m;
 
@@ -93,6 +97,74 @@ public class Booking
     [MaxLength(50)]
     [Column("status")]
     public string Status { get; set; } = "Pending";
+
+    // Payment Intent IDs
+    [MaxLength(255)]
+    [Column("payment_intent_id")]
+    public string? PaymentIntentId { get; set; }
+
+    [MaxLength(255)]
+    [Column("stripe_payment_intent_id")]
+    public string? StripePaymentIntentId { get; set; }
+
+    [MaxLength(255)]
+    [Column("setup_intent_id")]
+    public string? SetupIntentId { get; set; }
+
+    [MaxLength(255)]
+    [Column("payment_method_id")]
+    public string? PaymentMethodId { get; set; }
+
+    [MaxLength(255)]
+    [Column("stripe_customer_id")]
+    public string? StripeCustomerId { get; set; }
+
+    // Security Deposit Tracking
+    [Column("security_deposit_amount", TypeName = "decimal(10,2)")]
+    public decimal? SecurityDepositAmount { get; set; }
+
+    [MaxLength(50)]
+    [Column("security_deposit_status")]
+    public string SecurityDepositStatus { get; set; } = "pending";
+
+    [Column("security_deposit_charged_amount", TypeName = "decimal(10,2)")]
+    public decimal? SecurityDepositChargedAmount { get; set; }
+
+    [MaxLength(255)]
+    [Column("security_deposit_payment_intent_id")]
+    public string? SecurityDepositPaymentIntentId { get; set; }
+
+    // Security Deposit Timestamps
+    [Column("security_deposit_authorized_at")]
+    public DateTime? SecurityDepositAuthorizedAt { get; set; }
+
+    [Column("security_deposit_captured_at")]
+    public DateTime? SecurityDepositCapturedAt { get; set; }
+
+    [Column("security_deposit_released_at")]
+    public DateTime? SecurityDepositReleasedAt { get; set; }
+
+    [Column("security_deposit_refunded_at")]
+    public DateTime? SecurityDepositRefundedAt { get; set; }
+
+    [Column("security_deposit_capture_reason")]
+    public string? SecurityDepositCaptureReason { get; set; }
+
+    // Platform Fee Tracking
+    [Column("platform_fee_amount", TypeName = "decimal(10,2)")]
+    public decimal PlatformFeeAmount { get; set; } = 0;
+
+    [Column("net_amount", TypeName = "decimal(10,2)")]
+    public decimal? NetAmount { get; set; }
+
+    [MaxLength(255)]
+    [Column("stripe_transfer_id")]
+    public string? StripeTransferId { get; set; }
+
+    // Payment Status
+    [MaxLength(50)]
+    [Column("payment_status")]
+    public string PaymentStatus { get; set; } = "pending";
 
     [Column("notes")]
     public string? Notes { get; set; }

@@ -139,6 +139,50 @@ public class Company
     [Column("ai_integration")]
     public string AiIntegration { get; set; } = "claude";
 
+    // Stripe Connect Onboarding Properties
+    [Column("stripe_onboarding_completed")]
+    public bool? StripeOnboardingCompleted { get; set; } = false;
+
+    [Column("stripe_charges_enabled")]
+    public bool? StripeChargesEnabled { get; set; } = false;
+
+    [Column("stripe_payouts_enabled")]
+    public bool? StripePayoutsEnabled { get; set; } = false;
+
+    [Column("stripe_details_submitted")]
+    public bool? StripeDetailsSubmitted { get; set; } = false;
+
+    [MaxLength(20)]
+    [Column("stripe_account_type")]
+    public string? StripeAccountType { get; set; } = "express";
+
+    [Column("platform_fee_percentage", TypeName = "decimal(5,2)")]
+    public decimal PlatformFeePercentage { get; set; } = 10.00m;
+
+    // Stripe Requirements
+    [Column("stripe_requirements_currently_due", TypeName = "text[]")]
+    public string[]? StripeRequirementsCurrentlyDue { get; set; }
+
+    [Column("stripe_requirements_eventually_due", TypeName = "text[]")]
+    public string[]? StripeRequirementsEventuallyDue { get; set; }
+
+    [Column("stripe_requirements_past_due", TypeName = "text[]")]
+    public string[]? StripeRequirementsPastDue { get; set; }
+
+    [MaxLength(255)]
+    [Column("stripe_requirements_disabled_reason")]
+    public string? StripeRequirementsDisabledReason { get; set; }
+
+    // Stripe Sync Tracking
+    [Column("stripe_last_sync_at")]
+    public DateTime? StripeLastSyncAt { get; set; }
+
+    [Column("stripe_onboarding_link")]
+    public string? StripeOnboardingLink { get; set; }
+
+    [Column("stripe_onboarding_link_expires_at")]
+    public DateTime? StripeOnboardingLinkExpiresAt { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 

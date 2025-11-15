@@ -94,6 +94,9 @@ public class Customer
     [Column("customer_type")]
     public CustomerType CustomerType { get; set; } = CustomerType.Individual;
 
+    [Column("is_security_deposit_mandatory")]
+    public bool? IsSecurityDepositMandatory { get; set; }
+
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

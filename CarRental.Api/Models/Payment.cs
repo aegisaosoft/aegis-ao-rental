@@ -100,6 +100,26 @@ public class Payment
     [Column("security_deposit_capture_reason")]
     public string? SecurityDepositCaptureReason { get; set; }
 
+    // Platform Fee and Transfer Properties
+    [MaxLength(255)]
+    [Column("destination_account_id")]
+    public string? DestinationAccountId { get; set; }
+
+    [Column("platform_fee_amount", TypeName = "decimal(10,2)")]
+    public decimal PlatformFeeAmount { get; set; } = 0;
+
+    [MaxLength(255)]
+    [Column("transfer_group")]
+    public string? TransferGroup { get; set; }
+
+    [MaxLength(255)]
+    [Column("on_behalf_of")]
+    public string? OnBehalfOf { get; set; }
+
+    [MaxLength(255)]
+    [Column("stripe_transfer_id")]
+    public string? StripeTransferId { get; set; }
+
     [Column("failure_reason")]
     public string? FailureReason { get; set; }
 

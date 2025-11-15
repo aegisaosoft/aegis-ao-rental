@@ -37,19 +37,22 @@ public class PaymentsController : ControllerBase
     private readonly ILogger<PaymentsController> _logger;
     private readonly IEncryptionService _encryptionService;
     private readonly IConfiguration _configuration;
+    private readonly IStripeConnectService _stripeConnectService;
 
     public PaymentsController(
         CarRentalDbContext context, 
         IStripeService stripeService, 
         ILogger<PaymentsController> logger,
         IEncryptionService encryptionService,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IStripeConnectService stripeConnectService)
     {
         _context = context;
         _stripeService = stripeService;
         _logger = logger;
         _encryptionService = encryptionService;
         _configuration = configuration;
+        _stripeConnectService = stripeConnectService;
     }
 
     /// <summary>
@@ -860,6 +863,24 @@ public class PaymentsController : ControllerBase
                 case "payment_method.attached":
                     await HandlePaymentMethodAttached(stripeEvent);
                     break;
+                case "account.updated":
+                    await HandleAccountUpdated(stripeEvent);
+                    break;
+                case "transfer.created":
+                    await HandleTransferCreated(stripeEvent);
+                    break;
+                case "transfer.paid":
+                    await HandleTransferPaid(stripeEvent);
+                    break;
+                case "transfer.failed":
+                    await HandleTransferFailed(stripeEvent);
+                    break;
+                case "payout.paid":
+                    await HandlePayoutPaid(stripeEvent);
+                    break;
+                case "payout.failed":
+                    await HandlePayoutFailed(stripeEvent);
+                    break;
                 default:
                     _logger.LogInformation("Unhandled event type: {EventType}", stripeEvent.Type);
                     break;
@@ -1148,5 +1169,201 @@ public class PaymentsController : ControllerBase
         }
 
         return null;
+    }
+
+    private async Task HandleAccountUpdated(Event stripeEvent)
+    {
+        var account = stripeEvent.Data.Object as Stripe.Account;
+        if (account == null) return;
+
+        try
+        {
+            // Find company by Stripe account ID
+            var companies = await _context.Companies.ToListAsync();
+            Company? targetCompany = null;
+
+            foreach (var company in companies)
+            {
+                if (!string.IsNullOrEmpty(company.StripeAccountId))
+                {
+                    try
+                    {
+                        var decryptedId = _encryptionService.Decrypt(company.StripeAccountId);
+                        if (decryptedId == account.Id)
+                        {
+                            targetCompany = company;
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // Skip if decryption fails
+                        continue;
+                    }
+                }
+            }
+
+            if (targetCompany != null)
+            {
+                targetCompany.StripeChargesEnabled = account.ChargesEnabled;
+                targetCompany.StripePayoutsEnabled = account.PayoutsEnabled;
+                targetCompany.StripeDetailsSubmitted = account.DetailsSubmitted;
+                targetCompany.StripeOnboardingCompleted = account.ChargesEnabled && 
+                                                         account.PayoutsEnabled && 
+                                                         account.DetailsSubmitted;
+                targetCompany.StripeRequirementsCurrentlyDue = account.Requirements?.CurrentlyDue?.ToArray();
+                targetCompany.StripeRequirementsEventuallyDue = account.Requirements?.EventuallyDue?.ToArray();
+                targetCompany.StripeRequirementsPastDue = account.Requirements?.PastDue?.ToArray();
+                targetCompany.StripeRequirementsDisabledReason = account.Requirements?.DisabledReason;
+                targetCompany.StripeLastSyncAt = DateTime.UtcNow;
+                targetCompany.UpdatedAt = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Updated Stripe account status for company {CompanyId}", targetCompany.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling account.updated webhook");
+        }
+    }
+
+    private async Task HandleTransferCreated(Event stripeEvent)
+    {
+        var transfer = stripeEvent.Data.Object as Stripe.Transfer;
+        if (transfer == null) return;
+
+        var transferRecord = await _context.StripeTransfers
+            .FirstOrDefaultAsync(t => t.StripeTransferId == transfer.Id);
+
+        if (transferRecord != null)
+        {
+            // Note: Stripe.Transfer doesn't have Status property - this requires the StripeTransfer model
+            // transferRecord.Status = transfer.Status ?? "pending";
+            transferRecord.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandleTransferPaid(Event stripeEvent)
+    {
+        var transfer = stripeEvent.Data.Object as Stripe.Transfer;
+        if (transfer == null) return;
+
+        var transferRecord = await _context.StripeTransfers
+            .FirstOrDefaultAsync(t => t.StripeTransferId == transfer.Id);
+
+        if (transferRecord != null)
+        {
+            transferRecord.Status = "paid";
+            transferRecord.TransferredAt = DateTime.UtcNow;
+            transferRecord.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Transfer {TransferId} marked as paid", transfer.Id);
+        }
+    }
+
+    private async Task HandleTransferFailed(Event stripeEvent)
+    {
+        var transfer = stripeEvent.Data.Object as Stripe.Transfer;
+        if (transfer == null) return;
+
+        var transferRecord = await _context.StripeTransfers
+            .FirstOrDefaultAsync(t => t.StripeTransferId == transfer.Id);
+
+        if (transferRecord != null)
+        {
+            transferRecord.Status = "failed";
+            // Note: Stripe.Transfer doesn't have FailureCode/FailureMessage properties - this requires the StripeTransfer model
+            // transferRecord.FailureCode = transfer.FailureCode;
+            // transferRecord.FailureMessage = transfer.FailureMessage;
+            transferRecord.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            _logger.LogError("Transfer {TransferId} failed", transfer.Id);
+        }
+    }
+
+    private async Task HandlePayoutPaid(Event stripeEvent)
+    {
+        var payout = stripeEvent.Data.Object as Stripe.Payout;
+        if (payout == null) return;
+
+        // Find company by destination account
+        var companies = await _context.Companies.ToListAsync();
+        Guid? companyId = null;
+
+        foreach (var company in companies)
+        {
+            if (!string.IsNullOrEmpty(company.StripeAccountId))
+            {
+                try
+                {
+                    var decryptedId = _encryptionService.Decrypt(company.StripeAccountId);
+                    // Payout event comes from connected account context
+                    companyId = company.Id;
+                    break;
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+        }
+
+        if (companyId.HasValue)
+        {
+            var existingPayout = await _context.StripePayoutRecords
+                .FirstOrDefaultAsync(p => p.StripePayoutId == payout.Id);
+
+            if (existingPayout == null)
+            {
+                var payoutRecord = new Models.StripePayoutRecord
+                {
+                    CompanyId = companyId.Value,
+                    StripePayoutId = payout.Id,
+                    Amount = payout.Amount / 100m,
+                    Currency = payout.Currency.ToUpperInvariant(),
+                    Status = payout.Status,
+                    PayoutType = payout.Type,
+                    ArrivalDate = payout.ArrivalDate,
+                    Description = payout.Description,
+                    Method = payout.Method,
+                    StatementDescriptor = payout.StatementDescriptor
+                };
+
+                _context.StripePayoutRecords.Add(payoutRecord);
+            }
+            else
+            {
+                existingPayout.Status = payout.Status;
+                existingPayout.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+    }
+
+    private async Task HandlePayoutFailed(Event stripeEvent)
+    {
+        var payout = stripeEvent.Data.Object as Stripe.Payout;
+        if (payout == null) return;
+
+        var payoutRecord = await _context.StripePayoutRecords
+            .FirstOrDefaultAsync(p => p.StripePayoutId == payout.Id);
+
+        if (payoutRecord != null)
+        {
+            payoutRecord.Status = "failed";
+            payoutRecord.FailureCode = payout.FailureCode;
+            payoutRecord.FailureMessage = payout.FailureMessage;
+            payoutRecord.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            _logger.LogError("Payout {PayoutId} failed for company {CompanyId}: {Reason}", 
+                payout.Id, payoutRecord.CompanyId, payout.FailureMessage);
+        }
     }
 }
