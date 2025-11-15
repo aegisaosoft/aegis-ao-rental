@@ -69,6 +69,7 @@ public class CompanyLocationsController : ControllerBase
 
     // GET: api/CompanyLocations
     [HttpGet]
+    [AllowAnonymous] // Allow anonymous access for public company locations
     public async Task<ActionResult<IEnumerable<CompanyLocationDto>>> GetCompanyLocations(
         [FromQuery] Guid? companyId = null,
         [FromQuery] bool? isActive = null,
