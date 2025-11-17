@@ -46,13 +46,19 @@ public class ModelsController : ControllerBase
     }
 
     /// <summary>
-    /// Get all models grouped by category
+    /// Get all models grouped by category using stored procedure for better performance
     /// </summary>
     /// <param name="companyId">Optional company ID to filter models by vehicles in company fleet. If not provided, uses company from domain context.</param>
     /// <param name="locationId">Optional location ID to filter models by vehicles at specific location</param>
+    /// <param name="pickupDate">Pickup date for availability check</param>
+    /// <param name="returnDate">Return date for availability check</param>
     [HttpGet("grouped-by-category")]
     [ProducesResponseType(typeof(IEnumerable<ModelsGroupedByCategoryDto>), 200)]
-    public async Task<IActionResult> GetModelsGroupedByCategory([FromQuery] Guid? companyId = null, [FromQuery] Guid? locationId = null)
+    public async Task<IActionResult> GetModelsGroupedByCategory(
+        [FromQuery] Guid? companyId = null, 
+        [FromQuery] Guid? locationId = null,
+        [FromQuery] DateTime? pickupDate = null,
+        [FromQuery] DateTime? returnDate = null)
     {
         try
         {
@@ -66,232 +72,75 @@ public class ModelsController : ControllerBase
                 }
             }
             
-            _logger.LogInformation("GetModelsGroupedByCategory called with companyId={CompanyId}, locationId={LocationId}", companyId, locationId);
-            
-            var query = _context.Models
-                .Include(m => m.Category)
-                .AsQueryable();
-
-            List<Model> models;
-
-            // If companyId is provided, filter models to only those that exist in company vehicles
-            if (companyId.HasValue)
+            // If dates not provided, use default range (today to 7 days from now)
+            if (!pickupDate.HasValue)
             {
-                // Get distinct make/model combinations from vehicles for this company via vehicle_model
-                // Include ALL statuses to show all models (even if vehicles are temporarily unavailable)
-                var vehiclesQuery = _context.Vehicles
-                    .Include(v => v.VehicleModel)
-                    .Where(v => v.CompanyId == companyId.Value);
-                
-                // Apply location filter if provided
-                if (locationId.HasValue)
-                {
-                    vehiclesQuery = vehiclesQuery.Where(v => v.LocationId == locationId.Value);
-                    _logger.LogInformation("Filtering vehicles by locationId: {LocationId}", locationId.Value);
-                }
-                
-                var companyVehiclesData = await vehiclesQuery.ToListAsync();
-                
-                // Load Model for each VehicleModel that has one
-                foreach (var vehicle in companyVehiclesData.Where(v => v.VehicleModel != null))
-                {
-                    await _context.Entry(vehicle.VehicleModel!)
-                        .Reference(vm => vm.Model)
-                        .LoadAsync();
-                }
-                
-                // Project to distinct make/model/year combinations
-                var companyVehicles = companyVehiclesData
-                    .Where(v => v.VehicleModel?.Model != null)
-                    .Select(v => new 
-                    { 
-                        Make = v.VehicleModel!.Model!.Make ?? "", 
-                        Model = v.VehicleModel!.Model!.ModelName ?? "", 
-                        Year = v.VehicleModel!.Model!.Year 
-                    })
-                    .Distinct()
-                    .ToList();
-
-                _logger.LogInformation("Company {CompanyId} has {Count} vehicles", companyId.Value, companyVehicles.Count);
-
-                if (companyVehicles.Any())
-                {
-                    // Create a HashSet of normalized make|model|year tuples for exact matching
-                    var vehicleTriplets = new HashSet<string>(
-                        companyVehicles
-                            .Where(v => !string.IsNullOrEmpty(v.Make) && !string.IsNullOrEmpty(v.Model) && v.Year > 0)
-                            .Select(v => 
-                                $"{v.Make.ToUpperInvariant().Trim()}|{v.Model.ToUpperInvariant().Trim()}|{v.Year}"),
-                        StringComparer.OrdinalIgnoreCase);
-
-                    _logger.LogInformation("Company vehicles make/model/year triplets: {Count} unique", vehicleTriplets.Count);
-
-                    // Filter models in memory - match by normalized make|model|year (exact match)
-                    var allModels = await query.ToListAsync();
-                    
-                    _logger.LogInformation("Total models in database: {Count}", allModels.Count);
-
-                    models = allModels
-                        .Where(m => 
-                            m.Make != null && 
-                            m.ModelName != null &&
-                            m.Year > 0 &&
-                            vehicleTriplets.Contains(
-                                $"{m.Make.ToUpperInvariant().Trim()}|{m.ModelName.ToUpperInvariant().Trim()}|{m.Year}"))
-                        .OrderBy(m => m.Category != null ? m.Category.CategoryName : "")
-                        .ThenBy(m => m.Make)
-                        .ThenBy(m => m.ModelName)
-                        .ThenByDescending(m => m.Year)
-                        .Take(1000) // Limit to 1000 models max
-                        .ToList();
-
-                    _logger.LogInformation("Filtered models for company: {Count} (matched by make/model/year)", models.Count);
-                }
-                else
-                {
-                    // No vehicles for this company
-                    _logger.LogWarning("No vehicles found for company {CompanyId}", companyId.Value);
-                    models = new List<Model>();
-                }
+                pickupDate = DateTime.UtcNow;
             }
-            else
+            if (!returnDate.HasValue)
             {
-                // No company filter - return all models
-                models = await query
-                    .OrderBy(m => m.Category != null ? m.Category.CategoryName : "")
-                    .ThenBy(m => m.Make)
-                    .ThenBy(m => m.ModelName)
-                    .ThenByDescending(m => m.Year)
-                    .Take(1000) // Limit to 1000 models max
-                    .ToListAsync();
+                returnDate = pickupDate.Value.AddDays(7);
             }
-
-            // Get vehicle rates for this company's vehicles - this gives us company-specific rates
-            var modelIds = models.Select(m => m.Id).ToList();
-            _logger.LogInformation("Getting rates for {Count} models", modelIds.Count);
-            Dictionary<Guid, decimal?> modelRatesDict = new();
             
-            // Early return if no models found
-            if (!modelIds.Any())
+            _logger.LogInformation("GetModelsGroupedByCategory called with companyId={CompanyId}, locationId={LocationId}, pickupDate={PickupDate}, returnDate={ReturnDate}", 
+                companyId, locationId, pickupDate, returnDate);
+            
+            // Early return if no company ID
+            if (!companyId.HasValue)
             {
-                _logger.LogWarning("No models found to get rates for");
+                _logger.LogWarning("No company ID provided for GetModelsGroupedByCategory");
                 return Ok(new List<ModelsGroupedByCategoryDto>());
             }
-            
-            // Always use catalog rates from vehicle_model filtered by company
-            IQueryable<VehicleModel> vehicleModelQuery = _context.VehicleModels.Where(vm => modelIds.Contains(vm.ModelId));
-            
-            if (companyId.HasValue)
-            {
-                vehicleModelQuery = vehicleModelQuery.Where(vm => vm.CompanyId == companyId.Value);
-                _logger.LogInformation("Filtering vehicle_model by companyId: {CompanyId}", companyId.Value);
-            }
-            
-            // Group by ModelId to handle potential duplicates, then take the first one (ordered by CreatedAt)
-            var vehicleModelsDict = await vehicleModelQuery
-                .OrderBy(vm => vm.CreatedAt) // Order by creation date to get the most recent entry
-                .GroupBy(vm => vm.ModelId)
-                .Select(g => new { ModelId = g.Key, DailyRate = g.First().DailyRate })
-                .ToDictionaryAsync(x => x.ModelId, x => x.DailyRate);
-            
-            _logger.LogInformation("Found rates for {Count} vehicle_model entries", vehicleModelsDict.Count);
-            modelRatesDict = vehicleModelsDict;
 
-            // Get vehicle counts per model (only for the specified company if provided)
-            Dictionary<Guid, int> modelVehicleCountDict = new();
-            Dictionary<Guid, int> modelAvailableCountDict = new();
-            
-            if (companyId.HasValue)
+            // Log location filtering behavior
+            if (locationId.HasValue)
             {
-                // Count all vehicles per model for this specific company (and location if specified)
-                var vehicleCountsQuery = _context.Vehicles
-                    .Include(v => v.VehicleModel)
-                    .Where(v => v.CompanyId == companyId.Value && v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId));
-                
-                // Apply location filter if provided
-                if (locationId.HasValue)
-                {
-                    vehicleCountsQuery = vehicleCountsQuery.Where(v => v.LocationId == locationId.Value);
-                }
-                
-                var vehicleCounts = await vehicleCountsQuery
-                    .GroupBy(v => v.VehicleModel!.ModelId)
-                    .Select(g => new { ModelId = g.Key, Count = g.Count() })
-                    .ToListAsync();
-                
-                modelVehicleCountDict = vehicleCounts.ToDictionary(vc => vc.ModelId, vc => vc.Count);
-                
-                // Count available vehicles per model for this specific company (and location if specified)
-                var availableCountsQuery = _context.Vehicles
-                    .Include(v => v.VehicleModel)
-                    .Where(v => v.CompanyId == companyId.Value && v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId) && v.Status == VehicleStatus.Available);
-                
-                // Apply location filter if provided
-                if (locationId.HasValue)
-                {
-                    availableCountsQuery = availableCountsQuery.Where(v => v.LocationId == locationId.Value);
-                }
-                
-                var availableCounts = await availableCountsQuery
-                    .GroupBy(v => v.VehicleModel!.ModelId)
-                    .Select(g => new { ModelId = g.Key, Count = g.Count() })
-                    .ToListAsync();
-                
-                modelAvailableCountDict = availableCounts.ToDictionary(vc => vc.ModelId, vc => vc.Count);
+                _logger.LogInformation("Filtering vehicles by specific locationId: {LocationId}", locationId.Value);
             }
             else
             {
-                // Count all vehicles per model across all companies
-                var vehicleCounts = await _context.Vehicles
-                    .Include(v => v.VehicleModel)
-                    .Where(v => v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId))
-                    .GroupBy(v => v.VehicleModel!.ModelId)
-                    .Select(g => new { ModelId = g.Key, Count = g.Count() })
-                    .ToListAsync();
-                
-                modelVehicleCountDict = vehicleCounts.ToDictionary(vc => vc.ModelId, vc => vc.Count);
-                
-                // Count available vehicles per model across all companies
-                var availableCounts = await _context.Vehicles
-                    .Include(v => v.VehicleModel)
-                    .Where(v => v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId) && v.Status == VehicleStatus.Available)
-                    .GroupBy(v => v.VehicleModel!.ModelId)
-                    .Select(g => new { ModelId = g.Key, Count = g.Count() })
-                    .ToListAsync();
-                
-                modelAvailableCountDict = availableCounts.ToDictionary(vc => vc.ModelId, vc => vc.Count);
+                _logger.LogInformation("No locationId specified - searching all locations for company {CompanyId}", companyId.Value);
             }
 
-            var grouped = models
-                .Where(m => m.Category != null)
-                .GroupBy(m => new 
-                { 
-                    CategoryId = m.Category!.Id, 
-                    CategoryName = m.Category.CategoryName,
-                    CategoryDescription = m.Category.Description
-                })
-                .Where(g => g.Any()) // Only include categories that have at least one model
+            // Call stored procedure to get available vehicles
+            // Note: If locationId is NULL, the stored procedure will return vehicles from all company locations
+            var sql = @"SELECT * FROM get_available_vehicles_by_company(@p0, @p1, @p2, @p3)";
+            
+            var availableVehicles = await _context.Database
+                .SqlQueryRaw<AvailableVehicleDto>(sql, 
+                    companyId.Value, 
+                    pickupDate.Value, 
+                    returnDate.Value, 
+                    locationId.HasValue ? (object)locationId.Value : DBNull.Value)
+                .ToListAsync();
+
+            _logger.LogInformation("Stored procedure returned {Count} available vehicle models", availableVehicles.Count);
+
+            // Group by category
+            var grouped = availableVehicles
+                .Where(v => !string.IsNullOrEmpty(v.CategoryName))
+                .GroupBy(v => v.CategoryName)
                 .Select(g => new ModelsGroupedByCategoryDto
                 {
-                    CategoryId = g.Key.CategoryId,
-                    CategoryName = g.Key.CategoryName,
-                    CategoryDescription = g.Key.CategoryDescription,
-                    Models = g.Select(m => new ModelDto
+                    CategoryId = Guid.Empty, // Stored procedure doesn't return category ID
+                    CategoryName = g.Key ?? "Uncategorized",
+                    CategoryDescription = null,
+                    Models = g.Select(v => new ModelDto
                     {
-                        Id = m.Id,
-                        Make = m.Make,
-                        ModelName = m.ModelName,
-                        Year = m.Year,
-                        FuelType = m.FuelType,
-                        Transmission = m.Transmission,
-                        Seats = m.Seats,
-                        DailyRate = modelRatesDict.ContainsKey(m.Id) ? modelRatesDict[m.Id] : null,
-                        Features = m.Features,
-                        Description = m.Description,
-                        CategoryId = m.CategoryId,
-                        CategoryName = m.Category!.CategoryName,
-                        VehicleCount = modelVehicleCountDict.ContainsKey(m.Id) ? modelVehicleCountDict[m.Id] : 0,
-                        AvailableCount = modelAvailableCountDict.ContainsKey(m.Id) ? modelAvailableCountDict[m.Id] : 0
+                        Id = v.ModelId,
+                        Make = v.Make,
+                        ModelName = v.Model,
+                        Year = v.Year,
+                        FuelType = v.FuelType,
+                        Transmission = v.Transmission,
+                        Seats = v.Seats,
+                        DailyRate = v.AvgDailyRate, // Use average daily rate
+                        Features = v.ModelFeatures,
+                        Description = null,
+                        CategoryId = Guid.Empty,
+                        CategoryName = g.Key ?? "Uncategorized",
+                        VehicleCount = (int)v.AvailableCount, // Use available count as total
+                        AvailableCount = (int)v.AvailableCount
                     }).ToList()
                 })
                 .OrderBy(g => g.CategoryName)
