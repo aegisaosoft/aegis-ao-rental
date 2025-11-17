@@ -49,9 +49,10 @@ public class ModelsController : ControllerBase
     /// Get all models grouped by category
     /// </summary>
     /// <param name="companyId">Optional company ID to filter models by vehicles in company fleet. If not provided, uses company from domain context.</param>
+    /// <param name="locationId">Optional location ID to filter models by vehicles at specific location</param>
     [HttpGet("grouped-by-category")]
     [ProducesResponseType(typeof(IEnumerable<ModelsGroupedByCategoryDto>), 200)]
-    public async Task<IActionResult> GetModelsGroupedByCategory([FromQuery] Guid? companyId = null)
+    public async Task<IActionResult> GetModelsGroupedByCategory([FromQuery] Guid? companyId = null, [FromQuery] Guid? locationId = null)
     {
         try
         {
@@ -65,7 +66,7 @@ public class ModelsController : ControllerBase
                 }
             }
             
-            _logger.LogInformation("GetModelsGroupedByCategory called with companyId={CompanyId}", companyId);
+            _logger.LogInformation("GetModelsGroupedByCategory called with companyId={CompanyId}, locationId={LocationId}", companyId, locationId);
             
             var query = _context.Models
                 .Include(m => m.Category)
@@ -78,10 +79,18 @@ public class ModelsController : ControllerBase
             {
                 // Get distinct make/model combinations from vehicles for this company via vehicle_model
                 // Include ALL statuses to show all models (even if vehicles are temporarily unavailable)
-                var companyVehiclesData = await _context.Vehicles
+                var vehiclesQuery = _context.Vehicles
                     .Include(v => v.VehicleModel)
-                    .Where(v => v.CompanyId == companyId.Value)
-                    .ToListAsync();
+                    .Where(v => v.CompanyId == companyId.Value);
+                
+                // Apply location filter if provided
+                if (locationId.HasValue)
+                {
+                    vehiclesQuery = vehiclesQuery.Where(v => v.LocationId == locationId.Value);
+                    _logger.LogInformation("Filtering vehicles by locationId: {LocationId}", locationId.Value);
+                }
+                
+                var companyVehiclesData = await vehiclesQuery.ToListAsync();
                 
                 // Load Model for each VehicleModel that has one
                 foreach (var vehicle in companyVehiclesData.Where(v => v.VehicleModel != null))
@@ -194,20 +203,36 @@ public class ModelsController : ControllerBase
             
             if (companyId.HasValue)
             {
-                // Count all vehicles per model for this specific company
-                var vehicleCounts = await _context.Vehicles
+                // Count all vehicles per model for this specific company (and location if specified)
+                var vehicleCountsQuery = _context.Vehicles
                     .Include(v => v.VehicleModel)
-                    .Where(v => v.CompanyId == companyId.Value && v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId))
+                    .Where(v => v.CompanyId == companyId.Value && v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId));
+                
+                // Apply location filter if provided
+                if (locationId.HasValue)
+                {
+                    vehicleCountsQuery = vehicleCountsQuery.Where(v => v.LocationId == locationId.Value);
+                }
+                
+                var vehicleCounts = await vehicleCountsQuery
                     .GroupBy(v => v.VehicleModel!.ModelId)
                     .Select(g => new { ModelId = g.Key, Count = g.Count() })
                     .ToListAsync();
                 
                 modelVehicleCountDict = vehicleCounts.ToDictionary(vc => vc.ModelId, vc => vc.Count);
                 
-                // Count available vehicles per model for this specific company
-                var availableCounts = await _context.Vehicles
+                // Count available vehicles per model for this specific company (and location if specified)
+                var availableCountsQuery = _context.Vehicles
                     .Include(v => v.VehicleModel)
-                    .Where(v => v.CompanyId == companyId.Value && v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId) && v.Status == VehicleStatus.Available)
+                    .Where(v => v.CompanyId == companyId.Value && v.VehicleModel != null && modelIds.Contains(v.VehicleModel.ModelId) && v.Status == VehicleStatus.Available);
+                
+                // Apply location filter if provided
+                if (locationId.HasValue)
+                {
+                    availableCountsQuery = availableCountsQuery.Where(v => v.LocationId == locationId.Value);
+                }
+                
+                var availableCounts = await availableCountsQuery
                     .GroupBy(v => v.VehicleModel!.ModelId)
                     .Select(g => new { ModelId = g.Key, Count = g.Count() })
                     .ToListAsync();

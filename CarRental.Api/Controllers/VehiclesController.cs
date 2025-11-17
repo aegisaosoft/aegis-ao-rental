@@ -473,6 +473,7 @@ public class VehiclesController : ControllerBase
                     Status = v.Status.ToString(),
                     State = v.State,
                     Location = v.Location,
+                    LocationId = v.LocationId,
                     ImageUrl = v.ImageUrl,
                     Features = v.Features,
                     CreatedAt = v.CreatedAt,
@@ -557,6 +558,7 @@ public class VehiclesController : ControllerBase
                 Status = vehicle.Status.ToString(),
                 State = vehicle.State,
                 Location = vehicle.Location,
+                LocationId = vehicle.LocationId,
                 ImageUrl = vehicle.ImageUrl,
                 Features = vehicle.Features,
                 CreatedAt = vehicle.CreatedAt,
@@ -685,6 +687,7 @@ public class VehiclesController : ControllerBase
                 Status = vehicle.Status.ToString(),
                 State = vehicle.State,
                 Location = vehicle.Location,
+                LocationId = vehicle.LocationId,
                 ImageUrl = vehicle.ImageUrl,
                 Features = vehicle.Features,
                 CreatedAt = vehicle.CreatedAt,
@@ -715,11 +718,21 @@ public class VehiclesController : ControllerBase
     [ProducesResponseType(403)] // Forbidden
     public async Task<IActionResult> UpdateVehicle(Guid id, [FromBody] UpdateVehicleDto updateVehicleDto)
     {
+        _logger.LogInformation("========== UpdateVehicle called ==========");
+        _logger.LogInformation("UpdateVehicle: Vehicle ID = {VehicleId}", id);
+        _logger.LogInformation("UpdateVehicle: DTO LocationId = {LocationId}", updateVehicleDto.LocationId);
+        _logger.LogInformation("UpdateVehicle: DTO Location = {Location}", updateVehicleDto.Location);
+        
         try
         {
             var vehicle = await _context.Vehicles.FindAsync(id);
             if (vehicle == null)
+            {
+                _logger.LogWarning("UpdateVehicle: Vehicle {VehicleId} not found", id);
                 return NotFound();
+            }
+            
+            _logger.LogInformation("UpdateVehicle: Found vehicle, current LocationId = {CurrentLocationId}", vehicle.LocationId);
 
             // Check if user has admin privileges
             if (!HasAdminPrivileges())
@@ -756,8 +769,20 @@ public class VehiclesController : ControllerBase
             if (updateVehicleDto.Location != null)
                 vehicle.Location = updateVehicleDto.Location;
 
+            _logger.LogInformation("UpdateVehicle: LocationId from DTO - HasValue: {HasValue}, Value: {Value}", 
+                updateVehicleDto.LocationId.HasValue, 
+                updateVehicleDto.LocationId.HasValue ? updateVehicleDto.LocationId.Value : "null");
+            
             if (updateVehicleDto.LocationId.HasValue)
+            {
+                _logger.LogInformation("UpdateVehicle: Setting vehicle.LocationId to {LocationId}", updateVehicleDto.LocationId.Value);
                 vehicle.LocationId = updateVehicleDto.LocationId.Value;
+            }
+            else
+            {
+                _logger.LogInformation("UpdateVehicle: LocationId.HasValue is false, setting LocationId to null");
+                vehicle.LocationId = null; // Explicitly set to null to unassign
+            }
 
             if (updateVehicleDto.ImageUrl != null)
                 vehicle.ImageUrl = updateVehicleDto.ImageUrl;
@@ -770,7 +795,9 @@ public class VehiclesController : ControllerBase
 
             vehicle.UpdatedAt = DateTime.UtcNow;
 
+            _logger.LogInformation("UpdateVehicle: About to save changes. Final LocationId = {LocationId}", vehicle.LocationId);
             await _context.SaveChangesAsync();
+            _logger.LogInformation("UpdateVehicle: Changes saved successfully");
 
             // Load related data for response
             await _context.Entry(vehicle)
@@ -821,6 +848,7 @@ public class VehiclesController : ControllerBase
                 Status = vehicle.Status.ToString(),
                 State = vehicle.State,
                 Location = vehicle.Location,
+                LocationId = vehicle.LocationId,
                 ImageUrl = vehicle.ImageUrl,
                 Features = vehicle.Features,
                 CreatedAt = vehicle.CreatedAt,
