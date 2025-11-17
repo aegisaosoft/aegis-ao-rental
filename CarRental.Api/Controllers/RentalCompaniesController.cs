@@ -150,7 +150,7 @@ public class RentalCompaniesController : ControllerBase
                 Country = c.Country,
                 BlinkKey = c.BlinkKey,
                 SecurityDeposit = c.SecurityDeposit,
-                IsSecurityDepositMandatory = c.IsSecurityDepositMandatory ?? true,
+                IsSecurityDepositMandatory = c.IsSecurityDepositMandatory.GetValueOrDefault(true),
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -201,7 +201,7 @@ public class RentalCompaniesController : ControllerBase
             Country = company.Country,
             BlinkKey = company.BlinkKey,
             SecurityDeposit = company.SecurityDeposit,
-            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true,
+            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true),
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -252,7 +252,7 @@ public class RentalCompaniesController : ControllerBase
             Country = company.Country,
             BlinkKey = company.BlinkKey,
             SecurityDeposit = company.SecurityDeposit,
-            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true,
+            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true),
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -357,7 +357,7 @@ public class RentalCompaniesController : ControllerBase
                 Country = company.Country,
                 BlinkKey = company.BlinkKey,
                 SecurityDeposit = company.SecurityDeposit,
-                IsSecurityDepositMandatory = company.IsSecurityDepositMandatory ?? true,
+                IsSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true),
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -490,8 +490,8 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.SecurityDeposit.HasValue)
             company.SecurityDeposit = updateCompanyDto.SecurityDeposit.Value;
 
-        if (updateCompanyDto.IsSecurityDepositMandatory.HasValue)
-            company.IsSecurityDepositMandatory = updateCompanyDto.IsSecurityDepositMandatory.Value;
+        // Always update IsSecurityDepositMandatory, treat null as true (default value)
+        company.IsSecurityDepositMandatory = updateCompanyDto.IsSecurityDepositMandatory ?? true;
 
         company.UpdatedAt = DateTime.UtcNow;
 

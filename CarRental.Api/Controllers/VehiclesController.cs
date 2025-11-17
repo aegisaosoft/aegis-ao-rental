@@ -272,6 +272,7 @@ public class VehiclesController : ControllerBase
         [FromQuery] string? licensePlate = null,
         [FromQuery] string? status = null,
         [FromQuery] string? location = null,
+        [FromQuery] Guid? locationId = null,
         [FromQuery] decimal? minPrice = null,
         [FromQuery] decimal? maxPrice = null,
         [FromQuery] DateTime? availableFrom = null,
@@ -298,6 +299,9 @@ public class VehiclesController : ControllerBase
 
             if (!string.IsNullOrEmpty(location))
                 query = query.Where(v => v.Location != null && v.Location.Contains(location));
+
+            if (locationId.HasValue)
+                query = query.Where(v => v.LocationId == locationId.Value);
 
             // Filter by daily_rate from vehicle_model
             if (minPrice.HasValue)
@@ -406,8 +410,11 @@ public class VehiclesController : ControllerBase
             var totalCount = await query.CountAsync();
 
             // Get paginated vehicles first (before loading relations)
+            // Order by Make, then Model, then Year
             var vehiclesData = await query
-                .OrderBy(v => v.VehicleModel != null ? v.VehicleModel.DailyRate : 0)
+                .OrderBy(v => v.VehicleModel != null && v.VehicleModel.Model != null ? v.VehicleModel.Model.Make : "")
+                .ThenBy(v => v.VehicleModel != null && v.VehicleModel.Model != null ? v.VehicleModel.Model.ModelName : "")
+                .ThenBy(v => v.VehicleModel != null && v.VehicleModel.Model != null ? v.VehicleModel.Model.Year : 0)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync();
@@ -748,6 +755,9 @@ public class VehiclesController : ControllerBase
 
             if (updateVehicleDto.Location != null)
                 vehicle.Location = updateVehicleDto.Location;
+
+            if (updateVehicleDto.LocationId.HasValue)
+                vehicle.LocationId = updateVehicleDto.LocationId.Value;
 
             if (updateVehicleDto.ImageUrl != null)
                 vehicle.ImageUrl = updateVehicleDto.ImageUrl;

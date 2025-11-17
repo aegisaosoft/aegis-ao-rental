@@ -183,13 +183,19 @@ public class LocationsController : ControllerBase
     // GET: api/Locations/pickup
     [HttpGet("pickup")]
     [AllowAnonymous] // Allow anonymous access for public pickup locations
-    public async Task<ActionResult<IEnumerable<LocationDto>>> GetPickupLocations()
+    public async Task<ActionResult<IEnumerable<LocationDto>>> GetPickupLocations([FromQuery] Guid? companyId = null)
     {
         try
         {
             var query = _context.Locations
                 .AsNoTracking() // Don't track entities to avoid circular references
-                .Where(l => l.IsActive); // Show all active locations
+                .Where(l => l.IsActive && l.IsPickupLocation); // Show all active pickup locations
+            
+            // Filter by companyId if provided
+            if (companyId.HasValue)
+            {
+                query = query.Where(l => l.CompanyId == companyId.Value);
+            }
 
             var locations = await query
                 .OrderBy(l => l.LocationName)
