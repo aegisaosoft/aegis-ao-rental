@@ -146,7 +146,7 @@ public class CreateRentalCompanyDto
     
     public string? TermsOfUse { get; set; }
     
-    public string? BookingIntegrated { get; set; }
+    public bool BookingIntegrated { get; set; }
     
     public string? CompanyPath { get; set; }
     
@@ -222,7 +222,7 @@ public class UpdateRentalCompanyDto
     [JsonPropertyName("termsOfUse")]
     public string? TermsOfUse { get; set; }
     
-    public string? BookingIntegrated { get; set; }
+    public bool? BookingIntegrated { get; set; }
     
     public string? CompanyPath { get; set; }
     
@@ -248,6 +248,9 @@ public class UpdateRentalCompanyDto
     
     [MaxLength(3)]
     public string? Currency { get; set; }
+    
+    [MaxLength(10)]
+    public string? Language { get; set; }
 
     public string? BlinkKey { get; set; } // BlinkID license key for the company
 

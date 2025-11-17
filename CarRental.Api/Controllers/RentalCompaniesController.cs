@@ -289,7 +289,7 @@ public class RentalCompaniesController : ControllerBase
             Texts = createCompanyDto.Texts,
             BackgroundLink = createCompanyDto.BackgroundLink,
             About = createCompanyDto.About,
-            BookingIntegrated = createCompanyDto.BookingIntegrated,
+            BookingIntegrated = createCompanyDto.BookingIntegrated ? "true" : "false",
             CompanyPath = createCompanyDto.CompanyPath,
             Subdomain = createCompanyDto.Subdomain,
             PrimaryColor = createCompanyDto.PrimaryColor,
@@ -439,8 +439,8 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.TermsOfUse != null)
             company.TermsOfUse = updateCompanyDto.TermsOfUse;
 
-        if (updateCompanyDto.BookingIntegrated != null)
-            company.BookingIntegrated = updateCompanyDto.BookingIntegrated;
+        if (updateCompanyDto.BookingIntegrated.HasValue)
+            company.BookingIntegrated = updateCompanyDto.BookingIntegrated.Value ? "true" : "false";
 
         if (updateCompanyDto.CompanyPath != null)
             company.CompanyPath = updateCompanyDto.CompanyPath;
@@ -477,6 +477,12 @@ public class RentalCompaniesController : ControllerBase
         {
             company.Currency = CurrencyHelper.GetCurrencyForCountry(company.Country);
         }
+
+        if (updateCompanyDto.Language != null)
+            company.Language = updateCompanyDto.Language;
+
+        if (updateCompanyDto.BlinkKey != null)
+            company.BlinkKey = updateCompanyDto.BlinkKey;
 
         if (updateCompanyDto.IsActive.HasValue)
             company.IsActive = updateCompanyDto.IsActive.Value;
