@@ -119,28 +119,28 @@ public class ModelsController : ControllerBase
             // Group by category
             var grouped = availableVehicles
                 .Where(v => !string.IsNullOrEmpty(v.CategoryName))
-                .GroupBy(v => v.CategoryName)
+                .GroupBy(v => new { v.CategoryId, v.CategoryName })
                 .Select(g => new ModelsGroupedByCategoryDto
                 {
-                    CategoryId = Guid.Empty, // Stored procedure doesn't return category ID
-                    CategoryName = g.Key ?? "Uncategorized",
+                    CategoryId = g.Key.CategoryId ?? Guid.Empty,
+                    CategoryName = g.Key.CategoryName ?? "Uncategorized",
                     CategoryDescription = null,
                     Models = g.Select(v => new ModelDto
                     {
                         Id = v.ModelId,
                         Make = v.Make,
                         ModelName = v.Model,
-                        Year = v.Year,
+                        Year = ParseFirstYear(v.YearsAvailable),
                         FuelType = v.FuelType,
                         Transmission = v.Transmission,
                         Seats = v.Seats,
                         DailyRate = v.AvgDailyRate, // Use average daily rate
                         Features = v.ModelFeatures,
                         Description = null,
-                        CategoryId = Guid.Empty,
-                        CategoryName = g.Key ?? "Uncategorized",
-                        VehicleCount = (int)v.AvailableCount, // Use available count as total
-                        AvailableCount = (int)v.AvailableCount
+                        CategoryId = v.CategoryId,
+                        CategoryName = v.CategoryName ?? "Uncategorized",
+                        VehicleCount = (int)v.AllVehiclesCount, // Total vehicles for this model
+                        AvailableCount = (int)v.AvailableCount // Available during selected dates
                     }).ToList()
                 })
                 .OrderBy(g => g.CategoryName)
@@ -471,6 +471,20 @@ public class ModelsController : ControllerBase
             _logger.LogError(ex, "Error bulk updating models daily rate");
             return StatusCode(500, new { message = "Internal server error" });
         }
+    }
+
+    /// <summary>
+    /// Parses the first year from a comma-separated string of years
+    /// </summary>
+    /// <param name="yearsString">Comma-separated years string (e.g., "2020, 2021, 2022")</param>
+    /// <returns>The first year as an integer, or 0 if parsing fails</returns>
+    private static int ParseFirstYear(string? yearsString)
+    {
+        if (string.IsNullOrWhiteSpace(yearsString))
+            return 0;
+
+        var firstYear = yearsString.Split(',')[0].Trim();
+        return int.TryParse(firstYear, out var year) ? year : 0;
     }
 }
 

@@ -1314,9 +1314,10 @@ public class BookingController : ControllerBase
 
             if (status == "PickedUp")
             {
-                var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
-                if (vehicle != null)
-                    vehicle.Status = VehicleStatus.Rented;
+                // Don't automatically change vehicle status - manual control required
+                // var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+                // if (vehicle != null)
+                //     vehicle.Status = VehicleStatus.Rented;
 
                 // Charge security deposit when booking status changes to PickedUp
                 if (reservation.SecurityDeposit == 0)
@@ -1431,9 +1432,10 @@ public class BookingController : ControllerBase
             }
             else if (status == "Returned" || status == "Cancelled")
             {
-                var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
-                if (vehicle != null)
-                    vehicle.Status = VehicleStatus.Available;
+                // Don't automatically change vehicle status - manual control required
+                // var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+                // if (vehicle != null)
+                //     vehicle.Status = VehicleStatus.Available;
             }
 
             await _context.SaveChangesAsync();
@@ -1514,9 +1516,10 @@ public class BookingController : ControllerBase
             reservation.Status = "Cancelled";
             reservation.UpdatedAt = DateTime.UtcNow;
 
-            var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
-            if (vehicle != null)
-                vehicle.Status = VehicleStatus.Available;
+            // Don't automatically change vehicle status - manual control required
+            // var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+            // if (vehicle != null)
+            //     vehicle.Status = VehicleStatus.Available;
 
             await _context.SaveChangesAsync();
 
@@ -1645,9 +1648,10 @@ public class BookingController : ControllerBase
             if (reservation == null)
                 return NotFound();
 
-            var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
-            if (vehicle != null && vehicle.Status == VehicleStatus.Rented)
-                vehicle.Status = VehicleStatus.Available;
+            // Don't automatically change vehicle status - manual control required
+            // var vehicle = await _context.Vehicles.FindAsync(reservation.VehicleId);
+            // if (vehicle != null && vehicle.Status == VehicleStatus.Rented)
+            //     vehicle.Status = VehicleStatus.Available;
 
             _context.Bookings.Remove(reservation);
             await _context.SaveChangesAsync();
