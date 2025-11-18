@@ -150,7 +150,7 @@ public class RentalCompaniesController : ControllerBase
                 Country = c.Country,
                 BlinkKey = c.BlinkKey,
                 SecurityDeposit = c.SecurityDeposit,
-                IsSecurityDepositMandatory = c.IsSecurityDepositMandatory.GetValueOrDefault(true),
+                IsSecurityDepositMandatory = c.IsSecurityDepositMandatory,
                 IsActive = c.IsActive,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
@@ -201,7 +201,7 @@ public class RentalCompaniesController : ControllerBase
             Country = company.Country,
             BlinkKey = company.BlinkKey,
             SecurityDeposit = company.SecurityDeposit,
-            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true),
+            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -252,7 +252,7 @@ public class RentalCompaniesController : ControllerBase
             Country = company.Country,
             BlinkKey = company.BlinkKey,
             SecurityDeposit = company.SecurityDeposit,
-            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true),
+            IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
             IsActive = company.IsActive,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
@@ -357,7 +357,7 @@ public class RentalCompaniesController : ControllerBase
                 Country = company.Country,
                 BlinkKey = company.BlinkKey,
                 SecurityDeposit = company.SecurityDeposit,
-                IsSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true),
+                IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
                 IsActive = company.IsActive,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
@@ -378,6 +378,9 @@ public class RentalCompaniesController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateRentalCompany(Guid id, UpdateRentalCompanyDto updateCompanyDto)
     {
+        _logger.LogInformation("UpdateRentalCompany called with SecurityDeposit={SecurityDeposit}, IsSecurityDepositMandatory={IsSecurityDepositMandatory}", 
+            updateCompanyDto.SecurityDeposit, updateCompanyDto.IsSecurityDepositMandatory);
+        
         var company = await _context.Companies.FindAsync(id);
 
         if (company == null)
@@ -490,8 +493,13 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.SecurityDeposit.HasValue)
             company.SecurityDeposit = updateCompanyDto.SecurityDeposit.Value;
 
-        // Always update IsSecurityDepositMandatory, treat null as true (default value)
-        company.IsSecurityDepositMandatory = updateCompanyDto.IsSecurityDepositMandatory ?? true;
+        // Always update IsSecurityDepositMandatory if provided
+        if (updateCompanyDto.IsSecurityDepositMandatory.HasValue)
+        {
+            _logger.LogInformation("Updating IsSecurityDepositMandatory: Current={Current}, New={New}", 
+                company.IsSecurityDepositMandatory, updateCompanyDto.IsSecurityDepositMandatory.Value);
+            company.IsSecurityDepositMandatory = updateCompanyDto.IsSecurityDepositMandatory.Value;
+        }
 
         company.UpdatedAt = DateTime.UtcNow;
 
@@ -499,6 +507,9 @@ public class RentalCompaniesController : ControllerBase
         {
             _context.Companies.Update(company);
             await _context.SaveChangesAsync();
+            
+            _logger.LogInformation("Successfully saved company {CompanyId}. IsSecurityDepositMandatory is now: {IsSecurityDepositMandatory}", 
+                company.Id, company.IsSecurityDepositMandatory);
 
             // Update Stripe Connect account if exists
             if (!string.IsNullOrEmpty(company.StripeAccountId))

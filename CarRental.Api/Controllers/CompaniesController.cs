@@ -118,7 +118,7 @@ public class CompaniesController : ControllerBase
                 createdAt = c.CreatedAt,
                 updatedAt = c.UpdatedAt,
                 securityDeposit = c.SecurityDeposit,
-                isSecurityDepositMandatory = c.IsSecurityDepositMandatory.GetValueOrDefault(true)
+                isSecurityDepositMandatory = c.IsSecurityDepositMandatory
             });
 
             return Ok(result);
@@ -179,7 +179,7 @@ public class CompaniesController : ControllerBase
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
                 securityDeposit = company.SecurityDeposit,
-                isSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true)
+                isSecurityDepositMandatory = company.IsSecurityDepositMandatory
             };
 
             return Ok(result);
@@ -327,7 +327,7 @@ public class CompaniesController : ControllerBase
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
                 securityDeposit = company.SecurityDeposit,
-                isSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true)
+                isSecurityDepositMandatory = company.IsSecurityDepositMandatory
             };
 
             return CreatedAtAction(nameof(GetCompany), new { id = company.Id }, result);
@@ -525,7 +525,7 @@ public class CompaniesController : ControllerBase
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
                 securityDeposit = company.SecurityDeposit,
-                isSecurityDepositMandatory = company.IsSecurityDepositMandatory.GetValueOrDefault(true)
+                isSecurityDepositMandatory = company.IsSecurityDepositMandatory
             };
 
             return Ok(result);

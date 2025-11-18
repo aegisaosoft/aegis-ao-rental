@@ -126,7 +126,7 @@ public class Company
     public decimal SecurityDeposit { get; set; } = 1000m;
 
     [Column("is_security_deposit_mandatory")]
-    public bool? IsSecurityDepositMandatory { get; set; } = true;
+    public bool IsSecurityDepositMandatory { get; set; } = true;
 
     [MaxLength(10)]
     [Column("language")]
