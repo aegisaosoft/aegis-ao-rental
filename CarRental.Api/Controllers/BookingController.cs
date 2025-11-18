@@ -1064,7 +1064,7 @@ public class BookingController : ControllerBase
             if (company == null)
                 return BadRequest("Company not found");
 
-            var totalDays = (int)(createReservationDto.ReturnDate - createReservationDto.PickupDate).TotalDays;
+            var totalDays = (int)(createReservationDto.ReturnDate - createReservationDto.PickupDate).TotalDays + 1;
             var subtotal = createReservationDto.DailyRate * totalDays;
             var totalAmount = subtotal + createReservationDto.TaxAmount + createReservationDto.InsuranceAmount + createReservationDto.AdditionalFees;
 
@@ -1218,7 +1218,7 @@ public class BookingController : ControllerBase
 
             if (updateReservationDto.PickupDate.HasValue || updateReservationDto.ReturnDate.HasValue)
             {
-                reservation.TotalDays = (int)(reservation.ReturnDate - reservation.PickupDate).TotalDays;
+                reservation.TotalDays = (int)(reservation.ReturnDate - reservation.PickupDate).TotalDays + 1;
                 reservation.Subtotal = reservation.DailyRate * reservation.TotalDays;
             }
 
