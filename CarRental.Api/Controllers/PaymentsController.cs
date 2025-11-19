@@ -321,17 +321,24 @@ public class PaymentsController : ControllerBase
                         { "customer_id", customer.Id.ToString() },
                         { "company_id", dto.CompanyId.ToString() }
                     }
+                },
+                Metadata = new Dictionary<string, string>
+                {
+                    { "customer_id", customer.Id.ToString() },
+                    { "company_id", dto.CompanyId.ToString() }
                 }
             };
 
             if (bookingId.HasValue)
             {
                 sessionOptions.PaymentIntentData.Metadata!["booking_id"] = bookingId.Value.ToString();
+                sessionOptions.Metadata!["booking_id"] = bookingId.Value.ToString();
             }
 
             if (!string.IsNullOrWhiteSpace(dto.BookingNumber))
             {
                 sessionOptions.PaymentIntentData.Metadata!["booking_number"] = dto.BookingNumber;
+                sessionOptions.Metadata!["booking_number"] = dto.BookingNumber;
             }
 
             if (!string.IsNullOrWhiteSpace(company.StripeAccountId))

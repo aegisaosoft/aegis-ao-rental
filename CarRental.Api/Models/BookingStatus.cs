@@ -51,6 +51,16 @@ public static class BookingStatus
     public const string NoShow = "NoShow";
     
     /// <summary>
+    /// Booking is currently active (vehicle picked up and in use)
+    /// </summary>
+    public const string Active = "Active";
+    
+    /// <summary>
+    /// Booking has been completed (vehicle returned and booking closed)
+    /// </summary>
+    public const string Completed = "Completed";
+    
+    /// <summary>
     /// Get all valid status values
     /// </summary>
     public static readonly string[] AllStatuses = new[]
@@ -60,7 +70,9 @@ public static class BookingStatus
         PickedUp,
         Returned,
         Cancelled,
-        NoShow
+        NoShow,
+        Active,
+        Completed
     };
     
     /// <summary>

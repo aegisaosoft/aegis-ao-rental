@@ -74,6 +74,37 @@ public class BookingDto
     public string? VehicleName { get; set; }
     public string? LicensePlate { get; set; }
     public string? CompanyName { get; set; }
+    
+    // Payment information
+    public string? PaymentMethod { get; set; }
+    public string? PaymentStatus { get; set; }
+    public string? StripePaymentIntentId { get; set; }
+    public DateTime? PaymentDate { get; set; }
+    public decimal? RefundAmount { get; set; }
+    
+    // Security deposit information
+    public string? SecurityDepositPaymentIntentId { get; set; }
+    public string? SecurityDepositStatus { get; set; }
+    public DateTime? SecurityDepositAuthorizedAt { get; set; }
+    public DateTime? SecurityDepositCapturedAt { get; set; }
+    public DateTime? SecurityDepositReleasedAt { get; set; }
+    public decimal? SecurityDepositChargedAmount { get; set; }
+    
+    // Refund records
+    public List<RefundRecordDto> RefundRecords { get; set; } = new List<RefundRecordDto>();
+}
+
+public class RefundRecordDto
+{
+    public Guid Id { get; set; }
+    public Guid? BookingId { get; set; }
+    public string StripeRefundId { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string? RefundType { get; set; }
+    public string? Reason { get; set; }
+    public string? Status { get; set; }
+    public Guid? ProcessedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
 
 public class CreateBookingDto

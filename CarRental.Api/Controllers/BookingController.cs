@@ -35,17 +35,23 @@ public class BookingController : ControllerBase
     private readonly IEmailService _emailService;
     private readonly IStripeService _stripeService;
     private readonly ILogger<BookingController> _logger;
+    private readonly IConfiguration _configuration;
+    private readonly ISettingsService _settingsService;
 
     public BookingController(
         CarRentalDbContext context,
         IEmailService emailService,
         IStripeService stripeService,
-        ILogger<BookingController> logger)
+        ILogger<BookingController> logger,
+        IConfiguration configuration,
+        ISettingsService settingsService)
     {
         _context = context;
         _emailService = emailService;
         _stripeService = stripeService;
         _logger = logger;
+        _configuration = configuration;
+        _settingsService = settingsService;
     }
 
     /// <summary>
@@ -868,6 +874,8 @@ public class BookingController : ControllerBase
                 .Include(r => r.Vehicle)
                     .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
+                .Include(r => r.Payments)
+                .Include(r => r.RefundRecords)
                 .Where(r => r.CompanyId == companyId)
                 .AsQueryable();
 
@@ -916,37 +924,72 @@ public class BookingController : ControllerBase
                     .LoadAsync();
             }
 
-            var result = bookings.Select(r => new BookingDto
+            var result = bookings.Select(r =>
             {
-                Id = r.Id,
-                CustomerId = r.CustomerId,
-                CustomerName = $"{r.Customer.FirstName} {r.Customer.LastName}",
-                CustomerEmail = r.Customer.Email,
-                VehicleId = r.VehicleId,
-                VehicleName = r.Vehicle?.VehicleModel?.Model != null
-                    ? $"{r.Vehicle.VehicleModel.Model.Make} {r.Vehicle.VehicleModel.Model.ModelName} ({r.Vehicle.VehicleModel.Model.Year})"
-                    : "Unknown Vehicle",
-                LicensePlate = r.Vehicle?.LicensePlate ?? "",
-                CompanyId = r.CompanyId,
-                CompanyName = r.Company.CompanyName,
-                BookingNumber = r.BookingNumber,
-                AltBookingNumber = r.AltBookingNumber,
-                PickupDate = r.PickupDate,
-                ReturnDate = r.ReturnDate,
-                PickupLocation = r.PickupLocation,
-                ReturnLocation = r.ReturnLocation,
-                DailyRate = r.DailyRate,
-                TotalDays = r.TotalDays,
-                Subtotal = r.Subtotal,
-                TaxAmount = r.TaxAmount,
-                InsuranceAmount = r.InsuranceAmount,
-                AdditionalFees = r.AdditionalFees,
-                TotalAmount = r.TotalAmount,
-                SecurityDeposit = r.SecurityDeposit,
-                Status = r.Status,
-                Notes = r.Notes,
-                CreatedAt = r.CreatedAt,
-                UpdatedAt = r.UpdatedAt
+                // Get the most recent successful payment
+                var payment = r.Payments
+                    .Where(p => p.Status == "succeeded")
+                    .OrderByDescending(p => p.CreatedAt)
+                    .FirstOrDefault();
+                    
+                return new BookingDto
+                {
+                    Id = r.Id,
+                    CustomerId = r.CustomerId,
+                    CustomerName = $"{r.Customer.FirstName} {r.Customer.LastName}",
+                    CustomerEmail = r.Customer.Email,
+                    VehicleId = r.VehicleId,
+                    VehicleName = r.Vehicle?.VehicleModel?.Model != null
+                        ? $"{r.Vehicle.VehicleModel.Model.Make} {r.Vehicle.VehicleModel.Model.ModelName} ({r.Vehicle.VehicleModel.Model.Year})"
+                        : "Unknown Vehicle",
+                    LicensePlate = r.Vehicle?.LicensePlate ?? "",
+                    CompanyId = r.CompanyId,
+                    CompanyName = r.Company.CompanyName,
+                    BookingNumber = r.BookingNumber,
+                    AltBookingNumber = r.AltBookingNumber,
+                    PickupDate = r.PickupDate,
+                    ReturnDate = r.ReturnDate,
+                    PickupLocation = r.PickupLocation,
+                    ReturnLocation = r.ReturnLocation,
+                    DailyRate = r.DailyRate,
+                    TotalDays = r.TotalDays,
+                    Subtotal = r.Subtotal,
+                    TaxAmount = r.TaxAmount,
+                    InsuranceAmount = r.InsuranceAmount,
+                    AdditionalFees = r.AdditionalFees,
+                    TotalAmount = r.TotalAmount,
+                    SecurityDeposit = r.SecurityDeposit,
+                    Status = r.Status,
+                    Notes = r.Notes,
+                    CreatedAt = r.CreatedAt,
+                    UpdatedAt = r.UpdatedAt,
+                    // Payment information
+                    PaymentMethod = payment?.PaymentMethod,
+                    PaymentStatus = payment?.Status ?? "Unpaid",
+                    StripePaymentIntentId = payment?.StripePaymentIntentId,
+                    PaymentDate = payment?.CreatedAt,
+                    RefundAmount = payment?.RefundAmount,
+                    // Security deposit information
+                    SecurityDepositPaymentIntentId = r.SecurityDepositPaymentIntentId,
+                    SecurityDepositStatus = r.SecurityDepositStatus,
+                    SecurityDepositAuthorizedAt = r.SecurityDepositAuthorizedAt,
+                    SecurityDepositCapturedAt = r.SecurityDepositCapturedAt,
+                    SecurityDepositReleasedAt = r.SecurityDepositReleasedAt,
+                    SecurityDepositChargedAmount = r.SecurityDepositChargedAmount,
+                    // Refund records
+                    RefundRecords = r.RefundRecords.Select(refund => new RefundRecordDto
+                    {
+                        Id = refund.Id,
+                        BookingId = refund.BookingId,
+                        StripeRefundId = refund.StripeRefundId,
+                        Amount = refund.Amount,
+                        RefundType = refund.RefundType,
+                        Reason = refund.Reason,
+                        Status = refund.Status,
+                        ProcessedBy = refund.ProcessedBy,
+                        CreatedAt = refund.CreatedAt
+                    }).ToList()
+                };
             }).ToList();
 
             return Ok(new PaginatedResult<BookingDto>(result, totalCount, page, pageSize));
@@ -978,6 +1021,8 @@ public class BookingController : ControllerBase
                 .Include(r => r.Vehicle)
                     .ThenInclude(v => v.VehicleModel)
                 .Include(r => r.Company)
+                .Include(r => r.Payments)
+                .Include(r => r.RefundRecords)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             if (reservation == null)
@@ -990,6 +1035,12 @@ public class BookingController : ControllerBase
                     .LoadAsync();
             }
 
+            // Get the most recent successful payment
+            var payment = reservation.Payments
+                .Where(p => p.Status == "succeeded")
+                .OrderByDescending(p => p.CreatedAt)
+                .FirstOrDefault();
+                
             var reservationDto = new BookingDto
             {
                 Id = reservation.Id,
@@ -1020,7 +1071,33 @@ public class BookingController : ControllerBase
                 Status = reservation.Status,
                 Notes = reservation.Notes,
                 CreatedAt = reservation.CreatedAt,
-                UpdatedAt = reservation.UpdatedAt
+                UpdatedAt = reservation.UpdatedAt,
+                // Payment information
+                PaymentMethod = payment?.PaymentMethod,
+                PaymentStatus = payment?.Status ?? "Unpaid",
+                StripePaymentIntentId = payment?.StripePaymentIntentId,
+                PaymentDate = payment?.CreatedAt,
+                RefundAmount = payment?.RefundAmount,
+                // Security deposit information
+                SecurityDepositPaymentIntentId = reservation.SecurityDepositPaymentIntentId,
+                SecurityDepositStatus = reservation.SecurityDepositStatus,
+                SecurityDepositAuthorizedAt = reservation.SecurityDepositAuthorizedAt,
+                SecurityDepositCapturedAt = reservation.SecurityDepositCapturedAt,
+                SecurityDepositReleasedAt = reservation.SecurityDepositReleasedAt,
+                SecurityDepositChargedAmount = reservation.SecurityDepositChargedAmount,
+                // Refund records
+                RefundRecords = reservation.RefundRecords.Select(refund => new RefundRecordDto
+                {
+                    Id = refund.Id,
+                    BookingId = refund.BookingId,
+                    StripeRefundId = refund.StripeRefundId,
+                    Amount = refund.Amount,
+                    RefundType = refund.RefundType,
+                    Reason = refund.Reason,
+                    Status = refund.Status,
+                    ProcessedBy = refund.ProcessedBy,
+                    CreatedAt = refund.CreatedAt
+                }).ToList()
             };
 
             return Ok(reservationDto);
@@ -1665,6 +1742,851 @@ public class BookingController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Refund a payment for a booking
+    /// </summary>
+    /// <param name="id">Booking ID</param>
+    /// <param name="refundRequest">Refund request details</param>
+    /// <returns>Refund result</returns>
+    [HttpPost("{id}/refund")]
+    [Authorize]
+    [ProducesResponseType(typeof(object), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> RefundPayment(Guid id, [FromBody] RefundPaymentRequest refundRequest)
+    {
+        try
+        {
+            var booking = await _context.Bookings
+                .Include(b => b.Payments)
+                .Include(b => b.Customer)
+                .Include(b => b.Company)
+                .FirstOrDefaultAsync(b => b.Id == id);
+
+            if (booking == null)
+                return NotFound("Booking not found");
+
+            // Find the successful payment for this booking
+            var payment = booking.Payments
+                .FirstOrDefault(p => p.Status == "succeeded" && !string.IsNullOrEmpty(p.StripePaymentIntentId));
+
+            if (payment == null)
+                return BadRequest("No successful payment found for this booking");
+
+            if (string.IsNullOrEmpty(payment.StripePaymentIntentId))
+                return BadRequest("No Stripe Payment Intent ID found");
+
+            // Check if already refunded
+            if (payment.Status == "refunded")
+                return BadRequest("Payment has already been refunded");
+
+            // Process refund through Stripe
+            try
+            {
+                var refundAmount = refundRequest.Amount > 0 
+                    ? refundRequest.Amount 
+                    : booking.TotalAmount;
+
+                var refund = await _stripeService.CreateRefundAsync(
+                    payment.StripePaymentIntentId,
+                    refundAmount
+                );
+
+                if (refund != null && refund.Status == "succeeded")
+                {
+                    // Update payment status
+                    payment.Status = "refunded";
+                    payment.RefundAmount = refundAmount;
+                    payment.RefundDate = DateTime.UtcNow;
+                    payment.UpdatedAt = DateTime.UtcNow;
+
+                    // Update booking status
+                    booking.Status = "Cancelled";
+                    booking.UpdatedAt = DateTime.UtcNow;
+
+                    // Get current user ID from claims
+                    var userIdClaim = User.FindFirst("nameid") ?? User.FindFirst("sub") ?? User.FindFirst("customer_id");
+                    Guid? processedBy = userIdClaim != null && Guid.TryParse(userIdClaim.Value, out var userId) ? userId : null;
+
+                    // Create refund record
+                    var refundRecord = new RefundRecord
+                    {
+                        BookingId = booking.Id,
+                        StripeRefundId = refund.Id,
+                        Amount = refundAmount,
+                        RefundType = "manual", // Can be "manual", "partial", "full", etc.
+                        Reason = refundRequest.Reason ?? "Booking cancellation",
+                        Status = refund.Status,
+                        ProcessedBy = processedBy,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    _context.RefundRecords.Add(refundRecord);
+                    await _context.SaveChangesAsync();
+
+                    _logger.LogInformation(
+                        "Refunded ${Amount} for booking {BookingId} (Payment Intent: {PaymentIntentId}, Refund ID: {RefundId}, Processed by: {ProcessedBy})",
+                        refundAmount,
+                        id,
+                        payment.StripePaymentIntentId,
+                        refund.Id,
+                        processedBy?.ToString() ?? "System"
+                    );
+
+                    return Ok(new
+                    {
+                        success = true,
+                        refundId = refund.Id,
+                        refundRecordId = refundRecord.Id,
+                        amount = refundAmount,
+                        currency = refund.Currency,
+                        status = refund.Status,
+                        message = "Refund processed successfully"
+                    });
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Refund failed for booking {BookingId}: {Status}",
+                        id,
+                        refund?.Status ?? "unknown"
+                    );
+                    return BadRequest("Refund failed: " + (refund?.Status ?? "unknown error"));
+                }
+            }
+            catch (Stripe.StripeException stripeEx)
+            {
+                _logger.LogError(stripeEx, "Stripe error processing refund for booking {BookingId}", id);
+                return BadRequest($"Stripe error: {stripeEx.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing refund for booking {BookingId}", id);
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    #endregion
+
+    #region Stripe Payment Sync
+
+    /// <summary>
+    /// Sync payment information from Stripe for a specific booking
+    /// </summary>
+    [HttpPost("{id}/sync-payment")]
+    public async Task<IActionResult> SyncPaymentFromStripe(Guid id)
+    {
+        _logger.LogInformation("=== SyncPaymentFromStripe called for booking {BookingId} ===", id);
+        
+        try
+        {
+            _logger.LogInformation("Fetching booking from database...");
+            var booking = await _context.Bookings
+                .Include(b => b.Payments)
+                .FirstOrDefaultAsync(b => b.Id == id);
+
+            if (booking == null)
+            {
+                _logger.LogWarning("Booking {BookingId} not found", id);
+                return NotFound("Booking not found");
+            }
+
+            _logger.LogInformation("Booking found: {BookingNumber}, Current PaymentIntentId: {PaymentIntentId}", 
+                booking.BookingNumber, booking.StripePaymentIntentId ?? "null");
+
+            // Configure Stripe API key from database
+            _logger.LogInformation("Retrieving Stripe API key from database...");
+            var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+            if (string.IsNullOrEmpty(stripeSecretKey))
+            {
+                _logger.LogError("Stripe secret key not configured in database settings");
+                return StatusCode(500, new { error = "Stripe configuration missing in database" });
+            }
+            _logger.LogInformation("Stripe API key retrieved from database (length: {Length})", stripeSecretKey.Length);
+            Stripe.StripeConfiguration.ApiKey = stripeSecretKey;
+
+            var paymentIntentService = new Stripe.PaymentIntentService();
+            Stripe.PaymentIntent? paymentIntent = null;
+            DateTime startTime;
+            double duration;
+
+            // If booking has no payment intent ID, search Stripe by booking ID in metadata
+            if (string.IsNullOrEmpty(booking.StripePaymentIntentId))
+            {
+                _logger.LogInformation("No payment intent ID for booking {BookingId}. Searching Stripe by booking ID: {BookingIdStr}", 
+                    booking.Id, booking.Id.ToString());
+
+                // Search Stripe for payment intents with this booking ID in metadata
+                var searchOptions = new Stripe.PaymentIntentSearchOptions
+                {
+                    Query = $"metadata['booking_id']:'{booking.Id}'",
+                    Expand = new List<string> { "data.latest_charge" }
+                };
+
+                startTime = DateTime.UtcNow;
+                var searchResults = await paymentIntentService.SearchAsync(searchOptions);
+                duration = (DateTime.UtcNow - startTime).TotalMilliseconds;
+
+                _logger.LogInformation("Stripe search completed in {Duration}ms. Found {Count} payment intents", 
+                    duration, searchResults.Data.Count);
+
+                if (searchResults.Data.Count == 0)
+                {
+                    _logger.LogInformation("No Stripe payment found for booking {BookingId}", booking.Id);
+                    return BadRequest("No Stripe payment found for this booking");
+                }
+
+                // Get the first (most recent) payment intent
+                paymentIntent = searchResults.Data.FirstOrDefault();
+                
+                if (paymentIntent != null)
+                {
+                    _logger.LogInformation("Found payment intent {PaymentIntentId} for booking {BookingId}", 
+                        paymentIntent.Id, booking.Id);
+                    
+                    // Update booking with the found payment intent ID
+                    booking.StripePaymentIntentId = paymentIntent.Id;
+                }
+            }
+            else
+            {
+                // Fetch payment intent from Stripe with expanded charge data
+                _logger.LogInformation("Calling Stripe API to fetch PaymentIntent: {PaymentIntentId} for booking {BookingId}", 
+                    booking.StripePaymentIntentId, booking.Id);
+                
+                var options = new Stripe.PaymentIntentGetOptions
+                {
+                    Expand = new List<string> { "latest_charge" }
+                };
+                
+                startTime = DateTime.UtcNow;
+                paymentIntent = await paymentIntentService.GetAsync(booking.StripePaymentIntentId, options);
+                duration = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            }
+            
+            _logger.LogInformation("Stripe API call completed in {Duration}ms. Status: {Status}, Amount: {Amount}", 
+                duration, paymentIntent?.Status, paymentIntent?.Amount);
+
+            if (paymentIntent == null)
+            {
+                _logger.LogWarning("PaymentIntent {PaymentIntentId} not found in Stripe", 
+                    booking.StripePaymentIntentId);
+                return NotFound("Payment intent not found in Stripe");
+            }
+
+            // Find or create payment record
+            var payment = await _context.Payments
+                .FirstOrDefaultAsync(p => p.StripePaymentIntentId == booking.StripePaymentIntentId);
+
+            if (payment == null)
+            {
+                // Create new payment record
+                payment = new Payment
+                {
+                    ReservationId = booking.Id,
+                    CustomerId = booking.CustomerId,
+                    CompanyId = booking.CompanyId,
+                    Amount = paymentIntent.Amount / 100m, // Convert from cents
+                    Currency = paymentIntent.Currency.ToUpper(),
+                    PaymentType = "online",
+                    PaymentMethod = paymentIntent.PaymentMethod?.ToString() ?? "card",
+                    StripePaymentIntentId = paymentIntent.Id,
+                    Status = paymentIntent.Status,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.Payments.Add(payment);
+            }
+            else
+            {
+                // Update existing payment record
+                payment.Status = paymentIntent.Status;
+                payment.Amount = paymentIntent.Amount / 100m;
+                payment.UpdatedAt = DateTime.UtcNow;
+            }
+
+            // Update charge ID if available
+            if (!string.IsNullOrEmpty(paymentIntent.LatestChargeId))
+            {
+                payment.StripeChargeId = paymentIntent.LatestChargeId;
+            }
+
+            // Set processed time if succeeded
+            if (paymentIntent.Status == "succeeded" && payment.ProcessedAt == null)
+            {
+                payment.ProcessedAt = DateTime.UtcNow;
+            }
+
+            // Check for refunds using the latest charge
+            if (paymentIntent.LatestCharge != null)
+            {
+                var charge = paymentIntent.LatestCharge;
+                _logger.LogInformation("Checking refund status for charge {ChargeId}: AmountRefunded={AmountRefunded}, Refunded={Refunded}", 
+                    charge.Id, charge.AmountRefunded, charge.Refunded);
+                
+                if (charge.AmountRefunded > 0)
+                {
+                    payment.RefundAmount = charge.AmountRefunded / 100m;
+                    
+                    // Fetch refund details if needed
+                    if (charge.Refunds?.Data != null && charge.Refunds.Data.Any())
+                    {
+                        payment.RefundDate = charge.Refunds.Data.First().Created;
+                        _logger.LogInformation("Refund detected: Amount={RefundAmount}, Date={RefundDate}", 
+                            payment.RefundAmount, payment.RefundDate);
+                    }
+                    
+                    if (charge.Refunded)
+                    {
+                        payment.Status = "refunded";
+                    }
+                }
+            }
+
+            // Update booking status if payment succeeded and booking is still Pending
+            if (paymentIntent.Status == "succeeded" && booking.Status == "Pending")
+            {
+                _logger.LogInformation("Payment succeeded - updating booking {BookingId} status from Pending to Confirmed", 
+                    booking.Id);
+                booking.Status = "Confirmed";
+            }
+
+            // Sync security deposit information
+            string? securityDepositStatus = null;
+            Stripe.PaymentIntent? secDepositIntent = null;
+            
+            // If booking already has a security deposit payment intent ID, fetch it
+            if (!string.IsNullOrEmpty(booking.SecurityDepositPaymentIntentId))
+            {
+                _logger.LogInformation("Syncing security deposit info for booking {BookingId}, PaymentIntent: {PaymentIntentId}", 
+                    booking.Id, booking.SecurityDepositPaymentIntentId);
+                
+                try
+                {
+                    secDepositIntent = await paymentIntentService.GetAsync(booking.SecurityDepositPaymentIntentId);
+                }
+                catch (Stripe.StripeException ex)
+                {
+                    _logger.LogWarning(ex, "Could not fetch security deposit PaymentIntent {PaymentIntentId} for booking {BookingId}", 
+                        booking.SecurityDepositPaymentIntentId, booking.Id);
+                }
+            }
+            // If no security deposit payment intent ID stored, search Stripe for it
+            else
+            {
+                _logger.LogInformation("No security deposit payment intent ID stored for booking {BookingId}. Searching Stripe...", 
+                    booking.Id);
+                
+                try
+                {
+                    // Search for security deposit payment intents with this booking ID and type in metadata
+                    var secDepositSearchOptions = new Stripe.PaymentIntentSearchOptions
+                    {
+                        Query = $"metadata['booking_id']:'{booking.Id}' AND metadata['type']:'security_deposit'",
+                    };
+                    
+                    var secDepositSearchResults = await paymentIntentService.SearchAsync(secDepositSearchOptions);
+                    
+                    if (secDepositSearchResults.Data.Count > 0)
+                    {
+                        secDepositIntent = secDepositSearchResults.Data.First();
+                        _logger.LogInformation("Found security deposit payment intent {PaymentIntentId} for booking {BookingId}", 
+                            secDepositIntent.Id, booking.Id);
+                        
+                        // Store the found payment intent ID
+                        booking.SecurityDepositPaymentIntentId = secDepositIntent.Id;
+                    }
+                    else
+                    {
+                        _logger.LogInformation("No security deposit payment intent found in Stripe for booking {BookingId}", 
+                            booking.Id);
+                    }
+                }
+                catch (Stripe.StripeException ex)
+                {
+                    _logger.LogWarning(ex, "Could not search for security deposit payment intent for booking {BookingId}", 
+                        booking.Id);
+                }
+            }
+            
+            // If we found/have a security deposit payment intent, update the booking
+            if (secDepositIntent != null)
+            {
+                _logger.LogInformation("Security deposit intent status: {Status}, CaptureMethod: {CaptureMethod}", 
+                    secDepositIntent.Status, secDepositIntent.CaptureMethod);
+                
+                // Update security deposit status based on payment intent status
+                if (secDepositIntent.Status == "requires_capture")
+                {
+                    booking.SecurityDepositStatus = "authorized";
+                    if (booking.SecurityDepositAuthorizedAt == null)
+                    {
+                        booking.SecurityDepositAuthorizedAt = DateTime.UtcNow;
+                    }
+                }
+                else if (secDepositIntent.Status == "succeeded")
+                {
+                    booking.SecurityDepositStatus = "captured";
+                    booking.SecurityDepositChargedAmount = secDepositIntent.Amount / 100m;
+                    if (booking.SecurityDepositCapturedAt == null)
+                    {
+                        booking.SecurityDepositCapturedAt = DateTime.UtcNow;
+                    }
+                }
+                else if (secDepositIntent.Status == "canceled")
+                {
+                    booking.SecurityDepositStatus = "released";
+                    if (booking.SecurityDepositReleasedAt == null)
+                    {
+                        booking.SecurityDepositReleasedAt = DateTime.UtcNow;
+                    }
+                }
+                
+                securityDepositStatus = booking.SecurityDepositStatus;
+                _logger.LogInformation("Updated security deposit status to {Status} for booking {BookingId}", 
+                    securityDepositStatus, booking.Id);
+            }
+
+            _logger.LogInformation("Saving payment updates to database for booking {BookingId}: PaymentStatus={PaymentStatus}, BookingStatus={BookingStatus}, Amount={Amount}, RefundAmount={RefundAmount}, SecurityDepositStatus={SecurityDepositStatus}", 
+                booking.Id, payment.Status, booking.Status, payment.Amount, payment.RefundAmount, securityDepositStatus);
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Successfully synced payment info from Stripe for booking {BookingId}, Payment Status: {PaymentStatus}, Booking Status: {BookingStatus}, Security Deposit Status: {SecurityDepositStatus}", 
+                booking.Id, payment.Status, booking.Status, securityDepositStatus);
+
+            return Ok(new 
+            { 
+                success = true, 
+                status = payment.Status,
+                bookingStatus = booking.Status,
+                amount = payment.Amount,
+                refundAmount = payment.RefundAmount,
+                securityDepositStatus = securityDepositStatus
+            });
+        }
+        catch (Stripe.StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe API error syncing payment for booking {BookingId}: Code={Code}, Message={Message}, StackTrace={StackTrace}", 
+                id, ex.StripeError?.Code, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { message = "Stripe error: " + ex.Message, error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error syncing payment from Stripe for booking {BookingId}: Type={Type}, Message={Message}, StackTrace={StackTrace}", 
+                id, ex.GetType().Name, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { message = "Failed to sync payment: " + ex.Message, error = ex.Message, type = ex.GetType().Name });
+        }
+    }
+
+    /// <summary>
+    /// Sync payment information from Stripe for multiple bookings
+    /// </summary>
+    [HttpPost("sync-payments-bulk")]
+    public async Task<IActionResult> SyncPaymentsFromStripeBulk([FromBody] List<Guid> bookingIds)
+    {
+        _logger.LogInformation("Starting bulk payment sync for {Count} bookings", bookingIds.Count);
+        
+        try
+        {
+            // Configure Stripe API key from database
+            var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+            if (string.IsNullOrEmpty(stripeSecretKey))
+            {
+                _logger.LogError("Stripe secret key not configured in database settings");
+                return StatusCode(500, new { error = "Stripe configuration missing in database" });
+            }
+            Stripe.StripeConfiguration.ApiKey = stripeSecretKey;
+
+            var results = new List<object>();
+            var successCount = 0;
+            var failureCount = 0;
+            var startTime = DateTime.UtcNow;
+
+            foreach (var bookingId in bookingIds)
+            {
+                _logger.LogInformation("Processing booking {BookingId} in bulk sync ({Current}/{Total})", 
+                    bookingId, results.Count + 1, bookingIds.Count);
+                
+                try
+                {
+                    var booking = await _context.Bookings
+                        .Include(b => b.Payments)
+                        .FirstOrDefaultAsync(b => b.Id == bookingId);
+
+                    if (booking == null || string.IsNullOrEmpty(booking.StripePaymentIntentId))
+                    {
+                        _logger.LogWarning("Booking {BookingId} has no payment intent, skipping", bookingId);
+                        results.Add(new 
+                        { 
+                            bookingId, 
+                            success = false, 
+                            error = "No payment intent" 
+                        });
+                        failureCount++;
+                        continue;
+                    }
+
+                    // Fetch payment intent from Stripe with expanded charge data
+                    _logger.LogInformation("Calling Stripe API for booking {BookingId}, PaymentIntent: {PaymentIntentId}", 
+                        bookingId, booking.StripePaymentIntentId);
+                    
+                    var paymentIntentService = new Stripe.PaymentIntentService();
+                    var options = new Stripe.PaymentIntentGetOptions
+                    {
+                        Expand = new List<string> { "latest_charge" }
+                    };
+                    
+                    var callStartTime = DateTime.UtcNow;
+                    var paymentIntent = await paymentIntentService.GetAsync(booking.StripePaymentIntentId, options);
+                    var callDuration = (DateTime.UtcNow - callStartTime).TotalMilliseconds;
+                    
+                    _logger.LogInformation("Stripe API call completed for booking {BookingId} in {Duration}ms", 
+                        bookingId, callDuration);
+
+                    if (paymentIntent == null)
+                    {
+                        results.Add(new 
+                        { 
+                            bookingId, 
+                            success = false, 
+                            error = "Payment not found in Stripe" 
+                        });
+                        failureCount++;
+                        continue;
+                    }
+
+                    // Find or create payment record
+                    var payment = await _context.Payments
+                        .FirstOrDefaultAsync(p => p.StripePaymentIntentId == booking.StripePaymentIntentId);
+
+                    if (payment == null)
+                    {
+                        payment = new Payment
+                        {
+                            ReservationId = booking.Id,
+                            CustomerId = booking.CustomerId,
+                            CompanyId = booking.CompanyId,
+                            Amount = paymentIntent.Amount / 100m,
+                            Currency = paymentIntent.Currency.ToUpper(),
+                            PaymentType = "online",
+                            PaymentMethod = paymentIntent.PaymentMethod?.ToString() ?? "card",
+                            StripePaymentIntentId = paymentIntent.Id,
+                            Status = paymentIntent.Status,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        _context.Payments.Add(payment);
+                    }
+                    else
+                    {
+                        payment.Status = paymentIntent.Status;
+                        payment.Amount = paymentIntent.Amount / 100m;
+                        payment.UpdatedAt = DateTime.UtcNow;
+                    }
+
+                    if (!string.IsNullOrEmpty(paymentIntent.LatestChargeId))
+                    {
+                        payment.StripeChargeId = paymentIntent.LatestChargeId;
+                    }
+
+                    if (paymentIntent.Status == "succeeded" && payment.ProcessedAt == null)
+                    {
+                        payment.ProcessedAt = DateTime.UtcNow;
+                    }
+
+                    // Check for refunds using the latest charge
+                    if (paymentIntent.LatestCharge != null)
+                    {
+                        var charge = paymentIntent.LatestCharge;
+                        if (charge.AmountRefunded > 0)
+                        {
+                            payment.RefundAmount = charge.AmountRefunded / 100m;
+                            
+                            // Fetch refund details if needed
+                            if (charge.Refunds?.Data != null && charge.Refunds.Data.Any())
+                            {
+                                payment.RefundDate = charge.Refunds.Data.First().Created;
+                            }
+                            
+                            if (charge.Refunded)
+                            {
+                                payment.Status = "refunded";
+                            }
+                        }
+                    }
+
+                    await _context.SaveChangesAsync();
+
+                    _logger.LogInformation("Successfully synced booking {BookingId}: Status={Status}, Amount={Amount}", 
+                        bookingId, payment.Status, payment.Amount);
+
+                    results.Add(new 
+                    { 
+                        bookingId, 
+                        success = true, 
+                        status = payment.Status 
+                    });
+                    successCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error syncing payment for booking {BookingId}: {Message}", 
+                        bookingId, ex.Message);
+                    results.Add(new 
+                    { 
+                        bookingId, 
+                        success = false, 
+                        error = ex.Message 
+                    });
+                    failureCount++;
+                }
+            }
+
+            var totalDuration = (DateTime.UtcNow - startTime).TotalSeconds;
+            _logger.LogInformation("Bulk payment sync completed: Total={Total}, Success={Success}, Failed={Failed}, Duration={Duration}s", 
+                bookingIds.Count, successCount, failureCount, totalDuration);
+
+            return Ok(new 
+            { 
+                success = true,
+                totalProcessed = bookingIds.Count,
+                successCount,
+                failureCount,
+                results 
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Critical error in bulk payment sync: {Message}", ex.Message);
+            return StatusCode(500, new { error = "Failed to sync payments: " + ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Create a payment intent for security deposit (manual capture)
+    /// </summary>
+    /// <param name="id">Booking ID</param>
+    /// <returns>Payment intent client secret</returns>
+    [HttpPost("{id}/security-deposit-payment-intent")]
+    [Authorize]
+    [ProducesResponseType(typeof(object), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> CreateSecurityDepositPaymentIntent(Guid id)
+    {
+        try
+        {
+            var booking = await _context.Bookings
+                .Include(b => b.Customer)
+                .Include(b => b.Company)
+                .FirstOrDefaultAsync(b => b.Id == id);
+
+            if (booking == null)
+                return NotFound(new { error = "Booking not found" });
+
+            // Get Stripe API key from settings
+            var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+            if (string.IsNullOrEmpty(stripeSecretKey))
+            {
+                _logger.LogError("Stripe secret key not configured");
+                return StatusCode(500, new { error = "Stripe not configured" });
+            }
+
+            Stripe.StripeConfiguration.ApiKey = stripeSecretKey;
+
+            // Determine security deposit amount
+            decimal depositAmount = booking.SecurityDeposit > 0 
+                ? booking.SecurityDeposit 
+                : booking.Company.SecurityDeposit;
+
+            if (depositAmount <= 0)
+            {
+                return BadRequest(new { error = "No security deposit amount configured" });
+            }
+
+            // Convert to cents for Stripe
+            var amountInCents = (long)(depositAmount * 100);
+
+            _logger.LogInformation(
+                "Creating security deposit payment intent for booking {BookingId}, amount: ${Amount}", 
+                booking.Id, 
+                depositAmount
+            );
+
+            // Create payment intent with manual capture
+            var paymentIntentService = new Stripe.PaymentIntentService();
+            var options = new Stripe.PaymentIntentCreateOptions
+            {
+                Amount = amountInCents,
+                Currency = "usd",
+                CaptureMethod = "manual", // Important: manual capture for security deposit
+                Description = $"Security Deposit for Booking {booking.BookingNumber}",
+                Metadata = new Dictionary<string, string>
+                {
+                    { "booking_id", booking.Id.ToString() },
+                    { "booking_number", booking.BookingNumber },
+                    { "customer_id", booking.CustomerId.ToString() },
+                    { "customer_email", booking.Customer.Email },
+                    { "type", "security_deposit" }
+                }
+            };
+
+            var paymentIntent = await paymentIntentService.CreateAsync(options);
+
+            // Store the payment intent ID with the booking
+            booking.SecurityDepositPaymentIntentId = paymentIntent.Id;
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Created security deposit payment intent {PaymentIntentId} for booking {BookingId}", 
+                paymentIntent.Id, 
+                booking.Id
+            );
+
+            return Ok(new
+            {
+                clientSecret = paymentIntent.ClientSecret,
+                paymentIntentId = paymentIntent.Id,
+                amount = depositAmount,
+                bookingId = booking.Id,
+                bookingNumber = booking.BookingNumber
+            });
+        }
+        catch (Stripe.StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error creating security deposit payment intent for booking {BookingId}", id);
+            return StatusCode(500, new { error = "Stripe error: " + ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating security deposit payment intent for booking {BookingId}", id);
+            return StatusCode(500, new { error = "Failed to create payment intent: " + ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Create a Stripe Checkout Session for security deposit (hosted payment page)
+    /// POST: api/Booking/{id}/security-deposit-checkout
+    /// </summary>
+    [HttpPost("{id}/security-deposit-checkout")]
+    public async Task<IActionResult> CreateSecurityDepositCheckout(Guid id)
+    {
+        try
+        {
+            var booking = await _context.Bookings
+                .Include(b => b.Customer)
+                .Include(b => b.Company)
+                .FirstOrDefaultAsync(b => b.Id == id);
+
+            if (booking == null)
+                return NotFound(new { error = "Booking not found" });
+
+            // Get Stripe API key from settings
+            var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+            if (string.IsNullOrEmpty(stripeSecretKey))
+            {
+                _logger.LogError("Stripe secret key not configured");
+                return StatusCode(500, new { error = "Stripe not configured" });
+            }
+
+            Stripe.StripeConfiguration.ApiKey = stripeSecretKey;
+
+            // Determine security deposit amount
+            decimal depositAmount = booking.SecurityDeposit > 0 
+                ? booking.SecurityDeposit 
+                : booking.Company.SecurityDeposit;
+
+            if (depositAmount <= 0)
+            {
+                return BadRequest(new { error = "No security deposit amount configured" });
+            }
+
+            // Convert to cents for Stripe
+            var amountInCents = (long)(depositAmount * 100);
+
+            _logger.LogInformation(
+                "Creating security deposit checkout session for booking {BookingId}, amount: ${Amount}", 
+                booking.Id, 
+                depositAmount
+            );
+
+            // Create Checkout Session
+            var sessionService = new Stripe.Checkout.SessionService();
+            var options = new Stripe.Checkout.SessionCreateOptions
+            {
+                PaymentMethodTypes = new List<string> { "card" },
+                Mode = "payment",
+                LineItems = new List<Stripe.Checkout.SessionLineItemOptions>
+                {
+                    new Stripe.Checkout.SessionLineItemOptions
+                    {
+                        PriceData = new Stripe.Checkout.SessionLineItemPriceDataOptions
+                        {
+                            Currency = "usd",
+                            UnitAmount = amountInCents,
+                            ProductData = new Stripe.Checkout.SessionLineItemPriceDataProductDataOptions
+                            {
+                                Name = $"Security Deposit - Booking {booking.BookingNumber}",
+                                Description = "Refundable security deposit (authorized, not charged)"
+                            }
+                        },
+                        Quantity = 1
+                    }
+                },
+                PaymentIntentData = new Stripe.Checkout.SessionPaymentIntentDataOptions
+                {
+                    CaptureMethod = "manual", // Manual capture for authorization only
+                    Metadata = new Dictionary<string, string>
+                    {
+                        { "booking_id", booking.Id.ToString() },
+                        { "booking_number", booking.BookingNumber },
+                        { "customer_id", booking.CustomerId.ToString() },
+                        { "customer_email", booking.Customer.Email },
+                        { "type", "security_deposit" }
+                    }
+                },
+                CustomerEmail = booking.Customer.Email,
+                SuccessUrl = $"https://localhost:3000/admin-dashboard?tab=reservations&deposit_success=true&booking_id={booking.Id}",
+                CancelUrl = $"https://localhost:3000/admin-dashboard?tab=reservations&deposit_cancelled=true&booking_id={booking.Id}",
+                Metadata = new Dictionary<string, string>
+                {
+                    { "booking_id", booking.Id.ToString() },
+                    { "booking_number", booking.BookingNumber },
+                    { "type", "security_deposit" }
+                }
+            };
+
+            var session = await sessionService.CreateAsync(options);
+
+            _logger.LogInformation(
+                "Created security deposit checkout session {SessionId} for booking {BookingId}", 
+                session.Id, 
+                booking.Id
+            );
+
+            return Ok(new
+            {
+                sessionId = session.Id,
+                sessionUrl = session.Url,
+                amount = depositAmount,
+                bookingId = booking.Id,
+                bookingNumber = booking.BookingNumber
+            });
+        }
+        catch (Stripe.StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error creating security deposit checkout for booking {BookingId}", id);
+            return StatusCode(500, new { error = "Stripe error: " + ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating security deposit checkout for booking {BookingId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
     #endregion
 
     private string GenerateSecureToken()
@@ -1674,4 +2596,11 @@ public class BookingController : ControllerBase
         rng.GetBytes(bytes);
         return Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").Replace("=", "");
     }
+}
+
+// Request DTO for refund
+public class RefundPaymentRequest
+{
+    public decimal Amount { get; set; }
+    public string? Reason { get; set; }
 }

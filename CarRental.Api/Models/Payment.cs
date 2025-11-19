@@ -129,6 +129,15 @@ public class Payment
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    [Column("updated_at")]
+    public DateTime? UpdatedAt { get; set; }
+
+    [Column("refund_amount", TypeName = "decimal(10,2)")]
+    public decimal? RefundAmount { get; set; }
+
+    [Column("refund_date")]
+    public DateTime? RefundDate { get; set; }
+
     // Navigation properties
     [ForeignKey("ReservationId")]
     public virtual Reservation? Reservation { get; set; }

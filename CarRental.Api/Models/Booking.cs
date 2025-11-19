@@ -186,5 +186,6 @@ public class Booking
 
     public virtual ICollection<Rental> Rentals { get; set; } = new List<Rental>();
     public virtual ICollection<Payment> Payments { get; set; } = new List<Payment>();
+    public virtual ICollection<RefundRecord> RefundRecords { get; set; } = new List<RefundRecord>();
 }
 
