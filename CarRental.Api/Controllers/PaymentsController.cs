@@ -14,6 +14,7 @@
  */
 
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System;
@@ -38,6 +39,7 @@ public class PaymentsController : ControllerBase
     private readonly IEncryptionService _encryptionService;
     private readonly IConfiguration _configuration;
     private readonly IStripeConnectService _stripeConnectService;
+    private readonly IWebHostEnvironment _environment;
 
     public PaymentsController(
         CarRentalDbContext context, 
@@ -45,7 +47,8 @@ public class PaymentsController : ControllerBase
         ILogger<PaymentsController> logger,
         IEncryptionService encryptionService,
         IConfiguration configuration,
-        IStripeConnectService stripeConnectService)
+        IStripeConnectService stripeConnectService,
+        IWebHostEnvironment environment)
     {
         _context = context;
         _stripeService = stripeService;
@@ -53,6 +56,7 @@ public class PaymentsController : ControllerBase
         _encryptionService = encryptionService;
         _configuration = configuration;
         _stripeConnectService = stripeConnectService;
+        _environment = environment;
     }
 
     /// <summary>
@@ -286,11 +290,23 @@ public class PaymentsController : ControllerBase
             bookingId ??= dto.ReservationId;
 #pragma warning restore CS0618
 
+            // Normalize currency code (some Stripe operations are case-sensitive)
+            var normalizedCurrency = dto.Currency.ToLower().Trim();
+            
+            // Log currency being used
+            _logger.LogInformation(
+                "[Stripe] Using currency: {Currency} (from request: {RequestCurrency}) for company {CompanyId} ({CompanyName})",
+                normalizedCurrency,
+                dto.Currency,
+                company.Id,
+                company.CompanyName
+            );
+            
             var lineItem = new Stripe.Checkout.SessionLineItemOptions
             {
                 PriceData = new Stripe.Checkout.SessionLineItemPriceDataOptions
                 {
-                    Currency = dto.Currency.ToLower(),
+                    Currency = normalizedCurrency,
                     UnitAmountDecimal = dto.Amount * 100,
                     ProductData = new Stripe.Checkout.SessionLineItemPriceDataProductDataOptions
                     {
@@ -341,7 +357,9 @@ public class PaymentsController : ControllerBase
                 sessionOptions.Metadata!["booking_number"] = dto.BookingNumber;
             }
 
-            if (!string.IsNullOrWhiteSpace(company.StripeAccountId))
+            // Only set up Stripe Connect transfers in production when company has a valid Stripe account
+            // In development, skip transfers to avoid "stripe_balance.stripe_transfers" capability errors
+            if (!string.IsNullOrWhiteSpace(company.StripeAccountId) && !_environment.IsDevelopment())
             {
                 string? destination = null;
 
@@ -383,6 +401,15 @@ public class PaymentsController : ControllerBase
                         Destination = destination
                     };
                 }
+            }
+            else if (!string.IsNullOrWhiteSpace(company.StripeAccountId) && _environment.IsDevelopment())
+            {
+                _logger.LogWarning(
+                    "[Stripe] Development mode: Skipping transfer setup for company {CompanyId} ({CompanyName}). " +
+                    "All payments will go to the platform Stripe account.",
+                    company.Id,
+                    company.CompanyName
+                );
             }
 
             _logger.LogInformation("[Stripe] Checkout session options: {@Options}", new

@@ -280,7 +280,7 @@ builder.Services.AddCors(options =>
             ?? new[]
             {
                 "https://admin.aegis-rental.com",
-                "https://miamilifecars.aegis-rental.com",
+                "https://spjoannarental.aegis-rental.com",
                 "http://localhost:3000",
                 "https://localhost:3000",
                 "http://localhost:4000",

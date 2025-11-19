@@ -111,12 +111,12 @@ namespace CarRental.Api.Middleware
                         hostname
                     );
                     
-                    // Development fallback: Use miamilifecars as default company in development on localhost
+                    // Development fallback: Use spjoannarental as default company in development on localhost
                     if (string.IsNullOrEmpty(companyId) && 
                         (hostname == "localhost" || hostname == "127.0.0.1") &&
                         _environment.IsDevelopment())
                     {
-                        var defaultCompany = await companyService.GetCompanyBySubdomainAsync("miamilifecars");
+                        var defaultCompany = await companyService.GetCompanyBySubdomainAsync("spjoannarental");
                         if (defaultCompany != null)
                         {
                             companyId = defaultCompany.Id.ToString();
@@ -130,7 +130,7 @@ namespace CarRental.Api.Middleware
                         else
                         {
                             _logger.LogWarning(
-                                "Development mode: Default company with subdomain 'miamilifecars' not found. Please ensure this company exists in the database."
+                                "Development mode: Default company with subdomain 'spjoannarental' not found. Please ensure this company exists in the database."
                             );
                         }
                     }
