@@ -165,6 +165,8 @@ public class UpdateBookingDto
 
     public decimal? SecurityDeposit { get; set; }
 
+    public decimal? SecurityDepositDamageAmount { get; set; }
+
     [MaxLength(50)]
     public string? Status { get; set; }
 

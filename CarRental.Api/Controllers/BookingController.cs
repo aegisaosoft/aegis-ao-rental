@@ -1359,6 +1359,11 @@ public class BookingController : ControllerBase
             if (updateReservationDto.SecurityDeposit.HasValue)
                 reservation.SecurityDeposit = updateReservationDto.SecurityDeposit.Value;
 
+            // Check if status is being changed to Completed
+            bool statusChangedToCompleted = !string.IsNullOrEmpty(updateReservationDto.Status) && 
+                                            updateReservationDto.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) &&
+                                            !reservation.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase);
+
             if (!string.IsNullOrEmpty(updateReservationDto.Status))
                 reservation.Status = updateReservationDto.Status;
 
@@ -1375,6 +1380,226 @@ public class BookingController : ControllerBase
                                      reservation.InsuranceAmount + reservation.AdditionalFees;
 
             reservation.UpdatedAt = DateTime.UtcNow;
+
+            // If status is being changed to Completed and there's a security deposit payment intent, handle it
+            if (statusChangedToCompleted && !string.IsNullOrEmpty(reservation.SecurityDepositPaymentIntentId))
+            {
+                // Check if there's damage to charge for
+                bool hasDamage = updateReservationDto.SecurityDepositDamageAmount.HasValue && 
+                                 updateReservationDto.SecurityDepositDamageAmount.Value > 0;
+                
+                try
+                {
+                    // Get Stripe API key from settings
+                    var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+                    if (string.IsNullOrEmpty(stripeSecretKey))
+                    {
+                        _logger.LogError("Stripe secret key not configured in database settings");
+                        return StatusCode(500, new { error = "Stripe configuration missing in database" });
+                    }
+                    Stripe.StripeConfiguration.ApiKey = stripeSecretKey;
+                    
+                    // First, check the payment intent status
+                    var paymentIntentService = new Stripe.PaymentIntentService();
+                    var existingIntent = await paymentIntentService.GetAsync(reservation.SecurityDepositPaymentIntentId);
+                    
+                    _logger.LogInformation(
+                        "Booking {BookingId} status changed to Completed. Payment intent {PaymentIntentId} current status: {Status}, Amount: {Amount}, Currency: {Currency}, CaptureMethod: {CaptureMethod}, HasDamage: {HasDamage}",
+                        reservation.Id,
+                        reservation.SecurityDepositPaymentIntentId,
+                        existingIntent.Status,
+                        existingIntent.Amount,
+                        existingIntent.Currency,
+                        existingIntent.CaptureMethod,
+                        hasDamage);
+
+                    if (hasDamage)
+                    {
+                        // Get the damage amount (we know it has a value from the hasDamage check)
+                        decimal damageAmount = updateReservationDto.SecurityDepositDamageAmount!.Value;
+                        
+                        // There's damage - capture the security deposit (partial or full)
+                        // Check if payment intent is in a capturable state
+                        if (existingIntent.Status != "requires_capture" && existingIntent.Status != "succeeded")
+                        {
+                            var errorMessage = $"Payment intent {reservation.SecurityDepositPaymentIntentId} is in status '{existingIntent.Status}' and cannot be captured. Expected status: 'requires_capture'";
+                            _logger.LogWarning(
+                                "Cannot capture security deposit for booking {BookingId}. {ErrorMessage}",
+                                reservation.Id,
+                                errorMessage);
+                            return BadRequest(new { message = errorMessage });
+                        }
+
+                        // If already succeeded, it was already captured
+                        if (existingIntent.Status == "succeeded")
+                        {
+                            _logger.LogInformation(
+                                "Payment intent {PaymentIntentId} for booking {BookingId} is already captured (status: succeeded). Updating booking record.",
+                                reservation.SecurityDepositPaymentIntentId,
+                                reservation.Id);
+                            
+                            reservation.SecurityDepositStatus = "captured";
+                            int decimalPlaces = GetCurrencyDecimalPlaces(existingIntent.Currency?.ToLower() ?? "usd");
+                            decimal divisor = (decimal)Math.Pow(10, decimalPlaces);
+                            reservation.SecurityDepositChargedAmount = existingIntent.AmountReceived > 0 
+                                ? existingIntent.AmountReceived / divisor 
+                                : existingIntent.Amount / divisor;
+                            reservation.SecurityDepositCapturedAt = DateTime.UtcNow;
+                            reservation.SecurityDepositCaptureReason = "Vehicle damage reported upon completion - Already captured";
+                        }
+                        else
+                        {
+                            // Determine the amount to capture (partial or full)
+                            
+                            // Get the full security deposit amount from the payment intent
+                            int decimalPlaces = GetCurrencyDecimalPlaces(existingIntent.Currency?.ToLower() ?? "usd");
+                            decimal divisor = (decimal)Math.Pow(10, decimalPlaces);
+                            decimal fullDepositAmount = existingIntent.Amount / divisor;
+                            
+                            // Determine if this is a partial or full charge
+                            bool isFullCharge = damageAmount >= fullDepositAmount;
+                            decimal? amountToCapture = isFullCharge ? null : damageAmount; // null = full capture
+                            
+                            _logger.LogInformation(
+                                "Booking {BookingId} status changed to Completed with damage. Full deposit: {FullAmount}, Damage amount: {DamageAmount}, IsFullCharge: {IsFullCharge}. Attempting to capture security deposit from payment intent {PaymentIntentId}",
+                                reservation.Id,
+                                fullDepositAmount,
+                                damageAmount,
+                                isFullCharge,
+                                reservation.SecurityDepositPaymentIntentId);
+
+                            // Get company currency for proper amount conversion
+                            var companyCurrency = reservation.Company?.Currency ?? reservation.Currency ?? existingIntent.Currency?.ToLower() ?? "USD";
+                            
+                            // Capture the security deposit payment intent (partial or full)
+                            var capturedIntent = await _stripeService.CapturePaymentIntentAsync(
+                                reservation.SecurityDepositPaymentIntentId,
+                                amountToCapture,
+                                companyCurrency);
+                            
+                            _logger.LogInformation(
+                                "Security deposit payment intent {PaymentIntentId} captured successfully. Status: {Status}, Amount: {Amount}, AmountReceived: {AmountReceived}",
+                                capturedIntent.Id,
+                                capturedIntent.Status,
+                                capturedIntent.Amount,
+                                capturedIntent.AmountReceived);
+
+                            // Update booking with captured information
+                            if (capturedIntent.Status == "succeeded")
+                            {
+                                reservation.SecurityDepositStatus = "captured";
+                                int capturedDecimalPlaces = GetCurrencyDecimalPlaces(capturedIntent.Currency?.ToLower() ?? "usd");
+                                decimal capturedDivisor = (decimal)Math.Pow(10, capturedDecimalPlaces);
+                                reservation.SecurityDepositChargedAmount = capturedIntent.AmountReceived > 0 
+                                    ? capturedIntent.AmountReceived / capturedDivisor 
+                                    : capturedIntent.Amount / capturedDivisor;
+                                reservation.SecurityDepositCapturedAt = DateTime.UtcNow;
+                                reservation.SecurityDepositCaptureReason = isFullCharge 
+                                    ? $"Vehicle damage reported upon completion - Full charge: {reservation.SecurityDepositChargedAmount:C}"
+                                    : $"Vehicle damage reported upon completion - Partial charge: {damageAmount:C}";
+                                
+                                _logger.LogInformation(
+                                    "Security deposit captured for booking {BookingId}. Amount: {Amount}, Currency: {Currency}, ChargeType: {ChargeType}",
+                                    reservation.Id,
+                                    reservation.SecurityDepositChargedAmount,
+                                    capturedIntent.Currency,
+                                    isFullCharge ? "Full" : "Partial");
+                            }
+                            else
+                            {
+                                var errorMessage = $"Payment intent capture returned status '{capturedIntent.Status}' instead of 'succeeded'";
+                                _logger.LogError(
+                                    "Security deposit capture did not succeed for booking {BookingId}. Payment intent status: {Status}",
+                                    reservation.Id,
+                                    capturedIntent.Status);
+                                return BadRequest(new { message = errorMessage });
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // No damage - release the security deposit
+                        _logger.LogInformation(
+                            "Booking {BookingId} status changed to Completed with no damage. Releasing security deposit payment intent {PaymentIntentId}",
+                            reservation.Id,
+                            reservation.SecurityDepositPaymentIntentId);
+
+                        // Check if payment intent can be cancelled/released
+                        if (existingIntent.Status == "requires_capture")
+                        {
+                            // Cancel the payment intent to release the hold
+                            var cancelledIntent = await _stripeService.CancelPaymentIntentAsync(reservation.SecurityDepositPaymentIntentId);
+                            
+                            _logger.LogInformation(
+                                "Security deposit payment intent {PaymentIntentId} cancelled/released successfully. Status: {Status}",
+                                cancelledIntent.Id,
+                                cancelledIntent.Status);
+
+                            reservation.SecurityDepositStatus = "released";
+                            reservation.SecurityDepositReleasedAt = DateTime.UtcNow;
+                            reservation.SecurityDepositCaptureReason = "Vehicle returned in good condition - No damage";
+                            
+                            _logger.LogInformation(
+                                "Security deposit released for booking {BookingId}. No charge applied.",
+                                reservation.Id);
+                        }
+                        else if (existingIntent.Status == "succeeded")
+                        {
+                            // Already captured - can't release
+                            _logger.LogWarning(
+                                "Security deposit for booking {BookingId} is already captured (status: succeeded). Cannot release.",
+                                reservation.Id);
+                            // Don't fail - just log the warning
+                        }
+                        else if (existingIntent.Status == "canceled")
+                        {
+                            // Already cancelled/released
+                            _logger.LogInformation(
+                                "Security deposit for booking {BookingId} is already released (status: canceled). Updating booking record.",
+                                reservation.Id);
+                            reservation.SecurityDepositStatus = "released";
+                            reservation.SecurityDepositReleasedAt = DateTime.UtcNow;
+                            reservation.SecurityDepositCaptureReason = "Vehicle returned in good condition - No damage";
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "Security deposit payment intent {PaymentIntentId} for booking {BookingId} is in status '{Status}' and cannot be released. Expected status: 'requires_capture'",
+                                reservation.SecurityDepositPaymentIntentId,
+                                reservation.Id,
+                                existingIntent.Status);
+                            // Don't fail - just log the warning and mark as released in our system
+                            reservation.SecurityDepositStatus = "released";
+                            reservation.SecurityDepositReleasedAt = DateTime.UtcNow;
+                            reservation.SecurityDepositCaptureReason = "Vehicle returned in good condition - No damage";
+                        }
+                    }
+                }
+                catch (Stripe.StripeException ex)
+                {
+                    var errorMessage = hasDamage 
+                        ? $"Failed to capture security deposit: {ex.Message}"
+                        : $"Failed to release security deposit: {ex.Message}";
+                    _logger.LogError(ex,
+                        "Stripe error processing security deposit payment intent {PaymentIntentId} for booking {BookingId}. StripeError: {StripeError}, StripeErrorCode: {StripeErrorCode}",
+                        reservation.SecurityDepositPaymentIntentId,
+                        reservation.Id,
+                        ex.StripeError?.Message,
+                        ex.StripeError?.Code);
+                    return BadRequest(new { message = errorMessage, stripeError = ex.StripeError?.Message, stripeErrorCode = ex.StripeError?.Code });
+                }
+                catch (Exception ex)
+                {
+                    var errorMessage = hasDamage 
+                        ? $"Failed to capture security deposit: {ex.Message}"
+                        : $"Failed to release security deposit: {ex.Message}";
+                    _logger.LogError(ex,
+                        "Failed to process security deposit payment intent {PaymentIntentId} for booking {BookingId}",
+                        reservation.SecurityDepositPaymentIntentId,
+                        reservation.Id);
+                    return BadRequest(new { message = errorMessage });
+                }
+            }
 
             await _context.SaveChangesAsync();
 
@@ -2837,6 +3062,21 @@ public class BookingController : ControllerBase
             return country.ToUpper();
             
         return null;
+    }
+    
+    private int GetCurrencyDecimalPlaces(string currency)
+    {
+        // Stripe currencies with 0 decimal places
+        var zeroDecimalCurrencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"
+        };
+        
+        if (zeroDecimalCurrencies.Contains(currency))
+            return 0;
+        
+        // All other currencies use 2 decimal places
+        return 2;
     }
 }
 

@@ -747,12 +747,22 @@ public class PaymentsController : ControllerBase
 
         try
         {
+            // Get currency from payment or company
+            var currency = payment.Currency ?? payment.Company?.Currency ?? "USD";
+            
             var captureIntent = await _stripeService.CapturePaymentIntentAsync(
                 payment.SecurityDepositPaymentIntentId,
-                dto.Amount);
+                dto.Amount,
+                currency);
 
+            // Convert from smallest currency unit to decimal amount
+            // Get currency decimal places (0 for JPY, etc., 2 for most currencies)
+            // Convert from smallest currency unit to decimal amount
+            // Get currency decimal places (0 for JPY, etc., 2 for most currencies)
+            int decimalPlaces = GetCurrencyDecimalPlaces(currency);
+            decimal divisor = (decimal)Math.Pow(10, decimalPlaces);
             var capturedAmount = captureIntent.AmountReceived > 0
-                ? captureIntent.AmountReceived / 100m
+                ? captureIntent.AmountReceived / divisor
                 : dto.Amount;
 
             payment.SecurityDepositStatus = "captured";
@@ -1550,5 +1560,20 @@ public class PaymentsController : ControllerBase
             return country.ToUpper();
             
         return null;
+    }
+    
+    private int GetCurrencyDecimalPlaces(string currency)
+    {
+        // Stripe currencies with 0 decimal places
+        var zeroDecimalCurrencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"
+        };
+        
+        if (zeroDecimalCurrencies.Contains(currency))
+            return 0;
+        
+        // All other currencies use 2 decimal places
+        return 2;
     }
 }

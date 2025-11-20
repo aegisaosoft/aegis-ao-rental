@@ -38,7 +38,7 @@ public interface IStripeService
         bool requestExtendedAuthorization = false);
     Task<PaymentIntent> ConfirmPaymentIntentAsync(string paymentIntentId);
     Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId);
-    Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null);
+    Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null, string? currency = null);
     Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount);
     
     // Stripe Connect methods
@@ -379,16 +379,32 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null)
+    public async Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null, string? currency = null)
     {
         await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CapturePaymentIntentAsync paymentIntentId={PaymentIntentId} amount={Amount}", paymentIntentId, amountToCapture);
+        _logger.LogWarning("[Stripe] CapturePaymentIntentAsync paymentIntentId={PaymentIntentId} amount={Amount} currency={Currency}", paymentIntentId, amountToCapture, currency);
         try
         {
             var options = new PaymentIntentCaptureOptions();
             if (amountToCapture.HasValue)
             {
-                options.AmountToCapture = (long)(amountToCapture.Value * 100);
+                // Get the payment intent to determine currency if not provided
+                if (string.IsNullOrEmpty(currency))
+                {
+                    var paymentIntentService = new PaymentIntentService();
+                    var existingIntent = await paymentIntentService.GetAsync(paymentIntentId);
+                    currency = existingIntent.Currency?.ToLower() ?? "usd";
+                }
+                
+                // Convert amount to smallest currency unit based on currency
+                // Most currencies use 2 decimal places (multiply by 100)
+                // Some currencies like JPY use 0 decimal places (no multiplication)
+                int decimalPlaces = GetCurrencyDecimalPlaces(currency);
+                long amountInSmallestUnit = (long)(amountToCapture.Value * (decimal)Math.Pow(10, decimalPlaces));
+                
+                options.AmountToCapture = amountInSmallestUnit;
+                _logger.LogInformation("[Stripe] Converting {Amount} {Currency} to {SmallestUnit} (decimal places: {DecimalPlaces})", 
+                    amountToCapture.Value, currency, amountInSmallestUnit, decimalPlaces);
             }
 
             var paymentIntent = await new PaymentIntentService().CaptureAsync(paymentIntentId, options);
@@ -399,6 +415,21 @@ public class StripeService : IStripeService
             _logger.LogError(ex, "Error capturing payment intent {PaymentIntentId}", paymentIntentId);
             throw new InvalidOperationException($"Failed to capture payment intent: {ex.Message}", ex);
         }
+    }
+    
+    private int GetCurrencyDecimalPlaces(string currency)
+    {
+        // Stripe currencies with 0 decimal places
+        var zeroDecimalCurrencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf"
+        };
+        
+        if (zeroDecimalCurrencies.Contains(currency))
+            return 0;
+        
+        // All other currencies use 2 decimal places
+        return 2;
     }
 
     public async Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount)
