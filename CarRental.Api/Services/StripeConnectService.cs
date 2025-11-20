@@ -346,11 +346,23 @@ public class StripeConnectService : IStripeConnectService
 
             var destinationAccountId = _encryptionService.Decrypt(booking.Company.StripeAccountId);
 
+            // Determine currency: use booking currency, fallback to company currency, then USD
+            var currency = booking.Currency ?? booking.Company.Currency ?? "USD";
+            
+            _logger.LogInformation(
+                "Authorizing security deposit for booking {BookingId}: Amount={Amount}, Currency={Currency} (Booking.Currency={BookingCurrency}, Company.Currency={CompanyCurrency})",
+                bookingId,
+                amount,
+                currency,
+                booking.Currency ?? "null",
+                booking.Company.Currency ?? "null"
+            );
+
             // Create payment intent for security deposit (authorization only)
             var paymentIntent = await _stripeService.CreateSecurityDepositAsync(
                 booking.Customer.StripeCustomerId!,
                 amount,
-                booking.Currency ?? "USD",
+                currency,
                 paymentMethodId,
                 destinationAccountId,
                 new Dictionary<string, string>

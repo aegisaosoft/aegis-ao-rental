@@ -42,6 +42,9 @@ public class CreateCheckoutSessionDto
 
     [StringLength(200)]
     public string? Description { get; set; }
+    
+    [StringLength(10)]
+    public string? Language { get; set; }
 
     [Required]
     [Url]

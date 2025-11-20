@@ -442,10 +442,17 @@ public class BookingController : ControllerBase
                 bookingToken.CompanyId,
                 bookingToken.VehicleId);
 
-            // Process payment with Stripe
+            // Process payment with Stripe using company's currency
+            var currency = bookingToken.Company?.Currency ?? "USD";
+            _logger.LogInformation(
+                "[Booking] Processing payment with currency: {Currency} for company {CompanyId}",
+                currency,
+                bookingToken.CompanyId
+            );
+            
             var paymentIntent = await _stripeService.CreatePaymentIntentAsync(
                 bookingData.TotalAmount,
-                "USD",
+                currency,
                 customer.StripeCustomerId ?? "",
                 processDto.PaymentMethodId);
 
@@ -475,6 +482,7 @@ public class BookingController : ControllerBase
                 AdditionalFees = bookingData.AdditionalFees,
                 TotalAmount = bookingData.TotalAmount,
                 SecurityDeposit = 0m,
+                Currency = currency,
                 Status = BookingStatus.Pending,
                 Notes = processDto.CustomerNotes
             };
@@ -519,7 +527,7 @@ public class BookingController : ControllerBase
                 CompanyId = bookingToken.CompanyId,
                 ReservationId = reservation.Id,
                 Amount = bookingData.TotalAmount,
-                Currency = "USD",
+                Currency = currency,
                 PaymentType = "full_payment",
                 PaymentMethod = "card",
                 StripePaymentIntentId = paymentIntent.Id,
@@ -1166,6 +1174,7 @@ public class BookingController : ControllerBase
                 AdditionalFees = createReservationDto.AdditionalFees,
                 TotalAmount = totalAmount,
                 SecurityDeposit = 0m,
+                Currency = company.Currency ?? "USD",
                 Notes = createReservationDto.Notes
             };
 
@@ -1781,12 +1790,40 @@ public class BookingController : ControllerBase
             if (payment.Status == "refunded")
                 return BadRequest("Payment has already been refunded");
 
+            // Validate refund amount
+            if (refundRequest.Amount <= 0)
+            {
+                _logger.LogWarning(
+                    "[Refund] Invalid refund amount {Amount} for booking {BookingId}",
+                    refundRequest.Amount,
+                    id
+                );
+                return BadRequest($"Refund amount must be greater than zero. Received: {refundRequest.Amount}");
+            }
+
+            if (refundRequest.Amount > payment.Amount)
+            {
+                _logger.LogWarning(
+                    "[Refund] Refund amount {RefundAmount} exceeds payment amount {PaymentAmount} for booking {BookingId}",
+                    refundRequest.Amount,
+                    payment.Amount,
+                    id
+                );
+                return BadRequest($"Refund amount ({refundRequest.Amount:F2}) cannot exceed the payment amount ({payment.Amount:F2})");
+            }
+
             // Process refund through Stripe
             try
             {
-                var refundAmount = refundRequest.Amount > 0 
-                    ? refundRequest.Amount 
-                    : booking.TotalAmount;
+                var refundAmount = refundRequest.Amount;
+
+                _logger.LogInformation(
+                    "[Refund] Processing refund for booking {BookingId}: RequestedAmount={RequestedAmount}, PaymentAmount={PaymentAmount}, BookingTotal={BookingTotal}",
+                    id,
+                    refundAmount,
+                    payment.Amount,
+                    booking.TotalAmount
+                );
 
                 var refund = await _stripeService.CreateRefundAsync(
                     payment.StripePaymentIntentId,
@@ -1795,9 +1832,19 @@ public class BookingController : ControllerBase
 
                 if (refund != null && refund.Status == "succeeded")
                 {
+                    // Use the actual refunded amount from Stripe (in cents, so divide by 100)
+                    var actualRefundedAmount = refund.Amount / 100m;
+                    
+                    _logger.LogInformation(
+                        "[Refund] Stripe refund successful. Requested: {RequestedAmount}, Actual refunded by Stripe: {ActualAmount} {Currency}",
+                        refundAmount,
+                        actualRefundedAmount,
+                        refund.Currency?.ToUpper() ?? "UNKNOWN"
+                    );
+
                     // Update payment status
                     payment.Status = "refunded";
-                    payment.RefundAmount = refundAmount;
+                    payment.RefundAmount = actualRefundedAmount; // Use actual amount from Stripe
                     payment.RefundDate = DateTime.UtcNow;
                     payment.UpdatedAt = DateTime.UtcNow;
 
@@ -1809,13 +1856,13 @@ public class BookingController : ControllerBase
                     var userIdClaim = User.FindFirst("nameid") ?? User.FindFirst("sub") ?? User.FindFirst("customer_id");
                     Guid? processedBy = userIdClaim != null && Guid.TryParse(userIdClaim.Value, out var userId) ? userId : null;
 
-                    // Create refund record
+                    // Create refund record with actual amount from Stripe
                     var refundRecord = new RefundRecord
                     {
                         BookingId = booking.Id,
                         StripeRefundId = refund.Id,
-                        Amount = refundAmount,
-                        RefundType = "manual", // Can be "manual", "partial", "full", etc.
+                        Amount = actualRefundedAmount, // Use actual amount from Stripe, not requested amount
+                        RefundType = actualRefundedAmount >= booking.TotalAmount ? "full" : "partial",
                         Reason = refundRequest.Reason ?? "Booking cancellation",
                         Status = refund.Status,
                         ProcessedBy = processedBy,
@@ -1826,8 +1873,9 @@ public class BookingController : ControllerBase
                     await _context.SaveChangesAsync();
 
                     _logger.LogInformation(
-                        "Refunded ${Amount} for booking {BookingId} (Payment Intent: {PaymentIntentId}, Refund ID: {RefundId}, Processed by: {ProcessedBy})",
-                        refundAmount,
+                        "[Refund] Refunded {ActualAmount} {Currency} for booking {BookingId} (Payment Intent: {PaymentIntentId}, Refund ID: {RefundId}, Processed by: {ProcessedBy})",
+                        actualRefundedAmount,
+                        refund.Currency?.ToUpper() ?? "UNKNOWN",
                         id,
                         payment.StripePaymentIntentId,
                         refund.Id,
@@ -2471,7 +2519,7 @@ public class BookingController : ControllerBase
     /// POST: api/Booking/{id}/security-deposit-checkout
     /// </summary>
     [HttpPost("{id}/security-deposit-checkout")]
-    public async Task<IActionResult> CreateSecurityDepositCheckout(Guid id)
+    public async Task<IActionResult> CreateSecurityDepositCheckout(Guid id, [FromQuery] string? language = null)
     {
         try
         {
@@ -2505,11 +2553,24 @@ public class BookingController : ControllerBase
 
             // Convert to cents for Stripe
             var amountInCents = (long)(depositAmount * 100);
+            
+            // Use booking's currency, fallback to company's currency, then USD
+            var currency = (booking.Currency ?? booking.Company.Currency ?? "USD").ToLower();
+            
+            // Use user's current language (from request) or fall back to company's language
+            var userLanguage = !string.IsNullOrEmpty(language) ? language : booking.Company.Language;
+            var locale = GetStripeLocaleFromCountry(booking.Company.Country, userLanguage);
+            var countryCode = GetCountryCode(booking.Company.Country);
 
             _logger.LogInformation(
-                "Creating security deposit checkout session for booking {BookingId}, amount: ${Amount}", 
+                "Creating security deposit checkout session for booking {BookingId}, amount: {Amount} {Currency}, locale: {Locale} (User: {UserLanguage}, Company: {CompanyLanguage}), country: {Country}", 
                 booking.Id, 
-                depositAmount
+                depositAmount,
+                currency,
+                locale,
+                language ?? "null",
+                booking.Company.Language ?? "null",
+                countryCode
             );
 
             // Create Checkout Session
@@ -2518,13 +2579,15 @@ public class BookingController : ControllerBase
             {
                 PaymentMethodTypes = new List<string> { "card" },
                 Mode = "payment",
+                Locale = locale,
+                BillingAddressCollection = "required",
                 LineItems = new List<Stripe.Checkout.SessionLineItemOptions>
                 {
                     new Stripe.Checkout.SessionLineItemOptions
                     {
                         PriceData = new Stripe.Checkout.SessionLineItemPriceDataOptions
                         {
-                            Currency = "usd",
+                            Currency = currency,
                             UnitAmount = amountInCents,
                             ProductData = new Stripe.Checkout.SessionLineItemPriceDataProductDataOptions
                             {
@@ -2547,7 +2610,6 @@ public class BookingController : ControllerBase
                         { "type", "security_deposit" }
                     }
                 },
-                CustomerEmail = booking.Customer.Email,
                 SuccessUrl = $"https://localhost:3000/admin-dashboard?tab=reservations&deposit_success=true&booking_id={booking.Id}",
                 CancelUrl = $"https://localhost:3000/admin-dashboard?tab=reservations&deposit_cancelled=true&booking_id={booking.Id}",
                 Metadata = new Dictionary<string, string>
@@ -2555,8 +2617,50 @@ public class BookingController : ControllerBase
                     { "booking_id", booking.Id.ToString() },
                     { "booking_number", booking.BookingNumber },
                     { "type", "security_deposit" }
-                }
+                },
+                // Set customer - either Stripe customer ID or email
+                Customer = !string.IsNullOrEmpty(booking.Customer.StripeCustomerId) ? booking.Customer.StripeCustomerId : null,
+                CustomerEmail = string.IsNullOrEmpty(booking.Customer.StripeCustomerId) ? booking.Customer.Email : null,
+                CustomerUpdate = !string.IsNullOrEmpty(booking.Customer.StripeCustomerId) 
+                    ? new Stripe.Checkout.SessionCustomerUpdateOptions
+                    {
+                        Address = "auto",
+                        Name = "auto"
+                    }
+                    : null
             };
+            
+            // Pre-fill customer address with company's country if available
+            if (!string.IsNullOrEmpty(countryCode) && !string.IsNullOrEmpty(booking.Customer.StripeCustomerId))
+            {
+                try
+                {
+                    var customerService = new Stripe.CustomerService();
+                    var stripeCustomer = await customerService.GetAsync(booking.Customer.StripeCustomerId);
+                    
+                    // Only update if customer doesn't have an address set
+                    if (string.IsNullOrEmpty(stripeCustomer.Address?.Country))
+                    {
+                        await customerService.UpdateAsync(booking.Customer.StripeCustomerId, new Stripe.CustomerUpdateOptions
+                        {
+                            Address = new Stripe.AddressOptions
+                            {
+                                Country = countryCode
+                            }
+                        });
+                        
+                        _logger.LogInformation(
+                            "Updated customer {CustomerId} address with country {CountryCode}",
+                            booking.Customer.StripeCustomerId,
+                            countryCode
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to update customer address for {CustomerId}", booking.Customer.StripeCustomerId);
+                }
+            }
 
             var session = await sessionService.CreateAsync(options);
 
@@ -2595,6 +2699,81 @@ public class BookingController : ControllerBase
         var bytes = new byte[32];
         rng.GetBytes(bytes);
         return Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").Replace("=", "");
+    }
+    
+    /// <summary>
+    /// Get Stripe locale based on user's current language and company country
+    /// Priority: USER'S LANGUAGE > Country default
+    /// </summary>
+    private string GetStripeLocaleFromCountry(string? country, string? language)
+    {
+        // Normalize inputs
+        var countryLower = (country ?? "").ToLower();
+        var langLower = (language ?? "en").ToLower();
+        
+        // PRIORITY 1: Use the user's selected language with country code (if applicable)
+        // For Portuguese speakers in Brazil
+        if (langLower.StartsWith("pt") && countryLower.Contains("brazil"))
+            return "pt-BR";
+        
+        // For Portuguese (general)
+        if (langLower.StartsWith("pt"))
+            return "pt";
+            
+        // For Spanish speakers in Latin America
+        if (langLower.StartsWith("es") && (countryLower.Contains("mexico") || countryLower.Contains("argentina") || countryLower.Contains("colombia")))
+            return "es-419";
+            
+        // For Spanish (general)
+        if (langLower.StartsWith("es"))
+            return "es";
+        
+        // Other languages
+        if (langLower.StartsWith("fr")) return "fr";
+        if (langLower.StartsWith("de")) return "de";
+        if (langLower.StartsWith("it")) return "it";
+        if (langLower.StartsWith("ja")) return "ja";
+        if (langLower.StartsWith("zh")) return "zh";
+        
+        // Default to English
+        return "en";
+    }
+
+    /// <summary>
+    /// Get ISO country code from country name
+    /// </summary>
+    private string? GetCountryCode(string? country)
+    {
+        if (string.IsNullOrEmpty(country))
+            return null;
+            
+        var countryLower = country.ToLower();
+        
+        // Map country names to ISO 3166-1 alpha-2 codes
+        if (countryLower.Contains("brazil") || countryLower.Contains("brasil")) return "BR";
+        if (countryLower.Contains("united states") || countryLower.Contains("usa") || countryLower == "us") return "US";
+        if (countryLower.Contains("canada")) return "CA";
+        if (countryLower.Contains("mexico")) return "MX";
+        if (countryLower.Contains("argentina")) return "AR";
+        if (countryLower.Contains("chile")) return "CL";
+        if (countryLower.Contains("colombia")) return "CO";
+        if (countryLower.Contains("peru")) return "PE";
+        if (countryLower.Contains("portugal")) return "PT";
+        if (countryLower.Contains("spain") || countryLower.Contains("españa")) return "ES";
+        if (countryLower.Contains("france")) return "FR";
+        if (countryLower.Contains("germany") || countryLower.Contains("deutschland")) return "DE";
+        if (countryLower.Contains("italy") || countryLower.Contains("italia")) return "IT";
+        if (countryLower.Contains("united kingdom") || countryLower.Contains("uk") || countryLower.Contains("england")) return "GB";
+        if (countryLower.Contains("japan")) return "JP";
+        if (countryLower.Contains("china")) return "CN";
+        if (countryLower.Contains("india")) return "IN";
+        if (countryLower.Contains("australia")) return "AU";
+        
+        // If it's already a 2-letter code, return as-is
+        if (country.Length == 2)
+            return country.ToUpper();
+            
+        return null;
     }
 }
 

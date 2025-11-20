@@ -283,6 +283,39 @@ public class PaymentsController : ControllerBase
             if (company == null)
                 return BadRequest("Company not found");
 
+            // Update customer's default country if not set, to help Stripe pre-fill the correct country
+            var countryCode = GetCountryCode(company.Country);
+            if (!string.IsNullOrEmpty(countryCode) && !string.IsNullOrEmpty(customer.StripeCustomerId))
+            {
+                try
+                {
+                    var customerService = new Stripe.CustomerService();
+                    var stripeCustomer = await customerService.GetAsync(customer.StripeCustomerId);
+                    
+                    // Only update if customer doesn't have an address set
+                    if (string.IsNullOrEmpty(stripeCustomer.Address?.Country))
+                    {
+                        await customerService.UpdateAsync(customer.StripeCustomerId, new Stripe.CustomerUpdateOptions
+                        {
+                            Address = new Stripe.AddressOptions
+                            {
+                                Country = countryCode
+                            }
+                        });
+                        
+                        _logger.LogInformation(
+                            "[Stripe] Updated customer {CustomerId} address with country {CountryCode}",
+                            customer.StripeCustomerId,
+                            countryCode
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to update customer address for {CustomerId}", customer.StripeCustomerId);
+                }
+            }
+
             var amountInCents = (long)Math.Round(dto.Amount * 100M, MidpointRounding.AwayFromZero);
 
             var bookingId = dto.BookingId;
@@ -323,12 +356,25 @@ public class PaymentsController : ControllerBase
                 ProductName = lineItem.PriceData?.ProductData?.Name
             });
 
+            // Set locale based on user's current language (from request) or fall back to company's language
+            var userLanguage = !string.IsNullOrEmpty(dto.Language) ? dto.Language : company.Language;
+            var locale = GetStripeLocaleFromCountry(company.Country, userLanguage);
+            
+            _logger.LogInformation(
+                "[Stripe] Using language: {Language} (User: {UserLanguage}, Company: {CompanyLanguage})",
+                locale,
+                dto.Language ?? "null",
+                company.Language ?? "null"
+            );
+            
             var sessionOptions = new Stripe.Checkout.SessionCreateOptions
             {
                 Mode = "payment",
                 Customer = customer.StripeCustomerId,
                 SuccessUrl = dto.SuccessUrl,
                 CancelUrl = dto.CancelUrl,
+                Locale = locale,
+                BillingAddressCollection = "required",
                 LineItems = new List<Stripe.Checkout.SessionLineItemOptions> { lineItem },
                 PaymentIntentData = new Stripe.Checkout.SessionPaymentIntentDataOptions
                 {
@@ -342,8 +388,38 @@ public class PaymentsController : ControllerBase
                 {
                     { "customer_id", customer.Id.ToString() },
                     { "company_id", dto.CompanyId.ToString() }
+                },
+                CustomerUpdate = new Stripe.Checkout.SessionCustomerUpdateOptions
+                {
+                    Address = "auto"
                 }
             };
+            
+            // Set default billing address to company's country
+            if (!string.IsNullOrEmpty(countryCode))
+            {
+                sessionOptions.CustomerUpdate = new Stripe.Checkout.SessionCustomerUpdateOptions
+                {
+                    Address = "auto",
+                    Name = "auto"
+                };
+                
+                // Pre-fill customer's billing address if we have customer data
+                sessionOptions.BillingAddressCollection = "required";
+                
+                _logger.LogInformation(
+                    "[Stripe] Pre-filling billing address with Country={CountryCode}",
+                    countryCode
+                );
+            }
+            
+            _logger.LogInformation(
+                "[Stripe] Checkout session configured with Locale={Locale}, Country={Country}, CountryCode={CountryCode}, Currency={Currency}",
+                locale,
+                company.Country,
+                countryCode,
+                normalizedCurrency
+            );
 
             if (bookingId.HasValue)
             {
@@ -1399,5 +1475,80 @@ public class PaymentsController : ControllerBase
             _logger.LogError("Payout {PayoutId} failed for company {CompanyId}: {Reason}", 
                 payout.Id, payoutRecord.CompanyId, payout.FailureMessage);
         }
+    }
+
+    /// <summary>
+    /// Get Stripe locale based on user's current language and company country
+    /// Priority: USER'S LANGUAGE > Country default
+    /// </summary>
+    private string GetStripeLocaleFromCountry(string? country, string? language)
+    {
+        // Normalize inputs
+        var countryLower = (country ?? "").ToLower();
+        var langLower = (language ?? "en").ToLower();
+        
+        // PRIORITY 1: Use the user's selected language with country code (if applicable)
+        // For Portuguese speakers in Brazil
+        if (langLower.StartsWith("pt") && countryLower.Contains("brazil"))
+            return "pt-BR";
+        
+        // For Portuguese (general)
+        if (langLower.StartsWith("pt"))
+            return "pt";
+            
+        // For Spanish speakers in Latin America
+        if (langLower.StartsWith("es") && (countryLower.Contains("mexico") || countryLower.Contains("argentina") || countryLower.Contains("colombia")))
+            return "es-419";
+            
+        // For Spanish (general)
+        if (langLower.StartsWith("es"))
+            return "es";
+        
+        // Other languages
+        if (langLower.StartsWith("fr")) return "fr";
+        if (langLower.StartsWith("de")) return "de";
+        if (langLower.StartsWith("it")) return "it";
+        if (langLower.StartsWith("ja")) return "ja";
+        if (langLower.StartsWith("zh")) return "zh";
+        
+        // Default to English
+        return "en";
+    }
+
+    /// <summary>
+    /// Get ISO country code from country name
+    /// </summary>
+    private string? GetCountryCode(string? country)
+    {
+        if (string.IsNullOrEmpty(country))
+            return null;
+            
+        var countryLower = country.ToLower();
+        
+        // Map country names to ISO 3166-1 alpha-2 codes
+        if (countryLower.Contains("brazil") || countryLower.Contains("brasil")) return "BR";
+        if (countryLower.Contains("united states") || countryLower.Contains("usa") || countryLower == "us") return "US";
+        if (countryLower.Contains("canada")) return "CA";
+        if (countryLower.Contains("mexico")) return "MX";
+        if (countryLower.Contains("argentina")) return "AR";
+        if (countryLower.Contains("chile")) return "CL";
+        if (countryLower.Contains("colombia")) return "CO";
+        if (countryLower.Contains("peru")) return "PE";
+        if (countryLower.Contains("portugal")) return "PT";
+        if (countryLower.Contains("spain") || countryLower.Contains("españa")) return "ES";
+        if (countryLower.Contains("france")) return "FR";
+        if (countryLower.Contains("germany") || countryLower.Contains("deutschland")) return "DE";
+        if (countryLower.Contains("italy") || countryLower.Contains("italia")) return "IT";
+        if (countryLower.Contains("united kingdom") || countryLower.Contains("uk") || countryLower.Contains("england")) return "GB";
+        if (countryLower.Contains("japan")) return "JP";
+        if (countryLower.Contains("china")) return "CN";
+        if (countryLower.Contains("india")) return "IN";
+        if (countryLower.Contains("australia")) return "AU";
+        
+        // If it's already a 2-letter code, return as-is
+        if (country.Length == 2)
+            return country.ToUpper();
+            
+        return null;
     }
 }
