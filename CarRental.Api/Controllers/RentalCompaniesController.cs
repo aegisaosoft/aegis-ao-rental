@@ -152,6 +152,7 @@ public class RentalCompaniesController : ControllerBase
                 SecurityDeposit = c.SecurityDeposit,
                 IsSecurityDepositMandatory = c.IsSecurityDepositMandatory,
                 IsActive = c.IsActive,
+                IsTestCompany = c.IsTestCompany,
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt
             })
@@ -203,6 +204,7 @@ public class RentalCompaniesController : ControllerBase
             SecurityDeposit = company.SecurityDeposit,
             IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
             IsActive = company.IsActive,
+            IsTestCompany = company.IsTestCompany,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
         };
@@ -254,6 +256,7 @@ public class RentalCompaniesController : ControllerBase
             SecurityDeposit = company.SecurityDeposit,
             IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
             IsActive = company.IsActive,
+            IsTestCompany = company.IsTestCompany,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
         };
@@ -301,6 +304,7 @@ public class RentalCompaniesController : ControllerBase
             Currency = CurrencyHelper.ResolveCurrency(createCompanyDto.Currency, createCompanyDto.Country),
             SecurityDeposit = createCompanyDto.SecurityDeposit ?? 1000m,
             IsSecurityDepositMandatory = createCompanyDto.IsSecurityDepositMandatory ?? true,
+            IsTestCompany = createCompanyDto.IsTestCompany ?? true,
             IsActive = true
         };
 
@@ -359,6 +363,7 @@ public class RentalCompaniesController : ControllerBase
                 SecurityDeposit = company.SecurityDeposit,
                 IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
                 IsActive = company.IsActive,
+                IsTestCompany = company.IsTestCompany,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
             };
@@ -499,6 +504,14 @@ public class RentalCompaniesController : ControllerBase
             _logger.LogInformation("Updating IsSecurityDepositMandatory: Current={Current}, New={New}", 
                 company.IsSecurityDepositMandatory, updateCompanyDto.IsSecurityDepositMandatory.Value);
             company.IsSecurityDepositMandatory = updateCompanyDto.IsSecurityDepositMandatory.Value;
+        }
+
+        // Always update IsTestCompany if provided
+        if (updateCompanyDto.IsTestCompany.HasValue)
+        {
+            _logger.LogInformation("Updating IsTestCompany: Current={Current}, New={New}", 
+                company.IsTestCompany, updateCompanyDto.IsTestCompany.Value);
+            company.IsTestCompany = updateCompanyDto.IsTestCompany.Value;
         }
 
         company.UpdatedAt = DateTime.UtcNow;

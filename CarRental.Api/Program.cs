@@ -206,8 +206,11 @@ builder.Services.AddHealthChecks()
 // Add Email Service
 builder.Services.AddScoped<IEmailService, EmailService>();
 
-// Add Email Template Service
+// Add Multi-Tenant Email Services
+builder.Services.AddSingleton<EmailLocalizationService>();
+builder.Services.AddScoped<ITenantBrandingService, TenantBrandingService>();
 builder.Services.AddScoped<IEmailTemplateService, EmailTemplateService>();
+builder.Services.AddScoped<MultiTenantEmailService>();
 
 // Add background services
 builder.Services.AddHostedService<SecurityDepositCollectionService>();

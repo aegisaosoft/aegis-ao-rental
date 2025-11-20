@@ -186,6 +186,9 @@ public class Company
     [Column("is_active")]
     public bool IsActive { get; set; } = true;
 
+    [Column("is_test_company")]
+    public bool IsTestCompany { get; set; } = true;
+
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

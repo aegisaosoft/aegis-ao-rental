@@ -19,6 +19,7 @@ using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
 using CarRental.Api.Services;
+using CarRental.Api.Extensions;
 
 namespace CarRental.Api.Controllers;
 
@@ -29,15 +30,18 @@ public class CustomersController : ControllerBase
     private readonly CarRentalDbContext _context;
     private readonly IStripeService _stripeService;
     private readonly ILogger<CustomersController> _logger;
+    private readonly IEmailService _emailService;
 
     public CustomersController(
         CarRentalDbContext context, 
         IStripeService stripeService, 
-        ILogger<CustomersController> logger)
+        ILogger<CustomersController> logger,
+        IEmailService emailService)
     {
         _context = context;
         _stripeService = stripeService;
         _logger = logger;
+        _emailService = emailService;
     }
 
     /// <summary>
@@ -322,6 +326,9 @@ public class CustomersController : ControllerBase
         if (existingCustomer != null)
             return Conflict("Customer with this email already exists");
 
+        // Get company ID from HttpContext if available (set by CompanyMiddleware)
+        Guid? companyId = HttpContext.GetCompanyIdAsGuid();
+
         var customer = new Customer
         {
             Email = createCustomerDto.Email,
@@ -334,7 +341,9 @@ public class CustomersController : ControllerBase
             State = createCustomerDto.State,
             Country = createCustomerDto.Country,
             PostalCode = createCustomerDto.PostalCode,
-            CustomerType = Enum.TryParse<CustomerType>(createCustomerDto.CustomerType ?? "Individual", out var customerType) ? customerType : CustomerType.Individual
+            CustomerType = Enum.TryParse<CustomerType>(createCustomerDto.CustomerType ?? "Individual", out var customerType) ? customerType : CustomerType.Individual,
+            CompanyId = companyId,
+            PasswordHash = null // No password - invitation will be sent
         };
 
         try
@@ -353,6 +362,43 @@ public class CustomersController : ControllerBase
             {
                 _logger.LogWarning(ex, "Failed to create Stripe customer for {Email}", customer.Email);
                 // Continue without Stripe customer for now
+            }
+
+            // If customer was created without password, send invitation email
+            if (string.IsNullOrEmpty(customer.PasswordHash))
+            {
+                try
+                {
+                    var multiTenantEmailService = HttpContext.RequestServices.GetRequiredService<MultiTenantEmailService>();
+                    var customerCompanyId = customer.CompanyId ?? companyId ?? Guid.Empty;
+                    
+                    if (customerCompanyId != Guid.Empty)
+                    {
+                        var invitationUrl = $"{Request.Scheme}://{Request.Host}/register?email={Uri.EscapeDataString(customer.Email)}";
+                        
+                        // Determine language from company or default to English
+                        var company = await _context.Companies.FirstOrDefaultAsync(c => c.Id == customerCompanyId);
+                        var languageCode = company?.Language?.ToLower() ?? "en";
+                        var language = LanguageCodes.FromCode(languageCode);
+                        
+                        await multiTenantEmailService.SendInvitationEmailAsync(
+                            customerCompanyId,
+                            customer.Email,
+                            invitationUrl,
+                            language);
+                        
+                        _logger.LogInformation("Invitation email sent to {Email} for company {CompanyId}", customer.Email, customerCompanyId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Cannot send invitation email - no company ID available for customer {Email}", customer.Email);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to send invitation email to {Email}", customer.Email);
+                    // Continue even if email fails
+                }
             }
 
             var customerDto = new CustomerDto

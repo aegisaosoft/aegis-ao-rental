@@ -99,6 +99,7 @@ public class RentalCompanyDto
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     
     public bool IsActive { get; set; }
+    public bool IsTestCompany { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -178,6 +179,8 @@ public class CreateRentalCompanyDto
     public bool? IsSecurityDepositMandatory { get; set; }
 
     public string? BlinkKey { get; set; } // BlinkID license key for the company
+    
+    public bool? IsTestCompany { get; set; }
 }
 
 public class UpdateRentalCompanyDto
@@ -262,6 +265,8 @@ public class UpdateRentalCompanyDto
     public string? AiIntegration { get; set; }
     
     public bool? IsActive { get; set; }
+    
+    public bool? IsTestCompany { get; set; }
 }
 
 public class UpdateTermsOfUseDto
@@ -358,4 +363,5 @@ public class CompanyDetailDto
     public string AiIntegration { get; set; } = "claude";
     public decimal SecurityDeposit { get; set; } = 1000m;
     public bool IsSecurityDepositMandatory { get; set; } = true;
+    public bool IsTestCompany { get; set; } = true;
 }

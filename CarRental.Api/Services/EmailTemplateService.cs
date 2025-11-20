@@ -1,777 +1,395 @@
-/*
- *
- * Copyright (c) 2025 Alexander Orlov.
- * 34 Middletown Ave Atlantic Highlands NJ 07716
- *
- * THIS SOFTWARE IS THE CONFIDENTIAL AND PROPRIETARY INFORMATION OF
- * Alexander Orlov. ("CONFIDENTIAL INFORMATION"). YOU SHALL NOT DISCLOSE
- * SUCH CONFIDENTIAL INFORMATION AND SHALL USE IT ONLY IN ACCORDANCE
- * WITH THE TERMS OF THE LICENSE AGREEMENT YOU ENTERED INTO WITH
- * Alexander Orlov.
- *
- * Author: Alexander Orlov
- *
- */
-
-using CarRental.Api.Data;
 using CarRental.Api.Models;
-using CarRental.Api.DTOs;
 
 namespace CarRental.Api.Services;
 
-public interface IEmailTemplateService
-{
-    string GenerateBookingLinkEmail(BookingToken bookingToken, string bookingUrl, Models.CompanyEmailStyle? companyStyle = null);
-    string GenerateBookingConfirmationEmail(BookingConfirmation confirmation, string confirmationUrl, Models.CompanyEmailStyle? companyStyle = null);
-    string GeneratePaymentSuccessEmail(BookingDataDto bookingData, Models.CompanyEmailStyle? companyStyle = null);
-    string GenerateWelcomeEmail(string customerEmail, string companyName, Models.CompanyEmailStyle? companyStyle = null);
-    string GenerateReminderEmail(BookingToken bookingToken, string bookingUrl, Models.CompanyEmailStyle? companyStyle = null);
-    Models.CompanyEmailStyle GetDefaultCompanyStyle();
-    Models.CompanyEmailStyle GetCompanyStyle(Guid companyId);
-}
-
+/// <summary>
+/// Service for generating HTML email templates with tenant-specific branding and localization
+/// </summary>
 public class EmailTemplateService : IEmailTemplateService
 {
-    private readonly CarRentalDbContext _context;
-    private readonly ILogger<EmailTemplateService> _logger;
+    private readonly EmailLocalizationService _localization;
 
-    public EmailTemplateService(CarRentalDbContext context, ILogger<EmailTemplateService> logger)
+    public EmailTemplateService(EmailLocalizationService localization)
     {
-        _context = context;
-        _logger = logger;
+        _localization = localization;
     }
 
-    public string GenerateBookingLinkEmail(BookingToken bookingToken, string bookingUrl, Models.CompanyEmailStyle? companyStyle = null)
+    public string GenerateBookingConfirmationTemplate(
+        TenantBranding branding,
+        string customerName,
+        string bookingId,
+        DateTime pickupDate,
+        DateTime returnDate,
+        string vehicleName,
+        EmailLanguage language)
     {
-        var style = companyStyle ?? GetDefaultCompanyStyle();
-        var bookingData = bookingToken.BookingData;
-        var vehicleInfo = bookingData.VehicleInfo;
-        var companyInfo = bookingData.CompanyInfo;
+        var loc = _localization;
+        var days = (returnDate - pickupDate).Days;
+        
+        var content = $@"
+            <h1 style='color: {branding.BrandColor}; margin-bottom: 20px;'>{loc.Get("booking_confirmation", language)}</h1>
+            <p>{loc.Get("dear", language)} {customerName},</p>
+            <p>{loc.Get("thank_you", language)} {branding.CompanyName}! {loc.Get("booking_confirmed", language)}</p>
+            
+            <div style='background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;'>
+                <h2 style='margin-top: 0; color: {branding.BrandColor};'>{loc.Get("booking_details", language)}</h2>
+                <p><strong>{loc.Get("booking_id", language)}:</strong> {bookingId}</p>
+                <p><strong>{loc.Get("vehicle", language)}:</strong> {vehicleName}</p>
+                <p><strong>{loc.Get("pickup_date", language)}:</strong> {pickupDate:dddd, MMMM dd, yyyy 'at' hh:mm tt}</p>
+                <p><strong>{loc.Get("return_date", language)}:</strong> {returnDate:dddd, MMMM dd, yyyy 'at' hh:mm tt}</p>
+                <p><strong>{loc.Get("duration", language)}:</strong> {days} {loc.Get("days", language)}</p>
+            </div>
 
-        return $@"
-<!DOCTYPE html>
-<html lang='en'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Complete Your Car Rental Booking</title>
-    <style>
-        {GetBaseStyles(style)}
-        {GetBookingLinkStyles(style)}
-    </style>
-</head>
-<body>
-    <div class='email-container'>
-        <div class='header' style='background-color: {style.PrimaryColor};'>
-            <div class='header-content'>
-                <img src='{style.LogoUrl}' alt='{companyInfo?.Name}' class='logo' style='max-height: 60px;'>
-                <h1 style='color: {style.HeaderTextColor}; margin: 0; font-size: 28px;'>{companyInfo?.Name}</h1>
-            </div>
-        </div>
-        
-        <div class='content'>
-            <div class='greeting'>
-                <h2 style='color: {style.PrimaryColor}; margin-bottom: 20px;'>Complete Your Car Rental Booking</h2>
-                <p style='font-size: 16px; line-height: 1.6; color: {style.TextColor};'>
-                    Hello,<br><br>
-                    You have a pending car rental booking with <strong>{companyInfo?.Name}</strong>. 
-                    Please complete your booking by clicking the secure link below:
-                </p>
-            </div>
-            
-            <div class='booking-summary' style='background-color: {style.BackgroundColor}; border-left: 4px solid {style.PrimaryColor};'>
-                <h3 style='color: {style.PrimaryColor}; margin-top: 0;'>Booking Summary</h3>
-                <div class='booking-details'>
-                    <div class='detail-row'>
-                        <span class='label'>Vehicle:</span>
-                        <span class='value'><strong>{vehicleInfo?.Make} {vehicleInfo?.Model} ({vehicleInfo?.Year})</strong></span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>License Plate:</span>
-                        <span class='value'>{vehicleInfo?.LicensePlate}</span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Pickup Date:</span>
-                        <span class='value'>{bookingData.PickupDate:MMMM dd, yyyy 'at' h:mm tt}</span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Return Date:</span>
-                        <span class='value'>{bookingData.ReturnDate:MMMM dd, yyyy 'at' h:mm tt}</span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Total Days:</span>
-                        <span class='value'>{bookingData.TotalDays} days</span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Daily Rate:</span>
-                        <span class='value'>${bookingData.DailyRate:F2}</span>
-                    </div>
-                    <div class='detail-row total-row'>
-                        <span class='label'><strong>Total Amount:</strong></span>
-                        <span class='value'><strong style='color: {style.PrimaryColor}; font-size: 18px;'>${bookingData.TotalAmount:F2}</strong></span>
-                    </div>
-                </div>
-            </div>
-            
-            <div class='cta-section' style='text-align: center; margin: 30px 0;'>
-                <a href='{bookingUrl}' class='cta-button' style='background-color: {style.PrimaryColor}; color: {style.ButtonTextColor};'>
-                    Complete Booking & Pay Now
-                </a>
-                <p class='expiration-notice' style='color: {style.WarningColor}; font-size: 14px; margin-top: 15px;'>
-                    ⏰ This booking link expires on {bookingToken.ExpiresAt:MMMM dd, yyyy 'at' h:mm tt}
-                </p>
-            </div>
-            
-            <div class='vehicle-features' style='background-color: {style.BackgroundColor};'>
-                <h4 style='color: {style.PrimaryColor}; margin-top: 0;'>Vehicle Features</h4>
-                <ul style='list-style: none; padding: 0;'>
-                    {string.Join("", (vehicleInfo?.Features ?? new string[0]).Select(f => $"<li style='padding: 5px 0; color: {style.TextColor};'>✓ {f}</li>"))}
-                </ul>
-            </div>
-            
-            <div class='contact-info'>
-                <h4 style='color: {style.PrimaryColor};'>Pickup Location</h4>
-                <p style='color: {style.TextColor};'>
-                    {(bookingData.PickupLocationInfo != null ? 
-                        $@"<strong>{bookingData.PickupLocationInfo.LocationName}</strong><br>
-                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Address) ? $"📍 {bookingData.PickupLocationInfo.Address}, {bookingData.PickupLocationInfo.City}, {bookingData.PickupLocationInfo.State} {bookingData.PickupLocationInfo.PostalCode}<br>" : "")}
-                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Phone) ? $"📞 {bookingData.PickupLocationInfo.Phone}<br>" : "")}
-                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Email) ? $"📧 {bookingData.PickupLocationInfo.Email}<br>" : "")}
-                        {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.OpeningHours) ? $"🕒 {bookingData.PickupLocationInfo.OpeningHours}" : "")}" 
-                        : $"📍 {bookingData.PickupLocation}")}
-                </p>
-                
-                <h4 style='color: {style.PrimaryColor}; margin-top: 20px;'>Company Contact</h4>
-                <p style='color: {style.TextColor};'>
-                    {companyInfo?.Name}<br>
-                    📧 {companyInfo?.Email}
-                </p>
-            </div>
-        </div>
-        
-        <div class='footer' style='background-color: {style.FooterColor}; color: {style.FooterTextColor};'>
-            <p style='margin: 0; text-align: center; font-size: 12px;'>
-                This is an automated message from {companyInfo?.Name}. Please do not reply to this email.
-            </p>
-            <p style='margin: 10px 0 0 0; text-align: center; font-size: 12px;'>
-                {style.FooterText}
-            </p>
-        </div>
-    </div>
-</body>
-</html>";
+            <p><strong>{loc.Get("whats_next", language)}</strong></p>
+            <ul>
+                <li>{loc.Get("pickup_reminder_24h", language)}</li>
+                <li>{loc.Get("bring_license", language)}</li>
+                <li>{loc.Get("arrive_early", language)}</li>
+            </ul>
+
+            <p>{loc.Get("if_questions", language)}</p>
+            <p>{loc.Get("look_forward", language)}</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
     }
 
-    public string GenerateBookingConfirmationEmail(BookingConfirmation confirmation, string confirmationUrl, Models.CompanyEmailStyle? companyStyle = null)
+    public string GeneratePickupReminderTemplate(
+        TenantBranding branding,
+        string customerName,
+        string bookingId,
+        DateTime pickupDate,
+        string vehicleName,
+        string pickupLocation,
+        EmailLanguage language)
     {
-        var style = companyStyle ?? GetDefaultCompanyStyle();
-        var bookingData = confirmation.BookingDetails;
-        var vehicleInfo = bookingData.VehicleInfo;
-        var companyInfo = bookingData.CompanyInfo;
+        var loc = _localization;
+        
+        var content = $@"
+            <h1 style='color: {branding.BrandColor}; margin-bottom: 20px;'>{loc.Get("pickup_reminder", language)}</h1>
+            <p>{loc.Get("dear", language)} {customerName},</p>
+            <p>{loc.Get("pickup_tomorrow", language)}</p>
+            
+            <div style='background-color: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;'>
+                <h2 style='margin-top: 0; color: #92400e;'>{loc.Get("pickup_information", language)}</h2>
+                <p><strong>{loc.Get("booking_id", language)}:</strong> {bookingId}</p>
+                <p><strong>{loc.Get("vehicle", language)}:</strong> {vehicleName}</p>
+                <p><strong>{loc.Get("pickup_date", language)} & {loc.Get("pickup_location", language)}:</strong> {pickupDate:dddd, MMMM dd, yyyy 'at' hh:mm tt}</p>
+                <p><strong>{loc.Get("pickup_location", language)}:</strong> {pickupLocation}</p>
+            </div>
 
-        return $@"
-<!DOCTYPE html>
-<html lang='en'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Booking Confirmed - {confirmation.ConfirmationNumber}</title>
-    <style>
-        {GetBaseStyles(style)}
-        {GetConfirmationStyles(style)}
-    </style>
-</head>
-<body>
-    <div class='email-container'>
-        <div class='header' style='background-color: {style.SuccessColor};'>
-            <div class='header-content'>
-                <img src='{style.LogoUrl}' alt='{companyInfo?.Name}' class='logo' style='max-height: 60px;'>
-                <h1 style='color: white; margin: 0; font-size: 28px;'>✅ Booking Confirmed!</h1>
-            </div>
-        </div>
-        
-        <div class='content'>
-            <div class='confirmation-banner' style='background-color: {style.SuccessColor}; color: white; text-align: center; padding: 20px; margin: 20px 0; border-radius: 8px;'>
-                <h2 style='margin: 0; font-size: 24px;'>Your booking is confirmed!</h2>
-                <p style='margin: 10px 0 0 0; font-size: 18px; font-weight: bold;'>Confirmation #: {confirmation.ConfirmationNumber}</p>
-            </div>
-            
-            <div class='booking-details' style='background-color: {style.BackgroundColor}; border: 1px solid {style.BorderColor};'>
-                <h3 style='color: {style.PrimaryColor}; margin-top: 0;'>Booking Details</h3>
-                <div class='details-grid'>
-                    <div class='detail-item'>
-                        <span class='label'>Vehicle:</span>
-                        <span class='value'><strong>{vehicleInfo?.Make} {vehicleInfo?.Model} ({vehicleInfo?.Year})</strong></span>
-                    </div>
-                    <div class='detail-item'>
-                        <span class='label'>License Plate:</span>
-                        <span class='value'>{vehicleInfo?.LicensePlate}</span>
-                    </div>
-                    <div class='detail-item'>
-                        <span class='label'>Pickup Date:</span>
-                        <span class='value'>{bookingData.PickupDate:MMMM dd, yyyy 'at' h:mm tt}</span>
-                    </div>
-                    <div class='detail-item'>
-                        <span class='label'>Return Date:</span>
-                        <span class='value'>{bookingData.ReturnDate:MMMM dd, yyyy 'at' h:mm tt}</span>
-                    </div>
-                    <div class='detail-item'>
-                        <span class='label'>Pickup Location:</span>
-                        <span class='value'>{bookingData.PickupLocation}</span>
-                    </div>
-                    <div class='detail-item'>
-                        <span class='label'>Return Location:</span>
-                        <span class='value'>{bookingData.ReturnLocation}</span>
-                    </div>
-                    <div class='detail-item total-item'>
-                        <span class='label'><strong>Total Amount Paid:</strong></span>
-                        <span class='value'><strong style='color: {style.SuccessColor}; font-size: 18px;'>${bookingData.TotalAmount:F2}</strong></span>
-                    </div>
-                </div>
-            </div>
-            
-            <div class='next-steps' style='background-color: {style.InfoColor}; border-left: 4px solid {style.PrimaryColor};'>
-                <h4 style='color: {style.PrimaryColor}; margin-top: 0;'>Next Steps</h4>
-                <ol style='color: {style.TextColor}; line-height: 1.8;'>
-                    <li>Please arrive at the pickup location <strong>15 minutes before</strong> your scheduled pickup time</li>
-                    <li>Bring a <strong>valid driver's license</strong> and the <strong>credit card used for payment</strong></li>
-                    <li>Contact {companyInfo?.Name} if you need to modify your booking</li>
-                    <li>Keep this confirmation email for your records</li>
-                </ol>
-            </div>
-            
-            <div class='contact-info'>
-                <h4 style='color: {style.PrimaryColor};'>Pickup Location Details</h4>
-                <div style='background-color: {style.BackgroundColor}; padding: 15px; border-radius: 5px; margin-bottom: 15px;'>
-                    <p style='margin: 5px 0; color: {style.TextColor};'>
-                        {(bookingData.PickupLocationInfo != null ? 
-                            $@"<strong>{bookingData.PickupLocationInfo.LocationName}</strong><br>
-                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Address) ? $"📍 {bookingData.PickupLocationInfo.Address}, {bookingData.PickupLocationInfo.City}, {bookingData.PickupLocationInfo.State} {bookingData.PickupLocationInfo.PostalCode}<br>" : "")}
-                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Phone) ? $"📞 {bookingData.PickupLocationInfo.Phone}<br>" : "")}
-                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.Email) ? $"📧 {bookingData.PickupLocationInfo.Email}<br>" : "")}
-                            {(!string.IsNullOrEmpty(bookingData.PickupLocationInfo.OpeningHours) ? $"🕒 {bookingData.PickupLocationInfo.OpeningHours}" : "")}" 
-                            : $"📍 {bookingData.PickupLocation}")}
-                    </p>
-                </div>
-                
-                <h4 style='color: {style.PrimaryColor};'>Return Location Details</h4>
-                <div style='background-color: {style.BackgroundColor}; padding: 15px; border-radius: 5px; margin-bottom: 15px;'>
-                    <p style='margin: 5px 0; color: {style.TextColor};'>
-                        {(bookingData.ReturnLocationInfo != null ? 
-                            $@"<strong>{bookingData.ReturnLocationInfo.LocationName}</strong><br>
-                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.Address) ? $"📍 {bookingData.ReturnLocationInfo.Address}, {bookingData.ReturnLocationInfo.City}, {bookingData.ReturnLocationInfo.State} {bookingData.ReturnLocationInfo.PostalCode}<br>" : "")}
-                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.Phone) ? $"📞 {bookingData.ReturnLocationInfo.Phone}<br>" : "")}
-                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.Email) ? $"📧 {bookingData.ReturnLocationInfo.Email}<br>" : "")}
-                            {(!string.IsNullOrEmpty(bookingData.ReturnLocationInfo.OpeningHours) ? $"🕒 {bookingData.ReturnLocationInfo.OpeningHours}" : "")}" 
-                            : $"📍 {bookingData.ReturnLocation}")}
-                    </p>
-                </div>
-                
-                <h4 style='color: {style.PrimaryColor};'>Company Contact</h4>
-                <div style='background-color: {style.BackgroundColor}; padding: 15px; border-radius: 5px;'>
-                    <p style='margin: 5px 0; color: {style.TextColor};'>
-                        <strong>{companyInfo?.Name}</strong><br>
-                        📧 {companyInfo?.Email}
-                    </p>
-                </div>
-            </div>
-        </div>
-        
-        <div class='footer' style='background-color: {style.FooterColor}; color: {style.FooterTextColor};'>
-            <p style='margin: 0; text-align: center; font-size: 12px;'>
-                Thank you for choosing {companyInfo?.Name} for your car rental needs!
-            </p>
-            <p style='margin: 10px 0 0 0; text-align: center; font-size: 12px;'>
-                {style.FooterText}
-            </p>
-        </div>
-    </div>
-</body>
-</html>";
+            <p><strong>{loc.Get("important_reminders", language)}:</strong></p>
+            <ul>
+                <li>✓ {loc.Get("bring_drivers_license", language)}</li>
+                <li>✓ {loc.Get("bring_credit_card", language)}</li>
+                <li>✓ {loc.Get("arrive_15_min", language)}</li>
+                <li>✓ {loc.Get("review_vehicle", language)}</li>
+            </ul>
+
+            <p>{loc.Get("see_you_tomorrow", language)}</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
     }
 
-    public string GeneratePaymentSuccessEmail(BookingDataDto bookingData, Models.CompanyEmailStyle? companyStyle = null)
+    public string GenerateReturnReminderTemplate(
+        TenantBranding branding,
+        string customerName,
+        string bookingId,
+        DateTime returnDate,
+        string vehicleName,
+        string returnLocation,
+        EmailLanguage language)
     {
-        var style = companyStyle ?? GetDefaultCompanyStyle();
-        var vehicleInfo = bookingData.VehicleInfo;
-        var companyInfo = bookingData.CompanyInfo;
+        var loc = _localization;
+        
+        var content = $@"
+            <h1 style='color: {branding.BrandColor}; margin-bottom: 20px;'>{loc.Get("return_reminder", language)}</h1>
+            <p>{loc.Get("dear", language)} {customerName},</p>
+            <p>{loc.Get("return_tomorrow", language)}</p>
+            
+            <div style='background-color: #dbeafe; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid {branding.BrandColor};'>
+                <h2 style='margin-top: 0; color: {branding.BrandColor};'>{loc.Get("return_information", language)}</h2>
+                <p><strong>{loc.Get("booking_id", language)}:</strong> {bookingId}</p>
+                <p><strong>{loc.Get("vehicle", language)}:</strong> {vehicleName}</p>
+                <p><strong>{loc.Get("return_date", language)}:</strong> {returnDate:dddd, MMMM dd, yyyy 'at' hh:mm tt}</p>
+                <p><strong>{loc.Get("return_location", language)}:</strong> {returnLocation}</p>
+            </div>
 
-        return $@"
-<!DOCTYPE html>
-<html lang='en'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Payment Successful</title>
-    <style>
-        {GetBaseStyles(style)}
-        {GetPaymentSuccessStyles(style)}
-    </style>
-</head>
-<body>
-    <div class='email-container'>
-        <div class='header' style='background-color: {style.SuccessColor};'>
-            <div class='header-content'>
-                <img src='{style.LogoUrl}' alt='{companyInfo?.Name}' class='logo' style='max-height: 60px;'>
-                <h1 style='color: white; margin: 0; font-size: 28px;'>💳 Payment Successful!</h1>
-            </div>
-        </div>
-        
-        <div class='content'>
-            <div class='success-banner' style='background-color: {style.SuccessColor}; color: white; text-align: center; padding: 20px; margin: 20px 0; border-radius: 8px;'>
-                <h2 style='margin: 0; font-size: 24px;'>Your payment has been processed successfully!</h2>
-                <p style='margin: 10px 0 0 0; font-size: 16px;'>Your car rental booking is now confirmed.</p>
-            </div>
-            
-            <div class='payment-summary' style='background-color: {style.BackgroundColor}; border: 1px solid {style.BorderColor};'>
-                <h3 style='color: {style.PrimaryColor}; margin-top: 0;'>Payment Summary</h3>
-                <div class='payment-details'>
-                    <div class='detail-row'>
-                        <span class='label'>Vehicle:</span>
-                        <span class='value'><strong>{vehicleInfo?.Make} {vehicleInfo?.Model} ({vehicleInfo?.Year})</strong></span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Amount Paid:</span>
-                        <span class='value'><strong style='color: {style.SuccessColor}; font-size: 18px;'>${bookingData.TotalAmount:F2}</strong></span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Payment Status:</span>
-                        <span class='value'><strong style='color: {style.SuccessColor};'>✅ Completed</strong></span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Company:</span>
-                        <span class='value'><strong>{companyInfo?.Name}</strong></span>
-                    </div>
-                </div>
-            </div>
-            
-            <div class='next-steps' style='background-color: {style.InfoColor}; border-left: 4px solid {style.PrimaryColor};'>
-                <h4 style='color: {style.PrimaryColor}; margin-top: 0;'>What's Next?</h4>
-                <p style='color: {style.TextColor}; line-height: 1.6;'>
-                    You will receive a separate confirmation email with your complete booking details shortly. 
-                    Please keep this payment confirmation for your records.
-                </p>
-            </div>
-            
-            <div class='contact-info'>
-                <h4 style='color: {style.PrimaryColor};'>Questions?</h4>
-                <p style='color: {style.TextColor};'>
-                    If you have any questions about your payment or booking, please contact:<br>
-                    <strong>{companyInfo?.Name}</strong><br>
-                    📧 {companyInfo?.Email}
-                </p>
-            </div>
-        </div>
-        
-        <div class='footer' style='background-color: {style.FooterColor}; color: {style.FooterTextColor};'>
-            <p style='margin: 0; text-align: center; font-size: 12px;'>
-                This is a payment confirmation from {companyInfo?.Name}. Please keep this email for your records.
-            </p>
-            <p style='margin: 10px 0 0 0; text-align: center; font-size: 12px;'>
-                {style.FooterText}
-            </p>
-        </div>
-    </div>
-</body>
-</html>";
+            <p><strong>{loc.Get("before_returning", language)}:</strong></p>
+            <ul>
+                <li>✓ {loc.Get("refill_gas", language)}</li>
+                <li>✓ {loc.Get("remove_belongings", language)}</li>
+                <li>✓ {loc.Get("clean_interior", language)}</li>
+                <li>✓ {loc.Get("avoid_late_fees", language)}</li>
+            </ul>
+
+            <p>{loc.Get("thank_you", language)} {branding.CompanyName}!</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
     }
 
-    public string GenerateWelcomeEmail(string customerEmail, string companyName, Models.CompanyEmailStyle? companyStyle = null)
+    public string GeneratePaymentConfirmationTemplate(
+        TenantBranding branding,
+        string customerName,
+        string bookingId,
+        decimal amount,
+        string paymentMethod,
+        string currencySymbol,
+        EmailLanguage language)
     {
-        var style = companyStyle ?? GetDefaultCompanyStyle();
+        var loc = _localization;
+        var successColor = branding.SecondaryColor ?? "#059669";
+        
+        var content = $@"
+            <h1 style='color: {successColor}; margin-bottom: 20px;'>{loc.Get("payment_confirmation", language)}</h1>
+            <p>{loc.Get("dear", language)} {customerName},</p>
+            <p>{loc.Get("payment_received", language)}</p>
+            
+            <div style='background-color: #d1fae5; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid {successColor};'>
+                <h2 style='margin-top: 0; color: #065f46;'>{loc.Get("payment_details", language)}</h2>
+                <p><strong>{loc.Get("booking_id", language)}:</strong> {bookingId}</p>
+                <p><strong>{loc.Get("amount_paid", language)}:</strong> {currencySymbol}{amount:N2}</p>
+                <p><strong>{loc.Get("payment_method", language)}:</strong> {paymentMethod}</p>
+                <p><strong>{loc.Get("payment_date", language)}:</strong> {DateTime.UtcNow:MMMM dd, yyyy 'at' hh:mm tt} UTC</p>
+            </div>
 
-        return $@"
-<!DOCTYPE html>
-<html lang='en'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Welcome to {companyName}</title>
-    <style>
-        {GetBaseStyles(style)}
-        {GetWelcomeStyles(style)}
-    </style>
-</head>
-<body>
-    <div class='email-container'>
-        <div class='header' style='background-color: {style.PrimaryColor};'>
-            <div class='header-content'>
-                <img src='{style.LogoUrl}' alt='{companyName}' class='logo' style='max-height: 60px;'>
-                <h1 style='color: {style.HeaderTextColor}; margin: 0; font-size: 28px;'>Welcome to {companyName}!</h1>
-            </div>
-        </div>
-        
-        <div class='content'>
-            <div class='welcome-message'>
-                <h2 style='color: {style.PrimaryColor}; margin-bottom: 20px;'>Thank you for choosing {companyName}!</h2>
-                <p style='font-size: 16px; line-height: 1.6; color: {style.TextColor};'>
-                    We're excited to have you as a customer. You can now enjoy our premium car rental services 
-                    with easy booking and excellent customer support.
-                </p>
-            </div>
-            
-            <div class='features' style='background-color: {style.BackgroundColor};'>
-                <h3 style='color: {style.PrimaryColor}; margin-top: 0;'>What you can expect:</h3>
-                <ul style='color: {style.TextColor}; line-height: 1.8;'>
-                    <li>🚗 Wide selection of quality vehicles</li>
-                    <li>💳 Secure online payment processing</li>
-                    <li>📧 Instant booking confirmations</li>
-                    <li>🛡️ Comprehensive insurance options</li>
-                    <li>📞 24/7 customer support</li>
-                </ul>
-            </div>
-            
-            <div class='cta-section' style='text-align: center; margin: 30px 0;'>
-                <a href='#' class='cta-button' style='background-color: {style.PrimaryColor}; color: {style.ButtonTextColor};'>
-                    Start Your First Booking
-                </a>
-            </div>
-        </div>
-        
-        <div class='footer' style='background-color: {style.FooterColor}; color: {style.FooterTextColor};'>
-            <p style='margin: 0; text-align: center; font-size: 12px;'>
-                Welcome to the {companyName} family!
-            </p>
-            <p style='margin: 10px 0 0 0; text-align: center; font-size: 12px;'>
-                {style.FooterText}
-            </p>
-        </div>
-    </div>
-</body>
-</html>";
+            <p>{loc.Get("invoice_sent", language)}</p>
+            <p>{loc.Get("payment_questions", language)}</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
     }
 
-    public string GenerateReminderEmail(BookingToken bookingToken, string bookingUrl, Models.CompanyEmailStyle? companyStyle = null)
+    public string GenerateInvoiceTemplate(
+        TenantBranding branding,
+        string customerName,
+        string invoiceId,
+        decimal totalAmount,
+        string currencySymbol,
+        EmailLanguage language)
     {
-        var style = companyStyle ?? GetDefaultCompanyStyle();
-        var bookingData = bookingToken.BookingData;
-        var vehicleInfo = bookingData.VehicleInfo;
-        var companyInfo = bookingData.CompanyInfo;
+        var loc = _localization;
+        
+        var content = $@"
+            <h1 style='color: {branding.BrandColor}; margin-bottom: 20px;'>{loc.Get("invoice", language)}</h1>
+            <p>{loc.Get("dear", language)} {customerName},</p>
+            <p>{loc.Get("invoice_attached", language)}</p>
+            
+            <div style='background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;'>
+                <h2 style='margin-top: 0; color: {branding.BrandColor};'>{loc.Get("invoice_summary", language)}</h2>
+                <p><strong>{loc.Get("invoice_id", language)}:</strong> {invoiceId}</p>
+                <p><strong>{loc.Get("invoice_date", language)}:</strong> {DateTime.UtcNow:MMMM dd, yyyy}</p>
+                <p style='font-size: 24px; color: {branding.BrandColor}; margin-top: 20px;'>
+                    <strong>{loc.Get("total_amount", language)}: {currencySymbol}{totalAmount:N2}</strong>
+                </p>
+            </div>
 
-        return $@"
-<!DOCTYPE html>
-<html lang='en'>
-<head>
-    <meta charset='UTF-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Booking Reminder - {companyInfo?.Name}</title>
-    <style>
-        {GetBaseStyles(style)}
-        {GetReminderStyles(style)}
-    </style>
-</head>
-<body>
-    <div class='email-container'>
-        <div class='header' style='background-color: {style.WarningColor};'>
-            <div class='header-content'>
-                <img src='{style.LogoUrl}' alt='{companyInfo?.Name}' class='logo' style='max-height: 60px;'>
-                <h1 style='color: white; margin: 0; font-size: 28px;'>⏰ Booking Reminder</h1>
-            </div>
-        </div>
-        
-        <div class='content'>
-            <div class='reminder-message'>
-                <h2 style='color: {style.WarningColor}; margin-bottom: 20px;'>Don't miss out on your booking!</h2>
-                <p style='font-size: 16px; line-height: 1.6; color: {style.TextColor};'>
-                    You have a pending car rental booking with <strong>{companyInfo?.Name}</strong> that expires soon. 
-                    Complete your booking now to secure your vehicle.
-                </p>
-            </div>
-            
-            <div class='booking-summary' style='background-color: {style.BackgroundColor}; border-left: 4px solid {style.WarningColor};'>
-                <h3 style='color: {style.PrimaryColor}; margin-top: 0;'>Your Booking</h3>
-                <div class='booking-details'>
-                    <div class='detail-row'>
-                        <span class='label'>Vehicle:</span>
-                        <span class='value'><strong>{vehicleInfo?.Make} {vehicleInfo?.Model} ({vehicleInfo?.Year})</strong></span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Total Amount:</span>
-                        <span class='value'><strong style='color: {style.PrimaryColor}; font-size: 18px;'>${bookingData.TotalAmount:F2}</strong></span>
-                    </div>
-                    <div class='detail-row'>
-                        <span class='label'>Expires:</span>
-                        <span class='value' style='color: {style.WarningColor}; font-weight: bold;'>{bookingToken.ExpiresAt:MMMM dd, yyyy 'at' h:mm tt}</span>
-                    </div>
-                </div>
-            </div>
-            
-            <div class='cta-section' style='text-align: center; margin: 30px 0;'>
-                <a href='{bookingUrl}' class='cta-button' style='background-color: {style.WarningColor}; color: white;'>
-                    Complete Booking Now
-                </a>
-                <p class='urgency-notice' style='color: {style.WarningColor}; font-size: 14px; margin-top: 15px; font-weight: bold;'>
-                    ⚠️ This booking expires in {GetTimeUntilExpiration(bookingToken.ExpiresAt)}
-                </p>
-            </div>
-        </div>
-        
-        <div class='footer' style='background-color: {style.FooterColor}; color: {style.FooterTextColor};'>
-            <p style='margin: 0; text-align: center; font-size: 12px;'>
-                This is a reminder from {companyInfo?.Name}. Please complete your booking to avoid missing out.
-            </p>
-        </div>
-    </div>
-</body>
-</html>";
+            <p>{loc.Get("invoice_pdf_attached", language)}</p>
+            <p>{loc.Get("thank_you_business", language)}</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
     }
 
-    public Models.CompanyEmailStyle GetDefaultCompanyStyle()
+    public string GenerateOverdueReturnTemplate(
+        TenantBranding branding,
+        string customerName,
+        string bookingId,
+        DateTime expectedReturnDate,
+        string vehicleName,
+        decimal lateFee,
+        string currencySymbol,
+        EmailLanguage language)
     {
-        return new CompanyEmailStyle
+        var loc = _localization;
+        var daysOverdue = (DateTime.UtcNow - expectedReturnDate).Days;
+        
+        var content = $@"
+            <h1 style='color: #dc2626; margin-bottom: 20px;'>⚠️ {loc.Get("overdue_return", language)}</h1>
+            <p>{loc.Get("dear", language)} {customerName},</p>
+            <p>{loc.Get("vehicle_not_returned", language)}</p>
+            
+            <div style='background-color: #fee2e2; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc2626;'>
+                <h2 style='margin-top: 0; color: #991b1b;'>{loc.Get("overdue_details", language)}</h2>
+                <p><strong>{loc.Get("booking_id", language)}:</strong> {bookingId}</p>
+                <p><strong>{loc.Get("vehicle", language)}:</strong> {vehicleName}</p>
+                <p><strong>{loc.Get("expected_return_date", language)}:</strong> {expectedReturnDate:dddd, MMMM dd, yyyy 'at' hh:mm tt}</p>
+                <p><strong>{loc.Get("days_overdue", language)}:</strong> {daysOverdue} {loc.Get("days", language)}</p>
+                <p style='font-size: 20px; color: #dc2626; margin-top: 15px;'>
+                    <strong>{loc.Get("late_fee", language)}: {currencySymbol}{lateFee:N2}</strong>
+                </p>
+            </div>
+
+            <p><strong style='color: #dc2626;'>{loc.Get("immediate_action", language)}:</strong></p>
+            <ul>
+                <li>{loc.Get("return_immediately", language)}</li>
+                <li>{loc.Get("contact_if_issues", language)}</li>
+                <li>{loc.Get("fees_continue", language)}</li>
+            </ul>
+
+            <p style='color: #dc2626;'><strong>{loc.Get("vehicle_stolen_note", language)}</strong></p>
+            
+            <p>{loc.Get("understand_circumstances", language)}</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
+    }
+
+    public string GenerateInvitationTemplate(
+        TenantBranding branding,
+        string invitationUrl,
+        EmailLanguage language)
+    {
+        var loc = _localization;
+        
+        var content = $@"
+            <h1 style='color: {branding.BrandColor}; margin-bottom: 20px;'>{loc.Get("email_verification", language)}</h1>
+            <p>{loc.Get("dear", language)} Customer,</p>
+            <p>{loc.Get("welcome_aboard", language)}</p>
+            <p>{loc.Get("verify_email", language)}</p>
+            
+            <div style='background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;'>
+                <p style='margin-bottom: 20px;'>{loc.Get("click_button_verify", language)}</p>
+                <a href='{invitationUrl}' style='display: inline-block; padding: 12px 24px; background-color: {branding.BrandColor}; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold;'>{loc.Get("verify_email_button", language)}</a>
+            </div>
+
+            <p style='font-size: 12px; color: #6b7280;'>{loc.Get("verification_expires", language)}</p>
+            <p>{loc.Get("thank_you", language)} {branding.CompanyName}!</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
+    }
+
+    public string GeneratePasswordResetTemplate(
+        TenantBranding branding,
+        string resetUrl,
+        EmailLanguage language)
+    {
+        var loc = _localization;
+        
+        var content = $@"
+            <h1 style='color: {branding.BrandColor}; margin-bottom: 20px;'>{loc.Get("password_reset", language)}</h1>
+            <p>{loc.Get("dear", language)} Customer,</p>
+            <p>{loc.Get("password_reset_requested", language)}</p>
+            
+            <div style='background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;'>
+                <p style='margin-bottom: 20px;'>{loc.Get("click_button_reset", language)}</p>
+                <a href='{resetUrl}' style='display: inline-block; padding: 12px 24px; background-color: {branding.BrandColor}; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold;'>{loc.Get("reset_password", language)}</a>
+            </div>
+
+            <p style='font-size: 12px; color: #6b7280;'>{loc.Get("link_expires", language)}</p>
+            <p style='font-size: 12px; color: #6b7280;'>{loc.Get("not_requested", language)}</p>
+            <p style='font-size: 12px; color: #6b7280;'>{loc.Get("security_tip", language)}</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
+    }
+
+    private string GetBaseTemplate(TenantBranding branding, string content, EmailLanguage language)
+    {
+        var loc = _localization;
+        
+        // Build logo section if logo URL is provided
+        var logoSection = string.Empty;
+        if (!string.IsNullOrEmpty(branding.LogoUrl))
         {
-            PrimaryColor = "#007bff",
-            SecondaryColor = "#6c757d",
-            SuccessColor = "#28a745",
-            WarningColor = "#ffc107",
-            InfoColor = "#17a2b8",
-            BackgroundColor = "#f8f9fa",
-            BorderColor = "#dee2e6",
-            TextColor = "#333333",
-            HeaderTextColor = "#ffffff",
-            ButtonTextColor = "#ffffff",
-            FooterColor = "#343a40",
-            FooterTextColor = "#ffffff",
-            LogoUrl = "https://via.placeholder.com/200x60/007bff/ffffff?text=CarRental",
-            FooterText = "© 2025 Car Rental System. All rights reserved.",
-            FontFamily = "Arial, sans-serif"
-        };
-    }
+            logoSection = $@"
+                <div style='text-align: center; margin-bottom: 20px;'>
+                    <img src='{branding.LogoUrl}' alt='{branding.CompanyName}' style='max-width: 200px; max-height: 80px;' />
+                </div>";
+        }
 
-    public Models.CompanyEmailStyle GetCompanyStyle(Guid companyId)
-    {
-        // In a real implementation, you would fetch company-specific styling from database
-        // For now, return default style
-        return GetDefaultCompanyStyle();
-    }
+        // Build address section if provided
+        var addressSection = string.Empty;
+        if (!string.IsNullOrEmpty(branding.Address))
+        {
+            addressSection = $@"
+                <p style='margin: 10px 0 0 0; font-size: 12px;'>
+                    {branding.Address}
+                </p>";
+        }
 
-    private string GetBaseStyles(CompanyEmailStyle style)
-    {
+        // Build footer text if provided
+        var footerText = string.Empty;
+        if (!string.IsNullOrEmpty(branding.FooterText))
+        {
+            footerText = $@"
+                <p style='margin: 15px 0 0 0; font-size: 13px; font-style: italic; color: #6b7280;'>
+                    {branding.FooterText}
+                </p>";
+        }
+
+        // Build website link
+        var websiteLink = string.Empty;
+        if (!string.IsNullOrEmpty(branding.WebsiteUrl))
+        {
+            websiteLink = $@"
+                <p style='margin: 10px 0 0 0; font-size: 12px;'>
+                    Website: <a href='{branding.WebsiteUrl}' style='color: {branding.BrandColor}; text-decoration: none;'>{branding.WebsiteUrl.Replace("https://", "").Replace("http://", "")}</a>
+                </p>";
+        }
+
+        var phoneSection = string.Empty;
+        if (!string.IsNullOrEmpty(branding.SupportPhone))
+        {
+            phoneSection = $"<br>Phone: <a href='tel:{branding.SupportPhone}' style='color: {branding.BrandColor}; text-decoration: none;'>{branding.SupportPhone}</a>";
+        }
+
         return $@"
-        body {{
-            font-family: {style.FontFamily};
-            line-height: 1.6;
-            color: {style.TextColor};
-            margin: 0;
-            padding: 0;
-            background-color: #f4f4f4;
-        }}
-        .email-container {{
-            max-width: 600px;
-            margin: 0 auto;
-            background-color: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }}
-        .header {{
-            padding: 20px;
-            text-align: center;
-        }}
-        .header-content {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 15px;
-        }}
-        .content {{
-            padding: 30px;
-        }}
-        .footer {{
-            padding: 20px;
-            text-align: center;
-        }}
-        .cta-button {{
-            display: inline-block;
-            padding: 15px 30px;
-            text-decoration: none;
-            border-radius: 5px;
-            font-weight: bold;
-            font-size: 16px;
-            transition: all 0.3s ease;
-        }}
-        .cta-button:hover {{
-            opacity: 0.9;
-            transform: translateY(-2px);
-        }}
-        .detail-row {{
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid {style.BorderColor};
-        }}
-        .detail-row:last-child {{
-            border-bottom: none;
-        }}
-        .label {{
-            font-weight: bold;
-            color: {style.TextColor};
-        }}
-        .value {{
-            color: {style.TextColor};
-        }}
-        @media (max-width: 600px) {{
-            .email-container {{
-                margin: 0;
-                border-radius: 0;
-            }}
-            .content {{
-                padding: 20px;
-            }}
-            .header-content {{
-                flex-direction: column;
-                gap: 10px;
-            }}
-        }}";
-    }
-
-    private string GetBookingLinkStyles(CompanyEmailStyle style)
-    {
-        return $@"
-        .booking-summary {{
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }}
-        .total-row {{
-            background-color: {style.PrimaryColor};
-            color: white;
-            padding: 15px;
-            margin: 10px -20px -20px -20px;
-            border-radius: 0 0 5px 5px;
-        }}
-        .total-row .label,
-        .total-row .value {{
-            color: white;
-        }}
-        .vehicle-features {{
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }}
-        .contact-info {{
-            background-color: {style.BackgroundColor};
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 20px;
-        }}";
-    }
-
-    private string GetConfirmationStyles(CompanyEmailStyle style)
-    {
-        return $@"
-        .confirmation-banner {{
-            text-align: center;
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 8px;
-        }}
-        .booking-details {{
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }}
-        .details-grid {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }}
-        .detail-item {{
-            padding: 10px 0;
-        }}
-        .total-item {{
-            grid-column: 1 / -1;
-            background-color: {style.SuccessColor};
-            color: white;
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 10px;
-        }}
-        .next-steps {{
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }}
-        @media (max-width: 600px) {{
-            .details-grid {{
-                grid-template-columns: 1fr;
-            }}
-        }}";
-    }
-
-    private string GetPaymentSuccessStyles(CompanyEmailStyle style)
-    {
-        return $@"
-        .success-banner {{
-            text-align: center;
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 8px;
-        }}
-        .payment-summary {{
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }}
-        .payment-details {{
-            background-color: {style.BackgroundColor};
-            padding: 15px;
-            border-radius: 5px;
-        }}";
-    }
-
-    private string GetWelcomeStyles(CompanyEmailStyle style)
-    {
-        return $@"
-        .welcome-message {{
-            text-align: center;
-            padding: 20px 0;
-        }}
-        .features {{
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }}
-        .features ul {{
-            list-style: none;
-            padding: 0;
-        }}
-        .features li {{
-            padding: 8px 0;
-            font-size: 16px;
-        }}";
-    }
-
-    private string GetReminderStyles(CompanyEmailStyle style)
-    {
-        return $@"
-        .reminder-message {{
-            text-align: center;
-            padding: 20px 0;
-        }}
-        .booking-summary {{
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 5px;
-        }}
-        .urgency-notice {{
-            background-color: {style.WarningColor};
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            display: inline-block;
-        }}";
-    }
-
-    private string GetTimeUntilExpiration(DateTime expirationTime)
-    {
-        var timeSpan = expirationTime - DateTime.UtcNow;
-        if (timeSpan.TotalHours < 1)
-            return $"{(int)timeSpan.TotalMinutes} minutes";
-        else if (timeSpan.TotalDays < 1)
-            return $"{(int)timeSpan.TotalHours} hours";
-        else
-            return $"{(int)timeSpan.TotalDays} days";
+<!DOCTYPE html>
+<html lang='{LanguageCodes.ToCode(language)}'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>{branding.CompanyName} Notification</title>
+</head>
+<body style='margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f9fafb;'>
+    <table role='presentation' style='width: 100%; border-collapse: collapse;'>
+        <tr>
+            <td style='padding: 40px 0;'>
+                <table role='presentation' style='width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
+                    <!-- Header -->
+                    <tr>
+                        <td style='padding: 40px 40px 20px 40px; text-align: center; background-color: {branding.BrandColor}; border-radius: 8px 8px 0 0;'>
+                            {logoSection}
+                            <h1 style='margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;'>{branding.CompanyName}</h1>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td style='padding: 40px; color: #374151; line-height: 1.6;'>
+                            {content}
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style='padding: 30px 40px; background-color: #f3f4f6; border-radius: 0 0 8px 8px; text-align: center; color: #6b7280; font-size: 14px;'>
+                            <p style='margin: 0 0 10px 0;'>
+                                <strong>{branding.CompanyName}</strong>
+                            </p>
+                            <p style='margin: 0 0 10px 0;'>
+                                Email: <a href='mailto:{branding.SupportEmail}' style='color: {branding.BrandColor}; text-decoration: none;'>{branding.SupportEmail}</a>{phoneSection}
+                            </p>
+                            {websiteLink}
+                            {addressSection}
+                            {footerText}
+                            <p style='margin: 20px 0 0 0; font-size: 12px;'>
+                                © {DateTime.UtcNow.Year} {branding.CompanyName}. {loc.Get("all_rights_reserved", language)}
+                            </p>
+                            <p style='margin: 10px 0 0 0; font-size: 12px;'>
+                                {loc.Get("automated_message", language)}
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>";
     }
 }
-
