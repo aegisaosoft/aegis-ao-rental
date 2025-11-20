@@ -116,6 +116,20 @@ public class ModelsController : ControllerBase
 
             _logger.LogInformation("Stored procedure returned {Count} available vehicle models", availableVehicles.Count);
 
+            // Get actual daily rates from vehicle_model for each model (same logic as GetModels)
+            var modelIds = availableVehicles.Select(v => v.ModelId).Distinct().ToList();
+            var vehicleModelQuery = _context.VehicleModels
+                .Where(vm => modelIds.Contains(vm.ModelId) && vm.CompanyId == companyId.Value)
+                .AsQueryable();
+            
+            var vehicleModelsDict = await vehicleModelQuery
+                .OrderBy(vm => vm.CreatedAt)
+                .GroupBy(vm => vm.ModelId)
+                .Select(g => g.First())
+                .ToDictionaryAsync(vm => vm.ModelId);
+
+            _logger.LogInformation("GetModelsGroupedByCategory: Found rates for {Count} vehicle_model entries", vehicleModelsDict.Count);
+
             // Group by category
             var grouped = availableVehicles
                 .Where(v => !string.IsNullOrEmpty(v.CategoryName))
@@ -134,7 +148,7 @@ public class ModelsController : ControllerBase
                         FuelType = v.FuelType,
                         Transmission = v.Transmission,
                         Seats = v.Seats,
-                        DailyRate = v.AvgDailyRate, // Use average daily rate
+                        DailyRate = vehicleModelsDict.ContainsKey(v.ModelId) ? vehicleModelsDict[v.ModelId].DailyRate : v.AvgDailyRate, // Use actual rate from vehicle_model, fallback to average
                         Features = v.ModelFeatures,
                         Description = null,
                         CategoryId = v.CategoryId,
@@ -461,9 +475,13 @@ public class ModelsController : ControllerBase
             _logger.LogInformation("Bulk updated {Count} vehicle_model catalog entries daily rate to {Rate}", 
                 rowsAffected, request.DailyRate);
 
+            // Note: Vehicles get their daily_rate from vehicle_model through the relationship
+            // No need to update vehicles table directly - they reference vehicle_model via vehicle_model_id
+            // All vehicles using the updated vehicle_model entries will automatically use the new rate
+
             return Ok(new { 
-                Count = (int)rowsAffected,
-                Message = $"Successfully updated {rowsAffected} catalog entries" 
+                CatalogEntriesUpdated = (int)rowsAffected,
+                Message = $"Successfully updated {rowsAffected} catalog entries. All vehicles using these models will use the new rate." 
             });
         }
         catch (Exception ex)
