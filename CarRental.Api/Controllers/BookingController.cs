@@ -1149,6 +1149,33 @@ public class BookingController : ControllerBase
             if (company == null)
                 return BadRequest("Company not found");
 
+            // Check for overlapping bookings - prevent double booking
+            var unavailableStatuses = new[] { BookingStatus.Pending, BookingStatus.Confirmed, BookingStatus.PickedUp, BookingStatus.Active };
+            
+            // Normalize request dates: pickup at start of day, return at end of day
+            var requestPickupDateStart = createReservationDto.PickupDate.Date; // Start of pickup day (00:00:00)
+            var requestReturnDateEnd = createReservationDto.ReturnDate.Date.AddDays(1); // Start of day after return (00:00:00, exclusive)
+            
+            // Check if there are any existing bookings for this vehicle with overlapping dates
+            var hasOverlappingBooking = await _context.Bookings
+                .AnyAsync(b => b.VehicleId == createReservationDto.VehicleId &&
+                               unavailableStatuses.Contains(b.Status) &&
+                               // Booking's pickup date is before the end of requested return date
+                               b.PickupDate < requestReturnDateEnd &&
+                               // Booking's return date is on or after the start of requested pickup date
+                               b.ReturnDate >= requestPickupDateStart);
+
+            if (hasOverlappingBooking)
+            {
+                _logger.LogWarning(
+                    "Attempted to create booking for vehicle {VehicleId} with overlapping dates. Pickup: {PickupDate}, Return: {ReturnDate}",
+                    createReservationDto.VehicleId,
+                    createReservationDto.PickupDate,
+                    createReservationDto.ReturnDate
+                );
+                return BadRequest("This vehicle is already booked for the selected dates. Please choose different dates.");
+            }
+
             var totalDays = (int)(createReservationDto.ReturnDate - createReservationDto.PickupDate).TotalDays + 1;
             var subtotal = createReservationDto.DailyRate * totalDays;
             var totalAmount = subtotal + createReservationDto.TaxAmount + createReservationDto.InsuranceAmount + createReservationDto.AdditionalFees;
@@ -1271,6 +1298,42 @@ public class BookingController : ControllerBase
 
             if (!string.IsNullOrEmpty(updateReservationDto.AltBookingNumber))
                 reservation.AltBookingNumber = updateReservationDto.AltBookingNumber;
+
+            // Determine the dates to check for overlaps
+            var newPickupDate = updateReservationDto.PickupDate ?? reservation.PickupDate;
+            var newReturnDate = updateReservationDto.ReturnDate ?? reservation.ReturnDate;
+
+            // If dates are being changed, check for overlapping bookings (excluding current booking)
+            if (updateReservationDto.PickupDate.HasValue || updateReservationDto.ReturnDate.HasValue)
+            {
+                var unavailableStatuses = new[] { BookingStatus.Pending, BookingStatus.Confirmed, BookingStatus.PickedUp, BookingStatus.Active };
+                
+                // Normalize request dates: pickup at start of day, return at end of day
+                var requestPickupDateStart = newPickupDate.Date; // Start of pickup day (00:00:00)
+                var requestReturnDateEnd = newReturnDate.Date.AddDays(1); // Start of day after return (00:00:00, exclusive)
+                
+                // Check if there are any existing bookings for this vehicle with overlapping dates (excluding current booking)
+                var hasOverlappingBooking = await _context.Bookings
+                    .AnyAsync(b => b.VehicleId == reservation.VehicleId &&
+                                   b.Id != id && // Exclude the current booking being updated
+                                   unavailableStatuses.Contains(b.Status) &&
+                                   // Booking's pickup date is before the end of requested return date
+                                   b.PickupDate < requestReturnDateEnd &&
+                                   // Booking's return date is on or after the start of requested pickup date
+                                   b.ReturnDate >= requestPickupDateStart);
+
+                if (hasOverlappingBooking)
+                {
+                    _logger.LogWarning(
+                        "Attempted to update booking {BookingId} for vehicle {VehicleId} with overlapping dates. Pickup: {PickupDate}, Return: {ReturnDate}",
+                        id,
+                        reservation.VehicleId,
+                        newPickupDate,
+                        newReturnDate
+                    );
+                    return BadRequest("This vehicle is already booked for the selected dates. Please choose different dates.");
+                }
+            }
 
             if (updateReservationDto.PickupDate.HasValue)
                 reservation.PickupDate = updateReservationDto.PickupDate.Value;
