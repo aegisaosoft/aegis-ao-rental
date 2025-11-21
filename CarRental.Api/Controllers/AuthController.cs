@@ -654,12 +654,12 @@ public class AuthController : ControllerBase
                     return Ok(new { message = "If the email exists, a password reset link has been sent." });
                 }
 
-                // Build reset password URL
-                var frontendUrl = GetFrontendUrl();
-                var resetUrl = $"{frontendUrl}/reset-password?token={Uri.EscapeDataString(token)}&email={Uri.EscapeDataString(customer.Email)}";
-
-                // Determine language from company
+                // Determine language from company and get frontend URL
                 var company = await _context.Companies.FindAsync(companyId);
+                
+                // Build reset password URL using company subdomain
+                var frontendUrl = GetFrontendUrl(companyId, company);
+                var resetUrl = $"{frontendUrl}/reset-password?token={Uri.EscapeDataString(token)}&email={Uri.EscapeDataString(customer.Email)}";
                 var languageCode = company?.Language?.ToLower() ?? "en";
                 var language = LanguageCodes.FromCode(languageCode);
 
@@ -781,7 +781,7 @@ public class AuthController : ControllerBase
         }
     }
 
-    private string GetFrontendUrl()
+    private string GetFrontendUrl(Guid? companyId = null, Company? company = null)
     {
         var host = HttpContext.Request.Host.Host;
         var scheme = HttpContext.Request.Scheme;
@@ -793,7 +793,48 @@ public class AuthController : ControllerBase
             return "https://localhost:3000"; // Match your frontend port
         }
 
-        // Production - use same domain as request
+        // Production - build URL from company subdomain
+        if (companyId.HasValue && companyId.Value != Guid.Empty)
+        {
+            // Load company if not provided
+            if (company == null)
+            {
+                company = _context.Companies.Find(companyId.Value);
+            }
+
+            if (company != null && !string.IsNullOrWhiteSpace(company.Subdomain))
+            {
+                // Build frontend URL using company subdomain: {subdomain}.aegis-rental.com
+                var frontendUrl = $"https://{company.Subdomain.ToLower()}.aegis-rental.com";
+                _logger.LogInformation("Using company subdomain for frontend URL: {FrontendUrl} (company: {CompanyName})", frontendUrl, company.CompanyName);
+                return frontendUrl;
+            }
+        }
+
+        // Fallback: Check configuration for frontend URL
+        var configuredFrontendUrl = _configuration["FrontendUrl"] 
+            ?? _configuration["FRONTEND_URL"]
+            ?? Environment.GetEnvironmentVariable("FRONTEND_URL")
+            ?? Environment.GetEnvironmentVariable("FrontendUrl");
+
+        if (!string.IsNullOrWhiteSpace(configuredFrontendUrl))
+        {
+            _logger.LogInformation("Using configured frontend URL: {FrontendUrl}", configuredFrontendUrl);
+            return configuredFrontendUrl.TrimEnd('/');
+        }
+
+        // Last resort: Try to derive from request host (for subdomain-based deployments)
+        // If backend is on api subdomain, frontend might be on root or www
+        if (host.Contains("api.") || host.Contains("-api"))
+        {
+            // Replace api subdomain with root or www
+            var frontendHost = host.Replace("api.", "").Replace("-api", "");
+            _logger.LogWarning("Deriving frontend URL from request host: {FrontendHost}. Consider configuring FrontendUrl or ensuring company has subdomain.", frontendHost);
+            return $"{scheme}://{frontendHost}";
+        }
+
+        // Last resort: Use request host (but log warning)
+        _logger.LogWarning("No frontend URL configured and no company subdomain found. Using request host: {Host}. This may be incorrect for password reset links.", host);
         return $"{scheme}://{HttpContext.Request.Host}";
     }
 }
