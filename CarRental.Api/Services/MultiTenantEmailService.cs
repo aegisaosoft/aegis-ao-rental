@@ -20,6 +20,7 @@ public class MultiTenantEmailService
     private readonly ILogger<MultiTenantEmailService> _logger;
     private readonly IMemoryCache _cache;
     private string? _defaultFromEmail;
+    private string? _defaultAzureDomain;
 
     public MultiTenantEmailService(
         ISettingsService settingsService,
@@ -37,30 +38,76 @@ public class MultiTenantEmailService
         _cache = cache;
     }
 
-    private async Task<EmailClient> GetEmailClientAsync()
+    /// <summary>
+    /// Clear the cached email client to force reinitialization
+    /// Useful when domain verification status changes
+    /// </summary>
+    public void ClearEmailClientCache()
+    {
+        _emailClient = null;
+        _defaultFromEmail = null;
+        _logger.LogInformation("Email client cache cleared. Client will be reinitialized on next use.");
+    }
+
+    private async Task<EmailClient?> GetEmailClientAsync()
     {
         if (_emailClient != null)
         {
             return _emailClient;
         }
 
-        var connectionString = await _settingsService.GetValueAsync("azure.communication.connectionString");
-        _defaultFromEmail = await _settingsService.GetValueAsync("azure.communication.fromEmail");
-
-        if (string.IsNullOrEmpty(connectionString))
+        try
         {
-            throw new InvalidOperationException("Azure Communication Services connection string is not configured in database settings. Please set 'azure.communication.connectionString'.");
-        }
+            _logger.LogInformation("GetEmailClientAsync: Attempting to retrieve Azure Communication Services configuration...");
+            
+            var connectionString = await _settingsService.GetValueAsync("azure.communication.connectionString");
+            _defaultFromEmail = await _settingsService.GetValueAsync("azure.communication.fromEmail");
 
-        if (string.IsNullOrEmpty(_defaultFromEmail))
+            _logger.LogInformation(
+                "GetEmailClientAsync: Connection string present: {HasConnectionString}, From email present: {HasFromEmail}",
+                !string.IsNullOrEmpty(connectionString),
+                !string.IsNullOrEmpty(_defaultFromEmail));
+
+            if (string.IsNullOrEmpty(connectionString))
+            {
+                _logger.LogError(
+                    "Azure Communication Services connection string is not configured in database settings. " +
+                    "Please set 'azure.communication.connectionString' in the settings table. " +
+                    "Emails will not be sent until this is configured.");
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(_defaultFromEmail))
+            {
+                _logger.LogError(
+                    "Default from email address is not configured in database settings. " +
+                    "Please set 'azure.communication.fromEmail' in the settings table. " +
+                    "Emails will not be sent until this is configured.");
+                return null;
+            }
+
+            // Use connection string authentication (simpler, no Azure AD needed)
+            if (!string.IsNullOrEmpty(connectionString))
+            {
+                _logger.LogInformation("Initializing EmailClient with connection string authentication");
+                
+                _emailClient = new EmailClient(connectionString);
+                
+                // Extract resource name from connection string for default domain fallback
+                _defaultAzureDomain = ExtractDefaultAzureDomain(connectionString);
+                
+                _logger.LogInformation(
+                    "Multi-tenant EmailService initialized with connection string. From email: {FromEmail}, Default Azure domain: {DefaultDomain}",
+                    _defaultFromEmail, _defaultAzureDomain);
+            }
+            
+            return _emailClient;
+        }
+        catch (Exception ex)
         {
-            throw new InvalidOperationException("Default from email address is not configured in database settings. Please set 'azure.communication.fromEmail'.");
+            _logger.LogError(ex, "Error initializing Azure Communication Services email client");
+            return null;
         }
-
-        _emailClient = new EmailClient(connectionString);
-        _logger.LogInformation("Multi-tenant EmailService initialized with Azure Communication Services");
-        
-        return _emailClient;
     }
 
     /// <summary>
@@ -74,6 +121,7 @@ public class MultiTenantEmailService
         string? plainTextContent = null,
         EmailLanguage language = EmailLanguage.English)
     {
+        string? fromEmail = null;
         try
         {
             if (string.IsNullOrEmpty(toEmail))
@@ -82,9 +130,18 @@ public class MultiTenantEmailService
                 return false;
             }
 
-            var branding = await _brandingService.GetTenantBrandingAsync(companyId);
-            var fromEmail = GetFromEmail(branding);
             var client = await GetEmailClientAsync();
+            if (client == null)
+            {
+                _logger.LogError(
+                    "Cannot send email to {Email} for company {CompanyId}: Azure Communication Services is not configured. " +
+                    "Please configure 'azure.communication.connectionString' and 'azure.communication.fromEmail' in the settings table.",
+                    toEmail, companyId);
+                return false;
+            }
+
+            var branding = await _brandingService.GetTenantBrandingAsync(companyId);
+            fromEmail = GetFromEmail(branding);
 
             var emailContent = new EmailContent(subject)
             {
@@ -99,31 +156,129 @@ public class MultiTenantEmailService
             var emailMessage = new EmailMessage(fromEmail, toEmail, emailContent);
 
             _logger.LogInformation(
-                "Sending email to {Email} for company {CompanyId} with subject: {Subject} in language {Language}", 
-                toEmail, companyId, subject, language);
+                "SendEmailAsync: Sending email to {Email} for company {CompanyId} with subject: {Subject} in language {Language}. From: {FromEmail}", 
+                toEmail, companyId, subject, language, fromEmail);
 
             var operation = await client.SendAsync(WaitUntil.Completed, emailMessage);
+            var result = operation.Value;
 
-            if (operation.Value.Status == EmailSendStatus.Succeeded)
+            _logger.LogInformation(
+                "SendEmailAsync: Email send operation completed. Status: {Status}",
+                result.Status);
+
+            if (result.Status == EmailSendStatus.Succeeded)
             {
                 _logger.LogInformation(
-                    "Email successfully sent to {Email} for company {CompanyId}. Status: {Status}",
-                    toEmail, companyId, operation.Value.Status);
+                    "SendEmailAsync: Email successfully sent to {Email} for company {CompanyId}. Status: {Status}",
+                    toEmail, companyId, result.Status);
                 return true;
             }
             else
             {
                 _logger.LogWarning(
-                    "Email send operation completed but status is {Status} for {Email} company {CompanyId}",
-                    operation.Value.Status, toEmail, companyId);
+                    "SendEmailAsync: Email send operation completed but status is {Status} for {Email} company {CompanyId}",
+                    result.Status, toEmail, companyId);
                 return false;
             }
         }
         catch (RequestFailedException ex)
         {
-            _logger.LogError(ex,
-                "Azure Communication Services error sending email to {Email} for company {CompanyId}. Status: {Status}, ErrorCode: {ErrorCode}",
-                toEmail, companyId, ex.Status, ex.ErrorCode);
+            if (ex.ErrorCode == "DomainNotLinked")
+            {
+                // Clear the cached email client to force reinitialization on next attempt
+                // This helps if the domain was just verified and needs to be picked up
+                ClearEmailClientCache();
+                
+                var domainForError = fromEmail ?? _defaultFromEmail ?? "unknown";
+                _logger.LogError(ex,
+                    "Azure Communication Services error: The sender domain '{Domain}' is not LINKED in Azure Communication Services. " +
+                    "A verified domain must also be LINKED before it can be used for sending emails. " +
+                    "Steps to fix: 1) Go to Azure Portal → Communication Services → Email → Domains, " +
+                    "2) Find your verified domain '{Domain}', 3) Click 'Link' or 'Activate' to link the domain for sending. " +
+                    "Alternatively, update 'azure.communication.fromEmail' to use the default Azure domain: DoNotReply@aegis-rental-communication.azurecomm.net " +
+                    "(works immediately without verification). Email client cache cleared. Error sending email to {Email} for company {CompanyId}. Status: {Status}, ErrorCode: {ErrorCode}",
+                    domainForError, domainForError, toEmail, companyId, ex.Status, ex.ErrorCode);
+            }
+            else if (ex.ErrorCode == "InvalidSenderUserName")
+            {
+                var emailForError = fromEmail ?? _defaultFromEmail ?? "unknown";
+                // Extract username from email (e.g., "noreply" from "noreply@mail.aegis-rental.com")
+                var username = emailForError.Contains('@') ? emailForError.Split('@')[0] : "unknown";
+                var domain = emailForError.Contains('@') ? emailForError.Split('@')[1] : "unknown";
+                
+                _logger.LogWarning(ex,
+                    "Azure Communication Services error: The sender username '{Username}' is not configured/allowed for domain '{Domain}'. " +
+                    "Attempting to retry with default Azure domain. Error sending email to {Email} for company {CompanyId}. Status: {Status}, ErrorCode: {ErrorCode}",
+                    username, domain, toEmail, companyId, ex.Status, ex.ErrorCode);
+                
+                // Retry with default Azure domain if available
+                if (!string.IsNullOrEmpty(_defaultAzureDomain) && fromEmail != _defaultAzureDomain)
+                {
+                    _logger.LogInformation(
+                        "Retrying email send with default Azure domain: {DefaultDomain}",
+                        _defaultAzureDomain);
+                    
+                    try
+                    {
+                        var retryClient = await GetEmailClientAsync();
+                        if (retryClient != null)
+                        {
+                            var retryEmailContent = new EmailContent(subject)
+                            {
+                                Html = htmlContent
+                            };
+                            
+                            if (!string.IsNullOrEmpty(plainTextContent))
+                            {
+                                retryEmailContent.PlainText = plainTextContent;
+                            }
+                            
+                            var retryEmailMessage = new EmailMessage(_defaultAzureDomain, toEmail, retryEmailContent);
+                            var retryOperation = await retryClient.SendAsync(WaitUntil.Completed, retryEmailMessage);
+                            var retryResult = retryOperation.Value;
+                            
+                            if (retryResult.Status == EmailSendStatus.Succeeded)
+                            {
+                                _logger.LogInformation(
+                                    "Email successfully sent to {Email} using default Azure domain {DefaultDomain} for company {CompanyId}",
+                                    toEmail, _defaultAzureDomain, companyId);
+                                return true;
+                            }
+                            else
+                            {
+                                _logger.LogWarning(
+                                    "Email send retry with default domain completed but status is {Status} for {Email} company {CompanyId}",
+                                    retryResult.Status, toEmail, companyId);
+                            }
+                        }
+                    }
+                    catch (Exception retryEx)
+                    {
+                        _logger.LogError(retryEx,
+                            "Failed to retry email send with default Azure domain {DefaultDomain} to {Email} for company {CompanyId}",
+                            _defaultAzureDomain, toEmail, companyId);
+                    }
+                }
+                
+                // Clear the cached email client to force reinitialization on next attempt
+                ClearEmailClientCache();
+                
+                _logger.LogError(
+                    "Azure Communication Services error: The sender username '{Username}' is not configured/allowed for domain '{Domain}'. " +
+                    "In Azure Communication Services, you must configure which email addresses (usernames) are allowed to send from a custom domain. " +
+                    "Steps to fix: 1) Go to Azure Portal → Communication Services → Email → Domains, " +
+                    "2) Find your domain '{Domain}', 3) Click on it to view details, " +
+                    "4) Add '{Username}' to the list of allowed sender addresses, or use a different username that is already configured. " +
+                    "Alternatively, update 'azure.communication.fromEmail' to use the default Azure domain: {DefaultDomain} " +
+                    "(works immediately without configuration). Email client cache cleared. Error sending email to {Email} for company {CompanyId}.",
+                    username, domain, domain, username, _defaultAzureDomain ?? "DoNotReply@<resource-name>.azurecomm.net", toEmail, companyId);
+            }
+            else
+            {
+                _logger.LogError(ex,
+                    "Azure Communication Services error sending email to {Email} for company {CompanyId}. Status: {Status}, ErrorCode: {ErrorCode}",
+                    toEmail, companyId, ex.Status, ex.ErrorCode);
+            }
             return false;
         }
         catch (Exception ex)
@@ -156,6 +311,53 @@ public class MultiTenantEmailService
         {
             _logger.LogError(ex, 
                 "Error sending invitation email to {Email} for company {CompanyId}", 
+                toEmail, companyId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Send invitation email with booking details and password
+    /// </summary>
+    public async Task<bool> SendInvitationEmailWithBookingDetailsAsync(
+        Guid companyId,
+        string toEmail,
+        string customerName,
+        string invitationUrl,
+        string temporaryPassword,
+        string bookingNumber,
+        DateTime pickupDate,
+        DateTime returnDate,
+        string vehicleName,
+        string pickupLocation,
+        decimal totalAmount,
+        string currency,
+        EmailLanguage language = EmailLanguage.English)
+    {
+        try
+        {
+            var branding = await _brandingService.GetTenantBrandingAsync(companyId);
+            var subject = _localizationService.Get("booking_invitation", language);
+            var htmlContent = _templateService.GenerateInvitationWithBookingTemplate(
+                branding, 
+                customerName,
+                invitationUrl, 
+                temporaryPassword,
+                bookingNumber,
+                pickupDate,
+                returnDate,
+                vehicleName,
+                pickupLocation,
+                totalAmount,
+                currency,
+                language);
+
+            return await SendEmailAsync(companyId, toEmail, subject, htmlContent, null, language);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, 
+                "Error sending invitation email with booking details to {Email} for company {CompanyId}", 
                 toEmail, companyId);
             return false;
         }
@@ -382,6 +584,33 @@ public class MultiTenantEmailService
         return !string.IsNullOrEmpty(branding.FromEmail) 
             ? branding.FromEmail 
             : _defaultFromEmail ?? "noreply@mail.aegis-rental.com";
+    }
+
+    /// <summary>
+    /// Extracts the default Azure Communication Services domain from the connection string
+    /// Format: DoNotReply@&lt;resource-name&gt;.azurecomm.net
+    /// </summary>
+    private string? ExtractDefaultAzureDomain(string connectionString)
+    {
+        try
+        {
+            // Connection string format: endpoint=https://<resource-name>.<region>.communication.azure.com/;accesskey=...
+            var endpointMatch = System.Text.RegularExpressions.Regex.Match(
+                connectionString, 
+                @"endpoint=https://([^.]+)\.");
+            
+            if (endpointMatch.Success && endpointMatch.Groups.Count > 1)
+            {
+                var resourceName = endpointMatch.Groups[1].Value;
+                return $"DoNotReply@{resourceName}.azurecomm.net";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract default Azure domain from connection string");
+        }
+        
+        return null;
     }
 }
 

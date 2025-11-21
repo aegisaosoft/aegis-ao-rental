@@ -15,7 +15,10 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
@@ -31,18 +34,24 @@ public class AuthController : ControllerBase
     private readonly CarRentalDbContext _context;
     private readonly IJwtService _jwtService;
     private readonly ISessionService _sessionService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<AuthController> _logger;
+    private readonly MultiTenantEmailService _emailService;
 
     public AuthController(
         CarRentalDbContext context,
         IJwtService jwtService,
         ISessionService sessionService,
-        ILogger<AuthController> logger)
+        IConfiguration configuration,
+        ILogger<AuthController> logger,
+        MultiTenantEmailService emailService)
     {
         _context = context;
         _jwtService = jwtService;
         _sessionService = sessionService;
+        _configuration = configuration;
         _logger = logger;
+        _emailService = emailService;
     }
 
     /// <summary>
@@ -269,41 +278,208 @@ public class AuthController : ControllerBase
     /// <summary>
     /// Update customer profile
     /// </summary>
-    [HttpPut("profile")]
-    [Authorize]
-    [ProducesResponseType(200)]
-    [ProducesResponseType(400)]
-    [ProducesResponseType(401)]
-    [ProducesResponseType(404)]
-    public async Task<ActionResult<CustomerDto>> UpdateProfile([FromBody] UpdateCustomerProfileDto dto)
-    {
-        try
+        [HttpPut("profile")]
+        [Authorize]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(401)]
+        [ProducesResponseType(404)]
+        public async Task<ActionResult<CustomerDto>> UpdateProfile([FromBody] UpdateCustomerProfileDto dto)
         {
-            var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var customerId))
+            try
             {
-                return Unauthorized(new { message = "Invalid token" });
-            }
+                // Check if dto is null (shouldn't happen, but handle gracefully)
+                if (dto == null)
+                {
+                    _logger.LogWarning("UpdateProfile called with null DTO");
+                    return BadRequest(new { message = "Request body is required" });
+                }
 
+                // Get user ID first (needed for both early return and update logic)
+                var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var customerId))
+                {
+                    return Unauthorized(new { message = "Invalid token" });
+                }
+
+                // Check if there's anything to update
+                var hasUpdates = !string.IsNullOrWhiteSpace(dto.FirstName) ||
+                                !string.IsNullOrWhiteSpace(dto.LastName) ||
+                                !string.IsNullOrWhiteSpace(dto.Phone) ||
+                                !string.IsNullOrWhiteSpace(dto.Email) ||
+                                !string.IsNullOrWhiteSpace(dto.CurrentPassword) ||
+                                !string.IsNullOrWhiteSpace(dto.NewPassword);
+
+                if (!hasUpdates)
+                {
+                    _logger.LogInformation("UpdateProfile called with no updates");
+                    // Return current profile if no updates
+                    var currentCustomer = await _context.Customers
+                        .Include(c => c.Company)
+                        .FirstOrDefaultAsync(c => c.Id == customerId);
+                    if (currentCustomer == null)
+                    {
+                        return NotFound(new { message = "Customer not found" });
+                    }
+                    var currentCustomerDto = new CustomerDto
+                    {
+                        CustomerId = currentCustomer.Id,
+                        Email = currentCustomer.Email,
+                        FirstName = currentCustomer.FirstName,
+                        LastName = currentCustomer.LastName,
+                        Phone = currentCustomer.Phone,
+                        DateOfBirth = currentCustomer.DateOfBirth,
+                        Address = currentCustomer.Address,
+                        City = currentCustomer.City,
+                        State = currentCustomer.State,
+                        Country = currentCustomer.Country,
+                        PostalCode = currentCustomer.PostalCode,
+                        StripeCustomerId = currentCustomer.StripeCustomerId,
+                        IsVerified = currentCustomer.IsVerified,
+                        CustomerType = currentCustomer.CustomerType.ToString(),
+                        CreatedAt = currentCustomer.CreatedAt,
+                        UpdatedAt = currentCustomer.UpdatedAt,
+                        Role = currentCustomer.Role,
+                        CompanyId = currentCustomer.CompanyId,
+                        CompanyName = currentCustomer.Company?.CompanyName
+                    };
+                    return Ok(currentCustomerDto);
+                }
+
+                // Normalize empty strings to null to avoid validation issues
+                if (dto.FirstName != null && string.IsNullOrWhiteSpace(dto.FirstName))
+                {
+                    dto.FirstName = null;
+                    ModelState.Remove(nameof(dto.FirstName));
+                }
+                if (dto.LastName != null && string.IsNullOrWhiteSpace(dto.LastName))
+                {
+                    dto.LastName = null;
+                    ModelState.Remove(nameof(dto.LastName));
+                }
+                if (dto.Phone != null && string.IsNullOrWhiteSpace(dto.Phone))
+                {
+                    dto.Phone = null;
+                    ModelState.Remove(nameof(dto.Phone));
+                }
+                // Handle Email - normalize empty strings and clear validation errors
+                if (dto.Email != null)
+                {
+                    if (string.IsNullOrWhiteSpace(dto.Email))
+                    {
+                        dto.Email = null;
+                    }
+                    // Remove any existing validation errors for Email
+                    ModelState.Remove(nameof(dto.Email));
+                    // Only validate email format if it's not null/empty
+                    if (!string.IsNullOrEmpty(dto.Email))
+                    {
+                        var emailAttr = new EmailAddressAttribute();
+                        if (!emailAttr.IsValid(dto.Email))
+                        {
+                            ModelState.AddModelError(nameof(dto.Email), "The Email field is not a valid email address.");
+                        }
+                    }
+                }
+                if (dto.CurrentPassword != null && string.IsNullOrWhiteSpace(dto.CurrentPassword))
+                {
+                    dto.CurrentPassword = null;
+                    ModelState.Remove(nameof(dto.CurrentPassword));
+                }
+                if (dto.NewPassword != null && string.IsNullOrWhiteSpace(dto.NewPassword))
+                {
+                    dto.NewPassword = null;
+                    ModelState.Remove(nameof(dto.NewPassword));
+                }
+
+                // Re-validate after normalization
+                TryValidateModel(dto);
+
+                // Check model validation after normalization
+                if (!ModelState.IsValid)
+                {
+                    var errors = ModelState
+                        .Where(x => x.Value?.Errors.Count > 0)
+                        .SelectMany(x => x.Value!.Errors.Select(e => $"{x.Key}: {e.ErrorMessage}"))
+                        .ToList();
+                    
+                    _logger.LogWarning("Model validation failed for UpdateProfile: {Errors}. DTO: FirstName={FirstName}, LastName={LastName}, Email={Email}, Phone={Phone}, HasCurrentPassword={HasCurrentPassword}, HasNewPassword={HasNewPassword}",
+                        string.Join(", ", errors),
+                        dto.FirstName ?? "null",
+                        dto.LastName ?? "null",
+                        dto.Email ?? "null",
+                        dto.Phone ?? "null",
+                        !string.IsNullOrEmpty(dto.CurrentPassword),
+                        !string.IsNullOrEmpty(dto.NewPassword));
+                    return BadRequest(new { message = "Validation failed", errors = errors });
+                }
+
+            // Load customer for update (userIdClaim and customerId already declared above)
             var customer = await _context.Customers.FindAsync(customerId);
             if (customer == null)
             {
                 return NotFound(new { message = "Customer not found" });
             }
 
-            // Update fields if provided
-            if (!string.IsNullOrEmpty(dto.FirstName))
-                customer.FirstName = dto.FirstName;
+            // Update password if provided
+            if (!string.IsNullOrEmpty(dto.CurrentPassword) && !string.IsNullOrEmpty(dto.NewPassword))
+            {
+                // Check if customer has a password set
+                if (string.IsNullOrEmpty(customer.PasswordHash))
+                {
+                    return BadRequest(new { message = "Password cannot be updated. No password is currently set for this account." });
+                }
+
+                // Verify current password (both are checked for null/empty above, so use null-forgiving operator)
+                if (!BCrypt.Net.BCrypt.Verify(dto.CurrentPassword!, customer.PasswordHash!))
+                {
+                    _logger.LogWarning("Password update attempt with incorrect current password for customer: {CustomerId}", customerId);
+                    return BadRequest(new { message = "Current password is incorrect" });
+                }
+
+                // Validate new password (checked for null/empty above)
+                if (dto.NewPassword!.Length < 6)
+                {
+                    return BadRequest(new { message = "New password must be at least 6 characters long" });
+                }
+
+                // Hash and update password (NewPassword is checked for null/empty above)
+                customer.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword!);
+                _logger.LogInformation("Password updated successfully for customer: {CustomerId}", customerId);
+            }
+
+            // Update fields if provided (FirstName, LastName, and Email are required, so only update if non-empty)
+            if (dto.FirstName != null && !string.IsNullOrWhiteSpace(dto.FirstName))
+            {
+                customer.FirstName = dto.FirstName.Trim();
+            }
             
-            if (!string.IsNullOrEmpty(dto.LastName))
-                customer.LastName = dto.LastName;
+            if (dto.LastName != null && !string.IsNullOrWhiteSpace(dto.LastName))
+            {
+                customer.LastName = dto.LastName.Trim();
+            }
             
-            if (!string.IsNullOrEmpty(dto.Phone))
-                customer.Phone = dto.Phone;
+            // Phone is nullable, so we can set it to null if empty
+            if (dto.Phone != null)
+            {
+                customer.Phone = string.IsNullOrWhiteSpace(dto.Phone) ? null : dto.Phone.Trim();
+            }
             
-            if (!string.IsNullOrEmpty(dto.Email))
-                customer.Email = dto.Email;
+            if (dto.Email != null && !string.IsNullOrWhiteSpace(dto.Email))
+            {
+                var email = dto.Email.Trim();
+                // Validate email format
+                try
+                {
+                    var emailAddress = new System.Net.Mail.MailAddress(email);
+                    customer.Email = emailAddress.Address;
+                }
+                catch
+                {
+                    return BadRequest(new { message = "Invalid email format" });
+                }
+            }
 
             customer.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
@@ -372,14 +548,276 @@ public class AuthController : ControllerBase
             return StatusCode(500, "Internal server error");
         }
     }
+
+
+    /// <summary>
+    /// Get current user information (protected endpoint)
+    /// </summary>
+    [HttpGet("me")]
+    [Authorize]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(401)]
+    public async Task<IActionResult> GetCurrentUser()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        
+        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var customerId))
+        {
+            return Unauthorized(new { message = "Invalid token" });
+        }
+
+        var customer = await _context.Customers
+            .Include(c => c.Company)
+            .FirstOrDefaultAsync(c => c.Id == customerId);
+
+        if (customer == null)
+        {
+            return NotFound(new { message = "Customer not found" });
+        }
+
+        return Ok(new
+        {
+            email = customer.Email,
+            name = $"{customer.FirstName} {customer.LastName}".Trim(),
+            userId = customer.Id,
+            tenantId = customer.CompanyId?.ToString(),
+            companyId = customer.CompanyId,
+            companyName = customer.Company?.CompanyName,
+            role = customer.Role,
+            authenticated = true
+        });
+    }
+
+    /// <summary>
+    /// Request password reset - sends reset link to email
+    /// </summary>
+    [HttpPost("forgot-password")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(400)]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto dto)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(dto.Email))
+            {
+                return BadRequest(new { message = "Email is required" });
+            }
+
+            // Find customer by email (case-insensitive)
+            var customer = await _context.Customers
+                .Include(c => c.Company)
+                .FirstOrDefaultAsync(c => EF.Functions.ILike(c.Email, dto.Email));
+
+            // If customer doesn't exist, return specific response to redirect to signup
+            if (customer == null)
+            {
+                _logger.LogInformation("Password reset requested for non-existent email: {Email}", dto.Email);
+                return Ok(new { 
+                    message = "Email not found", 
+                    emailNotFound = true,
+                    redirectToSignup = true 
+                });
+            }
+
+            if (!customer.IsActive)
+            {
+                _logger.LogInformation("Password reset requested for inactive account: {Email}", dto.Email);
+                return Ok(new { 
+                    message = "Account is not active", 
+                    emailNotFound = false,
+                    redirectToSignup = false 
+                });
+            }
+            {
+                // Generate a secure random token
+                var token = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+                    .Replace("+", "-")
+                    .Replace("/", "_")
+                    .Replace("=", "");
+
+                // Store token in customer record
+                customer.Token = token;
+                customer.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Password reset token generated for customer {Email}, CustomerId: {CustomerId}", customer.Email, customer.Id);
+
+                // Get company ID (use customer's company or default to first company if none)
+                var companyId = customer.CompanyId ?? await _context.Companies
+                    .Where(c => c.IsActive)
+                    .Select(c => c.Id)
+                    .FirstOrDefaultAsync();
+
+                if (companyId == Guid.Empty)
+                {
+                    _logger.LogWarning("No active company found for password reset email");
+                    return Ok(new { message = "If the email exists, a password reset link has been sent." });
+                }
+
+                // Build reset password URL
+                var frontendUrl = GetFrontendUrl();
+                var resetUrl = $"{frontendUrl}/reset-password?token={Uri.EscapeDataString(token)}&email={Uri.EscapeDataString(customer.Email)}";
+
+                // Determine language from company
+                var company = await _context.Companies.FindAsync(companyId);
+                var languageCode = company?.Language?.ToLower() ?? "en";
+                var language = LanguageCodes.FromCode(languageCode);
+
+                // Send password reset email
+                var customerName = !string.IsNullOrWhiteSpace(customer.FirstName) || !string.IsNullOrWhiteSpace(customer.LastName)
+                    ? $"{customer.FirstName} {customer.LastName}".Trim()
+                    : customer.Email;
+
+                var subject = language == EmailLanguage.Spanish 
+                    ? "Restablecer contraseña" 
+                    : language == EmailLanguage.Portuguese 
+                        ? "Redefinir senha" 
+                        : "Reset Your Password";
+
+                var htmlContent = $@"
+                    <div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;'>
+                        <h2 style='color: #333;'>{subject}</h2>
+                        <p>Hello {customerName},</p>
+                        <p>You requested to reset your password. Click the link below to set a new password:</p>
+                        <p style='margin: 30px 0;'>
+                            <a href='{resetUrl}' style='background-color: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;'>
+                                Reset Password
+                            </a>
+                        </p>
+                        <p>Or copy and paste this link into your browser:</p>
+                        <p style='word-break: break-all; color: #666;'>{resetUrl}</p>
+                        <p style='color: #999; font-size: 12px; margin-top: 30px;'>
+                            This link will expire in 24 hours. If you didn't request this, please ignore this email.
+                        </p>
+                    </div>";
+
+                var emailSent = await _emailService.SendEmailAsync(
+                    companyId,
+                    customer.Email,
+                    subject,
+                    htmlContent,
+                    null,
+                    language
+                );
+
+                if (emailSent)
+                {
+                    _logger.LogInformation("Password reset email sent successfully to {Email}", customer.Email);
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to send password reset email to {Email}", customer.Email);
+                }
+            }
+
+            // Return success message
+            return Ok(new { 
+                message = "If the email exists, a password reset link has been sent.",
+                emailNotFound = false,
+                redirectToSignup = false
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing forgot password request for {Email}", dto.Email);
+            return StatusCode(500, new { message = "An error occurred while processing your request." });
+        }
+    }
+
+    /// <summary>
+    /// Reset password using token
+    /// </summary>
+    [HttpPost("reset-password")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(400)]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(dto.Token))
+            {
+                return BadRequest(new { message = "Token is required" });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.Email))
+            {
+                return BadRequest(new { message = "Email is required" });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.NewPassword) || dto.NewPassword.Length < 6)
+            {
+                return BadRequest(new { message = "Password must be at least 6 characters long" });
+            }
+
+            // Find customer by email and token
+            var customer = await _context.Customers
+                .FirstOrDefaultAsync(c => EF.Functions.ILike(c.Email, dto.Email) && c.Token == dto.Token);
+
+            if (customer == null)
+            {
+                _logger.LogWarning("Invalid password reset token for email: {Email}", dto.Email);
+                return BadRequest(new { message = "Invalid or expired reset token." });
+            }
+
+            if (!customer.IsActive)
+            {
+                return BadRequest(new { message = "Account is not active." });
+            }
+
+            // Update password and clear token
+            customer.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+            customer.Token = null; // Delete token so it can't be used again
+            customer.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Password reset successful for customer {Email}, CustomerId: {CustomerId}", customer.Email, customer.Id);
+
+            return Ok(new { message = "Password has been reset successfully. You can now login with your new password." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resetting password for {Email}", dto.Email);
+            return StatusCode(500, new { message = "An error occurred while resetting your password." });
+        }
+    }
+
+    private string GetFrontendUrl()
+    {
+        var host = HttpContext.Request.Host.Host;
+        var scheme = HttpContext.Request.Scheme;
+
+        // Development
+        if (host.Contains("localhost") || host == "127.0.0.1")
+        {
+            // Use https for localhost:3000 to match frontend configuration
+            return "https://localhost:3000"; // Match your frontend port
+        }
+
+        // Production - use same domain as request
+        return $"{scheme}://{HttpContext.Request.Host}";
+    }
 }
 
 public class UpdateCustomerProfileDto
 {
+    [MaxLength(100)]
     public string? FirstName { get; set; }
+    
+    [MaxLength(100)]
     public string? LastName { get; set; }
+    
+    [MaxLength(50)]
     public string? Phone { get; set; }
+    
+    [EmailAddress]
+    [MaxLength(255)]
     public string? Email { get; set; }
+    
+    [MaxLength(500)]
+    public string? CurrentPassword { get; set; }
+    
+    [MaxLength(500)]
+    public string? NewPassword { get; set; }
 }
 
 public class RegisterDto
@@ -395,4 +833,25 @@ public class LoginDto
 {
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+}
+
+public class ForgotPasswordDto
+{
+    [Required]
+    [EmailAddress]
+    public string Email { get; set; } = string.Empty;
+}
+
+public class ResetPasswordDto
+{
+    [Required]
+    public string Token { get; set; } = string.Empty;
+
+    [Required]
+    [EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [Required]
+    [MinLength(6)]
+    public string NewPassword { get; set; } = string.Empty;
 }

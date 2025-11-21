@@ -15,12 +15,15 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Stripe;
 using CarRental.Api.Data;
 using CarRental.Api.Models;
+using CarRental.Api.Services;
 using System.IO;
 using System.Text;
 using System.Linq;
+using BCrypt.Net;
 
 namespace CarRental.Api.Controllers;
 
@@ -212,6 +215,12 @@ public class WebhooksController : ControllerBase
 
                 _logger.LogInformation("Updated payment status for booking {BookingId}", 
                     payment.ReservationId);
+
+                // Send invitation email after payment if booking was confirmed
+                if (payment.Reservation != null && payment.Reservation.Status == "Confirmed")
+                {
+                    await SendInvitationEmailAfterPayment(payment.Reservation);
+                }
             }
             else
             {
@@ -253,6 +262,12 @@ public class WebhooksController : ControllerBase
                     await _context.SaveChangesAsync();
                     _logger.LogInformation("Payment record created and booking updated for {BookingNumber}", 
                         booking.BookingNumber);
+
+                    // Send invitation email after payment if booking was confirmed
+                    if (booking.Status == "Confirmed")
+                    {
+                        await SendInvitationEmailAfterPayment(booking);
+                    }
                 }
                 else
                 {
@@ -329,6 +344,12 @@ public class WebhooksController : ControllerBase
 
                 await _context.SaveChangesAsync();
                 _logger.LogInformation("Payment updated for booking {BookingId}", payment.ReservationId);
+
+                // Send invitation email after payment if booking was confirmed
+                if (payment.Reservation != null && payment.Reservation.Status == "Confirmed")
+                {
+                    await SendInvitationEmailAfterPayment(payment.Reservation);
+                }
             }
             else
             {
@@ -372,6 +393,12 @@ public class WebhooksController : ControllerBase
                     await _context.SaveChangesAsync();
                     _logger.LogInformation("Payment record created and booking updated for {BookingNumber}", 
                         booking.BookingNumber);
+
+                    // Send invitation email after payment if booking was confirmed
+                    if (booking.Status == "Confirmed")
+                    {
+                        await SendInvitationEmailAfterPayment(booking);
+                    }
                 }
                 else
                 {
@@ -453,6 +480,12 @@ public class WebhooksController : ControllerBase
 
                 await _context.SaveChangesAsync();
                 _logger.LogInformation("Payment updated for booking {BookingId}", payment.ReservationId);
+
+                // Send invitation email after payment if booking was confirmed
+                if (payment.Reservation != null && payment.Reservation.Status == "Confirmed")
+                {
+                    await SendInvitationEmailAfterPayment(payment.Reservation);
+                }
             }
             else
             {
@@ -496,6 +529,12 @@ public class WebhooksController : ControllerBase
                     await _context.SaveChangesAsync();
                     _logger.LogInformation("Payment record created and booking updated for {BookingNumber}", 
                         booking.BookingNumber);
+
+                    // Send invitation email after payment if booking was confirmed
+                    if (booking.Status == "Confirmed")
+                    {
+                        await SendInvitationEmailAfterPayment(booking);
+                    }
                 }
                 else
                 {
@@ -646,6 +685,12 @@ public class WebhooksController : ControllerBase
 
                 _logger.LogInformation("Payment status updated to succeeded for booking {BookingId}", 
                     payment.ReservationId);
+
+                // Send invitation email after payment if booking was confirmed
+                if (payment.Reservation != null && payment.Reservation.Status == "Confirmed")
+                {
+                    await SendInvitationEmailAfterPayment(payment.Reservation);
+                }
             }
             else
             {
@@ -694,6 +739,12 @@ public class WebhooksController : ControllerBase
                             
                             _logger.LogInformation("Created payment record and updated booking {BookingNumber} (via checkout.session.completed metadata)", 
                                 booking.BookingNumber);
+
+                            // Send invitation email after payment if booking was confirmed
+                            if (booking.Status == "Confirmed")
+                            {
+                                await SendInvitationEmailAfterPayment(booking);
+                            }
                         }
                         else
                         {
@@ -742,6 +793,187 @@ public class WebhooksController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling payment.created for event {EventId}", stripeEvent.Id);
+        }
+    }
+
+    private async Task SendInvitationEmailAfterPayment(Reservation reservation)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "SendInvitationEmailAfterPayment: Starting for booking {BookingId}, CustomerId: {CustomerId}",
+                reservation.Id,
+                reservation.CustomerId);
+
+            // Load customer with tracking to check current state
+            var customer = await _context.Customers
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == reservation.CustomerId);
+            
+            if (customer == null)
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Customer {CustomerId} not found for booking {BookingId}",
+                    reservation.CustomerId,
+                    reservation.Id);
+                return;
+            }
+
+            // Skip if customer has already logged in (they already have access)
+            if (customer.LastLogin.HasValue)
+            {
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} has already logged in (LastLogin: {LastLogin})",
+                    customer.Id,
+                    customer.LastLogin);
+                return; // Customer already has access
+            }
+
+            // Skip if customer was recently updated (within last 5 minutes) - indicates invitation email was already sent
+            // This prevents duplicate emails from multiple webhook events
+            if (customer.UpdatedAt > DateTime.UtcNow.AddMinutes(-5))
+            {
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} was recently updated (UpdatedAt: {UpdatedAt}), invitation email likely already sent",
+                    customer.Id,
+                    customer.UpdatedAt);
+                return; // Invitation email was likely already sent recently
+            }
+
+            // Reload customer with tracking to update it
+            // Use a database transaction to prevent race conditions from multiple webhook events
+            var customerToUpdate = await _context.Customers.FindAsync(reservation.CustomerId);
+            if (customerToUpdate == null)
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Customer {CustomerId} not found when trying to update password",
+                    reservation.CustomerId);
+                return;
+            }
+
+            // Double-check: If customer already has a password hash, another webhook may have already processed this
+            // Reload to get the latest state (in case another webhook updated it)
+            await _context.Entry(customerToUpdate).ReloadAsync();
+            
+            // If customer already has a password hash and was recently updated, skip (another webhook already sent invitation)
+            if (!string.IsNullOrEmpty(customerToUpdate.PasswordHash) && 
+                customerToUpdate.UpdatedAt > DateTime.UtcNow.AddMinutes(-5))
+            {
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} already has a password hash and was recently updated (UpdatedAt: {UpdatedAt}), invitation email likely already sent by another webhook",
+                    customerToUpdate.Id,
+                    customerToUpdate.UpdatedAt);
+                return; // Another webhook already sent the invitation
+            }
+
+            // Only generate password if customer doesn't have one yet
+            // If customer already has a password hash (from a previous booking), don't overwrite it
+            string temporaryPassword;
+            if (string.IsNullOrEmpty(customerToUpdate.PasswordHash))
+            {
+                // Generate a temporary password for the invitation email
+                var random = new Random();
+                const string chars = "ABCDEFGHJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+                temporaryPassword = new string(Enumerable.Repeat(chars, 12)
+                    .Select(s => s[random.Next(s.Length)]).ToArray());
+
+                // Update customer's password with the new temporary password
+                customerToUpdate.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword);
+                customerToUpdate.UpdatedAt = DateTime.UtcNow;
+                _context.Customers.Update(customerToUpdate);
+                await _context.SaveChangesAsync(); // Save password update before sending email
+                
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Generated new password for customer {CustomerId}",
+                    customerToUpdate.Id);
+            }
+            else
+            {
+                // Customer already has a password - we can't retrieve it from the hash
+                // Skip sending invitation email as we don't have the password to include
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} already has a password hash (from previous booking), cannot send invitation with password",
+                    customerToUpdate.Id);
+                return;
+            }
+
+            // Load company and vehicle for email details
+            var company = await _context.Companies.FindAsync(reservation.CompanyId);
+            var vehicle = await _context.Vehicles
+                .Include(v => v.VehicleModel)
+                .ThenInclude(vm => vm!.Model)
+                .FirstOrDefaultAsync(v => v.Id == reservation.VehicleId);
+
+            if (company == null)
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Company {CompanyId} not found for booking {BookingId}",
+                    reservation.CompanyId,
+                    reservation.Id);
+                return;
+            }
+
+            // Determine language from company
+            var languageCode = company.Language?.ToLower() ?? "en";
+            var language = LanguageCodes.FromCode(languageCode);
+
+            // Get email service
+            var multiTenantEmailService = HttpContext.RequestServices.GetRequiredService<MultiTenantEmailService>();
+            
+            _logger.LogInformation(
+                "SendInvitationEmailAfterPayment: Preparing to send email to {Email} for booking {BookingNumber}",
+                customerToUpdate.Email,
+                reservation.BookingNumber);
+
+            // Prepare booking details
+            var vehicleName = vehicle?.VehicleModel?.Model != null
+                ? $"{vehicle.VehicleModel.Model.Make} {vehicle.VehicleModel.Model.ModelName} ({vehicle.VehicleModel.Model.Year})"
+                : "Vehicle";
+
+            var invitationUrl = $"{Request.Scheme}://{Request.Host}/login?email={Uri.EscapeDataString(customerToUpdate.Email)}";
+
+            // Send invitation email with booking details and password
+            // Use customerToUpdate for name since we have it loaded with tracking
+            var customerName = (!string.IsNullOrWhiteSpace(customerToUpdate.FirstName) || !string.IsNullOrWhiteSpace(customerToUpdate.LastName))
+                ? $"{customerToUpdate.FirstName} {customerToUpdate.LastName}".Trim()
+                : customerToUpdate.Email;
+            
+            var emailSent = await multiTenantEmailService.SendInvitationEmailWithBookingDetailsAsync(
+                reservation.CompanyId,
+                customerToUpdate.Email,
+                customerName,
+                invitationUrl,
+                temporaryPassword,
+                reservation.BookingNumber ?? reservation.Id.ToString(),
+                reservation.PickupDate,
+                reservation.ReturnDate,
+                vehicleName,
+                reservation.PickupLocation ?? "",
+                reservation.TotalAmount,
+                company.Currency ?? "USD",
+                language);
+
+            if (emailSent)
+            {
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Invitation email with booking details sent successfully to {Email} for booking {BookingNumber}",
+                    customerToUpdate.Email,
+                    reservation.BookingNumber);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Failed to send invitation email to {Email} for booking {BookingNumber}",
+                    customerToUpdate.Email,
+                    reservation.BookingNumber);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, 
+                "Error sending invitation email after payment for booking {BookingId}",
+                reservation.Id);
+            // Don't throw - payment was successful, email failure shouldn't break the flow
         }
     }
 }

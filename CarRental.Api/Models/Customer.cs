@@ -49,6 +49,10 @@ public class Customer
     [Column("password_hash")]
     public string? PasswordHash { get; set; }
 
+    [MaxLength(255)]
+    [Column("token")]
+    public string? Token { get; set; } // Password reset token
+
     [MaxLength(50)]
     [Column("role")]
     public string Role { get; set; } = "customer"; // customer, worker, admin, mainadmin

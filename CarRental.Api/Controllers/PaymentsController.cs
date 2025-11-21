@@ -26,6 +26,7 @@ using Stripe;
 using CarRental.Api.DTOs.Payments;
 using System.Security.Cryptography;
 using System.Text.Json;
+using BCrypt.Net;
 
 namespace CarRental.Api.Controllers;
 
@@ -1141,6 +1142,9 @@ public class PaymentsController : ControllerBase
                     vehicle.Status = VehicleStatus.Rented;
                     _context.Vehicles.Update(vehicle);
                 }
+
+                // Send invitation email with booking details and password if customer was created without password
+                await SendInvitationEmailAfterPayment(reservation);
             }
             else
             {
@@ -1149,6 +1153,136 @@ public class PaymentsController : ControllerBase
         }
 
         await _context.SaveChangesAsync();
+    }
+
+    private async Task SendInvitationEmailAfterPayment(Reservation reservation)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "SendInvitationEmailAfterPayment: Starting for booking {BookingId}, CustomerId: {CustomerId}",
+                reservation.Id,
+                reservation.CustomerId);
+
+            // Load customer
+            var customer = await _context.Customers.FindAsync(reservation.CustomerId);
+            if (customer == null)
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Customer {CustomerId} not found for booking {BookingId}",
+                    reservation.CustomerId,
+                    reservation.Id);
+                return;
+            }
+
+            // Only send invitation if customer has a password hash (meaning password was generated)
+            // and hasn't received an invitation yet (we'll track this by checking if they've logged in)
+            if (string.IsNullOrEmpty(customer.PasswordHash))
+            {
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} has no password hash (may have been created with existing password)",
+                    customer.Id);
+                return; // Customer already has access or no password was set
+            }
+
+            if (customer.LastLogin.HasValue)
+            {
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} has already logged in (LastLogin: {LastLogin})",
+                    customer.Id,
+                    customer.LastLogin);
+                return; // Customer already has access
+            }
+
+            // Generate a temporary password for the invitation email
+            // (We can't retrieve the original password from the hash)
+            var random = new Random();
+            const string chars = "ABCDEFGHJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            var temporaryPassword = new string(Enumerable.Repeat(chars, 12)
+                .Select(s => s[random.Next(s.Length)]).ToArray());
+
+            // Update customer's password with the new temporary password
+            customer.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword);
+            _context.Customers.Update(customer);
+            await _context.SaveChangesAsync(); // Save password update before sending email
+
+            // Load company and vehicle for email details
+            var company = await _context.Companies.FindAsync(reservation.CompanyId);
+            var vehicle = await _context.Vehicles
+                .Include(v => v.VehicleModel)
+                .ThenInclude(vm => vm!.Model)
+                .FirstOrDefaultAsync(v => v.Id == reservation.VehicleId);
+
+            if (company == null)
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Company {CompanyId} not found for booking {BookingId}",
+                    reservation.CompanyId,
+                    reservation.Id);
+                return;
+            }
+
+            // Determine language from company
+            var languageCode = company.Language?.ToLower() ?? "en";
+            var language = LanguageCodes.FromCode(languageCode);
+
+            // Get email service
+            var multiTenantEmailService = HttpContext.RequestServices.GetRequiredService<MultiTenantEmailService>();
+            
+            _logger.LogInformation(
+                "SendInvitationEmailAfterPayment: Preparing to send email to {Email} for booking {BookingNumber}",
+                customer.Email,
+                reservation.BookingNumber);
+
+            // Prepare booking details
+            var vehicleName = vehicle?.VehicleModel?.Model != null
+                ? $"{vehicle.VehicleModel.Model.Make} {vehicle.VehicleModel.Model.ModelName} ({vehicle.VehicleModel.Model.Year})"
+                : "Vehicle";
+
+            var invitationUrl = $"{Request.Scheme}://{Request.Host}/login?email={Uri.EscapeDataString(customer.Email)}";
+
+            // Send invitation email with booking details and password
+            var customerName = (!string.IsNullOrWhiteSpace(customer.FirstName) || !string.IsNullOrWhiteSpace(customer.LastName))
+                ? $"{customer.FirstName} {customer.LastName}".Trim()
+                : customer.Email;
+            
+            var emailSent = await multiTenantEmailService.SendInvitationEmailWithBookingDetailsAsync(
+                reservation.CompanyId,
+                customer.Email,
+                customerName,
+                invitationUrl,
+                temporaryPassword,
+                reservation.BookingNumber ?? reservation.Id.ToString(),
+                reservation.PickupDate,
+                reservation.ReturnDate,
+                vehicleName,
+                reservation.PickupLocation ?? "",
+                reservation.TotalAmount,
+                company.Currency ?? "USD",
+                language);
+
+            if (emailSent)
+            {
+                _logger.LogInformation(
+                    "SendInvitationEmailAfterPayment: Invitation email with booking details sent successfully to {Email} for booking {BookingNumber}",
+                    customer.Email,
+                    reservation.BookingNumber);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Failed to send invitation email to {Email} for booking {BookingNumber}",
+                    customer.Email,
+                    reservation.BookingNumber);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, 
+                "Error sending invitation email after payment for booking {BookingId}",
+                reservation.Id);
+            // Don't throw - payment was successful, email failure shouldn't break the flow
+        }
     }
 
     private async Task HandlePaymentIntentFailed(Event stripeEvent)

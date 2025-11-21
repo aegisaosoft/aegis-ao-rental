@@ -77,13 +77,11 @@ public class CreateCustomerDto
     [MaxLength(255)]
     public string Email { get; set; } = string.Empty;
     
-    [Required]
     [MaxLength(100)]
-    public string FirstName { get; set; } = string.Empty;
+    public string? FirstName { get; set; }
     
-    [Required]
     [MaxLength(100)]
-    public string LastName { get; set; } = string.Empty;
+    public string? LastName { get; set; }
     
     [MaxLength(50)]
     public string? Phone { get; set; }

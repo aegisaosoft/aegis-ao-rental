@@ -145,7 +145,15 @@ public class EmailLocalizationService
                     { "verify_email_button", "Verify Email Address" },
                     { "verification_expires", "This verification link will expire in 48 hours." },
                     { "already_verified", "If you've already verified your email, you can ignore this message." },
-                    { "welcome_aboard", "Welcome aboard! We're excited to have you with us." }
+                    { "welcome_aboard", "Welcome aboard! We're excited to have you with us." },
+                    { "booking_invitation", "Booking Confirmation & Account Access" },
+                    { "booking_paid_invitation", "Your booking has been paid and confirmed. Your account has been created with the details below." },
+                    { "your_account", "Your Account Information" },
+                    { "temporary_password", "Temporary Password" },
+                    { "change_password_after_login", "Please change your password after logging in for security." },
+                    { "click_button_login", "Click the button below to log in to your account:" },
+                    { "login_button", "Log In" },
+                    { "email", "Email" }
                 }
             },
 
@@ -252,7 +260,15 @@ public class EmailLocalizationService
                     { "verify_email_button", "Verificar Correo Electrónico" },
                     { "verification_expires", "Este enlace de verificación expirará en 48 horas." },
                     { "already_verified", "Si ya verificó su correo, puede ignorar este mensaje." },
-                    { "welcome_aboard", "¡Bienvenido a bordo! Estamos emocionados de tenerlo con nosotros." }
+                    { "welcome_aboard", "¡Bienvenido a bordo! Estamos emocionados de tenerlo con nosotros." },
+                    { "booking_invitation", "Confirmación de Reserva y Acceso a la Cuenta" },
+                    { "booking_paid_invitation", "Su reserva ha sido pagada y confirmada. Su cuenta ha sido creada con los detalles a continuación." },
+                    { "your_account", "Información de Su Cuenta" },
+                    { "temporary_password", "Contraseña Temporal" },
+                    { "change_password_after_login", "Por favor cambie su contraseña después de iniciar sesión por seguridad." },
+                    { "click_button_login", "Haga clic en el botón de abajo para iniciar sesión en su cuenta:" },
+                    { "login_button", "Iniciar Sesión" },
+                    { "email", "Correo Electrónico" }
                 }
             },
 
@@ -466,7 +482,15 @@ public class EmailLocalizationService
                     { "verify_email_button", "Vérifier l'Adresse E-mail" },
                     { "verification_expires", "Ce lien de vérification expirera dans 48 heures." },
                     { "already_verified", "Si vous avez déjà vérifié votre e-mail, vous pouvez ignorer ce message." },
-                    { "welcome_aboard", "Bienvenue à bord! Nous sommes ravis de vous avoir avec nous." }
+                    { "welcome_aboard", "Bienvenue à bord! Nous sommes ravis de vous avoir avec nous." },
+                    { "booking_invitation", "Confirmation de Réservation et Accès au Compte" },
+                    { "booking_paid_invitation", "Votre réservation a été payée et confirmée. Votre compte a été créé avec les détails ci-dessous." },
+                    { "your_account", "Informations de Votre Compte" },
+                    { "temporary_password", "Mot de Passe Temporaire" },
+                    { "change_password_after_login", "Veuillez changer votre mot de passe après la connexion pour des raisons de sécurité." },
+                    { "click_button_login", "Cliquez sur le bouton ci-dessous pour vous connecter à votre compte:" },
+                    { "login_button", "Se Connecter" },
+                    { "email", "E-mail" }
                 }
             },
 
@@ -573,7 +597,15 @@ public class EmailLocalizationService
                     { "verify_email_button", "E-Mail-Adresse Verifizieren" },
                     { "verification_expires", "Dieser Verifizierungslink läuft in 48 Stunden ab." },
                     { "already_verified", "Wenn Sie Ihre E-Mail bereits verifiziert haben, können Sie diese Nachricht ignorieren." },
-                    { "welcome_aboard", "Willkommen an Bord! Wir freuen uns, Sie bei uns zu haben." }
+                    { "welcome_aboard", "Willkommen an Bord! Wir freuen uns, Sie bei uns zu haben." },
+                    { "booking_invitation", "Buchungsbestätigung & Kontozugang" },
+                    { "booking_paid_invitation", "Ihre Buchung wurde bezahlt und bestätigt. Ihr Konto wurde mit den untenstehenden Details erstellt." },
+                    { "your_account", "Ihre Kontoinformationen" },
+                    { "temporary_password", "Temporäres Passwort" },
+                    { "change_password_after_login", "Bitte ändern Sie Ihr Passwort nach der Anmeldung aus Sicherheitsgründen." },
+                    { "click_button_login", "Klicken Sie auf die Schaltfläche unten, um sich bei Ihrem Konto anzumelden:" },
+                    { "login_button", "Anmelden" },
+                    { "email", "E-Mail" }
                 }
             }
         };

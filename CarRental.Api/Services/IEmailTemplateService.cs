@@ -66,6 +66,20 @@ public interface IEmailTemplateService
         string invitationUrl,
         EmailLanguage language);
 
+    string GenerateInvitationWithBookingTemplate(
+        TenantBranding branding,
+        string customerName,
+        string invitationUrl,
+        string temporaryPassword,
+        string bookingNumber,
+        DateTime pickupDate,
+        DateTime returnDate,
+        string vehicleName,
+        string pickupLocation,
+        decimal totalAmount,
+        string currency,
+        EmailLanguage language);
+
     string GeneratePasswordResetTemplate(
         TenantBranding branding,
         string resetUrl,

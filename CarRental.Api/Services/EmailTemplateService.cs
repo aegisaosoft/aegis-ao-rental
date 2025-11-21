@@ -262,6 +262,70 @@ public class EmailTemplateService : IEmailTemplateService
         return GetBaseTemplate(branding, content, language);
     }
 
+    public string GenerateInvitationWithBookingTemplate(
+        TenantBranding branding,
+        string customerName,
+        string invitationUrl,
+        string temporaryPassword,
+        string bookingNumber,
+        DateTime pickupDate,
+        DateTime returnDate,
+        string vehicleName,
+        string pickupLocation,
+        decimal totalAmount,
+        string currency,
+        EmailLanguage language)
+    {
+        var loc = _localization;
+        var currencySymbol = GetCurrencySymbol(currency);
+        
+        var content = $@"
+            <h1 style='color: {branding.BrandColor}; margin-bottom: 20px;'>{loc.Get("booking_invitation", language)}</h1>
+            <p>{loc.Get("dear", language)} {customerName},</p>
+            <p>{loc.Get("welcome_aboard", language)}</p>
+            <p>{loc.Get("booking_paid_invitation", language)}</p>
+            
+            <div style='background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;'>
+                <h2 style='color: {branding.BrandColor}; margin-top: 0;'>{loc.Get("booking_details", language)}</h2>
+                <p><strong>{loc.Get("booking_number", language)}:</strong> {bookingNumber}</p>
+                <p><strong>{loc.Get("vehicle", language)}:</strong> {vehicleName}</p>
+                <p><strong>{loc.Get("pickup_date", language)}:</strong> {pickupDate:yyyy-MM-dd}</p>
+                <p><strong>{loc.Get("return_date", language)}:</strong> {returnDate:yyyy-MM-dd}</p>
+                <p><strong>{loc.Get("pickup_location", language)}:</strong> {pickupLocation}</p>
+                <p><strong>{loc.Get("total_amount", language)}:</strong> {currencySymbol}{totalAmount:F2}</p>
+            </div>
+
+            <div style='background-color: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;'>
+                <h3 style='margin-top: 0; color: #92400e;'>{loc.Get("your_account", language)}</h3>
+                <p><strong>{loc.Get("email", language)}:</strong> {invitationUrl.Split('?')[0].Replace("/login", "")}</p>
+                <p><strong>{loc.Get("temporary_password", language)}:</strong> <code style='background-color: #ffffff; padding: 4px 8px; border-radius: 4px; font-family: monospace;'>{temporaryPassword}</code></p>
+                <p style='font-size: 12px; color: #92400e;'>{loc.Get("change_password_after_login", language)}</p>
+            </div>
+            
+            <div style='background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;'>
+                <p style='margin-bottom: 20px;'>{loc.Get("click_button_login", language)}</p>
+                <a href='{invitationUrl}' style='display: inline-block; padding: 12px 24px; background-color: {branding.BrandColor}; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: bold;'>{loc.Get("login_button", language)}</a>
+            </div>
+
+            <p style='font-size: 12px; color: #6b7280;'>{loc.Get("thank_you", language)} {branding.CompanyName}!</p>
+        ";
+
+        return GetBaseTemplate(branding, content, language);
+    }
+
+    private string GetCurrencySymbol(string currency)
+    {
+        return currency.ToUpper() switch
+        {
+            "USD" => "$",
+            "EUR" => "€",
+            "GBP" => "£",
+            "BRL" => "R$",
+            "JPY" => "¥",
+            _ => currency
+        };
+    }
+
     public string GeneratePasswordResetTemplate(
         TenantBranding branding,
         string resetUrl,

@@ -15,6 +15,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using System.Linq;
@@ -198,6 +199,9 @@ builder.Services.AddScoped<ICompanyService, CompanyService>();
 // Add Memory Cache for company domain mapping
 builder.Services.AddMemoryCache();
 
+// Add Data Protection services
+builder.Services.AddDataProtection();
+
 // Add Health Checks
 builder.Services.AddHealthChecks()
     .AddCheck("startup", () => HealthCheckResult.Healthy("Application is running"), tags: new[] { "ready" })
@@ -215,61 +219,88 @@ builder.Services.AddScoped<MultiTenantEmailService>();
 // Add background services
 builder.Services.AddHostedService<SecurityDepositCollectionService>();
 
-// Add JWT Authentication
-var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-var secretKey = jwtSettings["SecretKey"] ?? "e8Xgin/OtynoYVm8o7jiNjB9/Fke1Q6RxjH3hJsRpTE=";
-var issuer = jwtSettings["Issuer"] ?? "CarRentalAPI";
-var audience = jwtSettings["Audience"] ?? "CarRentalClients";
+// Configure JWT Authentication
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+var jwtSettingsLegacy = builder.Configuration.GetSection("JwtSettings");
+var key = jwtSettings["Key"] ?? jwtSettingsLegacy["SecretKey"] ?? "e8Xgin/OtynoYVm8o7jiNjB9/Fke1Q6RxjH3hJsRpTE=";
+var issuer = jwtSettings["Issuer"] ?? jwtSettingsLegacy["Issuer"] ?? "CarRentalAPI";
+var audience = jwtSettings["Audience"] ?? jwtSettingsLegacy["Audience"] ?? "CarRentalClients";
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+// Log the key (first 20 chars only for security)
+Console.WriteLine($"[Program] JWT secret key (first 20 chars): {key?.Substring(0, Math.Min(20, key?.Length ?? 0))}...");
+Console.WriteLine($"[Program] JWT secret key length: {key?.Length ?? 0} characters");
+
+// Convert key to bytes using shared helper method from JwtService
+// This ensures consistency with token generation/validation logic
+byte[] keyBytes;
+try
+{
+    keyBytes = JwtService.DecodeJwtKey(key, null); // No logger available at this point, use Console
+    Console.WriteLine($"[Program] JWT secret key decoded successfully, key length: {keyBytes.Length} bytes");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[Program] ERROR: Failed to decode JWT secret key.");
+    Console.WriteLine($"[Program] Key value (first 50 chars): {key?.Substring(0, Math.Min(50, key?.Length ?? 0))}");
+    Console.WriteLine($"[Program] Error: {ex.Message}");
+    throw;
+}
+
+// Configure Authentication with multiple schemes
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.SaveToken = true;
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.TokenValidationParameters = new TokenValidationParameters
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = issuer,
+        ValidAudience = audience,
+        IssuerSigningKey = new SymmetricSecurityKey(keyBytes),
+        ClockSkew = TimeSpan.Zero
+    };
+    
+    // Add event handlers to log authentication failures
+    options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
         {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secretKey)),
-            ValidateIssuer = true,
-            ValidIssuer = issuer,
-            ValidateAudience = true,
-            ValidAudience = audience,
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero
-        };
-        
-        // Add event handlers to log authentication failures
-        options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
-        {
-            OnAuthenticationFailed = context =>
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            logger.LogWarning("JWT Authentication failed: {Error}", context.Exception.Message);
+            logger.LogWarning("Exception type: {ExceptionType}", context.Exception.GetType().Name);
+            if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenExpiredException)
             {
-                var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-                logger.LogWarning("JWT Authentication failed: {Error}", context.Exception.Message);
-                logger.LogWarning("Exception type: {ExceptionType}", context.Exception.GetType().Name);
-                if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenExpiredException)
-                {
-                    logger.LogWarning("Token is expired");
-                }
-                else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidSignatureException)
-                {
-                    logger.LogWarning("Token signature is invalid");
-                }
-                else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidIssuerException)
-                {
-                    logger.LogWarning("Token issuer is invalid");
-                }
-                else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidAudienceException)
-                {
-                    logger.LogWarning("Token audience is invalid");
-                }
-                return Task.CompletedTask;
-            },
-            OnChallenge = context =>
-            {
-                var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-                logger.LogWarning("JWT Challenge triggered: {Error}, {ErrorDescription}", context.Error, context.ErrorDescription);
-                return Task.CompletedTask;
+                logger.LogWarning("Token is expired");
             }
-        };
-    });
+            else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidSignatureException)
+            {
+                logger.LogWarning("Token signature is invalid");
+            }
+            else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidIssuerException)
+            {
+                logger.LogWarning("Token issuer is invalid");
+            }
+            else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidAudienceException)
+            {
+                logger.LogWarning("Token audience is invalid");
+            }
+            return Task.CompletedTask;
+        },
+        OnChallenge = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            logger.LogWarning("JWT Challenge triggered: {Error}, {ErrorDescription}", context.Error, context.ErrorDescription);
+            return Task.CompletedTask;
+        }
+    };
+});
 
 builder.Services.AddAuthorization();
 
@@ -320,7 +351,7 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Register HttpClient factory
+// Register HttpClient factory for HTTP services
 builder.Services.AddHttpClient();
 
 var app = builder.Build();

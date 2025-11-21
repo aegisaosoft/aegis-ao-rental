@@ -20,6 +20,7 @@ using CarRental.Api.DTOs;
 using CarRental.Api.Models;
 using CarRental.Api.Services;
 using CarRental.Api.Extensions;
+using BCrypt.Net;
 
 namespace CarRental.Api.Controllers;
 
@@ -285,8 +286,11 @@ public class CustomersController : ControllerBase
     [HttpGet("email/{email}")]
     public async Task<ActionResult<CustomerDto>> GetCustomerByEmail(string email)
     {
+        // Decode URL-encoded email if needed
+        var decodedEmail = Uri.UnescapeDataString(email);
+        
         var customer = await _context.Customers
-            .FirstOrDefaultAsync(c => c.Email == email);
+            .FirstOrDefaultAsync(c => EF.Functions.ILike(c.Email, decodedEmail));
 
         if (customer == null)
             return NotFound();
@@ -329,11 +333,29 @@ public class CustomersController : ControllerBase
         // Get company ID from HttpContext if available (set by CompanyMiddleware)
         Guid? companyId = HttpContext.GetCompanyIdAsGuid();
 
+        // Generate random password if password is mandatory (always generate for now)
+        string? generatedPassword = null;
+        string? passwordHash = null;
+        
+        // Generate a random password (12 characters: uppercase, lowercase, numbers)
+        var random = new Random();
+        const string chars = "ABCDEFGHJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        generatedPassword = new string(Enumerable.Repeat(chars, 12)
+            .Select(s => s[random.Next(s.Length)]).ToArray());
+        
+        // Hash the password
+        passwordHash = BCrypt.Net.BCrypt.HashPassword(generatedPassword);
+
+        // Provide default values for FirstName and LastName if empty (required by database)
+        // This allows admin-created customers with just email to be created
+        var firstName = string.IsNullOrWhiteSpace(createCustomerDto.FirstName) ? "Customer" : createCustomerDto.FirstName;
+        var lastName = string.IsNullOrWhiteSpace(createCustomerDto.LastName) ? string.Empty : createCustomerDto.LastName;
+
         var customer = new Customer
         {
             Email = createCustomerDto.Email,
-            FirstName = createCustomerDto.FirstName,
-            LastName = createCustomerDto.LastName,
+            FirstName = firstName,
+            LastName = lastName,
             Phone = createCustomerDto.Phone,
             DateOfBirth = createCustomerDto.DateOfBirth,
             Address = createCustomerDto.Address,
@@ -343,7 +365,7 @@ public class CustomersController : ControllerBase
             PostalCode = createCustomerDto.PostalCode,
             CustomerType = Enum.TryParse<CustomerType>(createCustomerDto.CustomerType ?? "Individual", out var customerType) ? customerType : CustomerType.Individual,
             CompanyId = companyId,
-            PasswordHash = null // No password - invitation will be sent
+            PasswordHash = passwordHash // Store hashed password - invitation with password will be sent after booking payment
         };
 
         try
@@ -364,42 +386,12 @@ public class CustomersController : ControllerBase
                 // Continue without Stripe customer for now
             }
 
-            // If customer was created without password, send invitation email
-            if (string.IsNullOrEmpty(customer.PasswordHash))
-            {
-                try
-                {
-                    var multiTenantEmailService = HttpContext.RequestServices.GetRequiredService<MultiTenantEmailService>();
-                    var customerCompanyId = customer.CompanyId ?? companyId ?? Guid.Empty;
-                    
-                    if (customerCompanyId != Guid.Empty)
-                    {
-                        var invitationUrl = $"{Request.Scheme}://{Request.Host}/register?email={Uri.EscapeDataString(customer.Email)}";
-                        
-                        // Determine language from company or default to English
-                        var company = await _context.Companies.FirstOrDefaultAsync(c => c.Id == customerCompanyId);
-                        var languageCode = company?.Language?.ToLower() ?? "en";
-                        var language = LanguageCodes.FromCode(languageCode);
-                        
-                        await multiTenantEmailService.SendInvitationEmailAsync(
-                            customerCompanyId,
-                            customer.Email,
-                            invitationUrl,
-                            language);
-                        
-                        _logger.LogInformation("Invitation email sent to {Email} for company {CompanyId}", customer.Email, customerCompanyId);
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Cannot send invitation email - no company ID available for customer {Email}", customer.Email);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to send invitation email to {Email}", customer.Email);
-                    // Continue even if email fails
-                }
-            }
+            // Don't send invitation email immediately - it will be sent after booking payment
+            // Store the generated password in a temporary field (we'll need to pass it to the booking creation)
+            // For now, we'll store it in a way that can be retrieved when booking is paid
+            // Note: The password is already hashed and stored in PasswordHash
+            // The plain password (generatedPassword) will be passed to the booking payment flow
+            _logger.LogInformation("Customer created with generated password for {Email}. Invitation will be sent after booking payment.", customer.Email);
 
             var customerDto = new CustomerDto
             {
@@ -422,10 +414,23 @@ public class CustomersController : ControllerBase
 
             return CreatedAtAction(nameof(GetCustomer), new { id = customer.Id }, customerDto);
         }
+        catch (DbUpdateException dbEx)
+        {
+            _logger.LogError(dbEx, "Database error creating customer for email: {Email}", createCustomerDto.Email);
+            return StatusCode(500, new { 
+                error = "Database error while creating customer", 
+                message = dbEx.InnerException?.Message ?? dbEx.Message,
+                details = "Please check the database constraints and try again"
+            });
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error creating customer");
-            return BadRequest("Error creating customer");
+            _logger.LogError(ex, "Error creating customer for email: {Email}. Exception: {Exception}", createCustomerDto.Email, ex.Message);
+            return StatusCode(500, new { 
+                error = "Error creating customer", 
+                message = ex.Message,
+                details = "An unexpected error occurred. Please try again or contact support."
+            });
         }
     }
 
