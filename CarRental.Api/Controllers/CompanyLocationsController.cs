@@ -20,6 +20,7 @@ using System.Security.Claims;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
+using CarRental.Api.Helpers;
 
 namespace CarRental.Api.Controllers;
 
@@ -209,7 +210,9 @@ public class CompanyLocationsController : ControllerBase
                 Address = dto.Address,
                 City = dto.City,
                 State = dto.State,
-                Country = dto.Country,
+                Country = string.IsNullOrWhiteSpace(dto.Country) 
+                    ? "US" 
+                    : CountryHelper.NormalizeToIsoCode(dto.Country),
                 PostalCode = dto.PostalCode,
                 Phone = dto.Phone,
                 Email = dto.Email,
@@ -235,7 +238,9 @@ public class CompanyLocationsController : ControllerBase
                 Address = dto.Address,
                 City = dto.City,
                 State = dto.State,
-                Country = dto.Country,
+                Country = string.IsNullOrWhiteSpace(dto.Country) 
+                    ? "US" 
+                    : CountryHelper.NormalizeToIsoCode(dto.Country),
                 PostalCode = dto.PostalCode,
                 Phone = dto.Phone,
                 Email = dto.Email,
@@ -323,7 +328,9 @@ public class CompanyLocationsController : ControllerBase
             location.Address = dto.Address;
             location.City = dto.City;
             location.State = dto.State;
-            location.Country = dto.Country;
+            location.Country = string.IsNullOrWhiteSpace(dto.Country) 
+                ? "US" 
+                : CountryHelper.NormalizeToIsoCode(dto.Country);
             location.PostalCode = dto.PostalCode;
             location.Phone = dto.Phone;
             location.Email = dto.Email;
@@ -345,7 +352,9 @@ public class CompanyLocationsController : ControllerBase
                 locationRecord.Address = dto.Address;
                 locationRecord.City = dto.City;
                 locationRecord.State = dto.State;
-                locationRecord.Country = dto.Country;
+                locationRecord.Country = string.IsNullOrWhiteSpace(dto.Country) 
+                    ? "US" 
+                    : CountryHelper.NormalizeToIsoCode(dto.Country);
                 locationRecord.PostalCode = dto.PostalCode;
                 locationRecord.Phone = dto.Phone;
                 locationRecord.Email = dto.Email;
@@ -368,7 +377,9 @@ public class CompanyLocationsController : ControllerBase
                     Address = dto.Address,
                     City = dto.City,
                     State = dto.State,
-                    Country = dto.Country,
+                    Country = string.IsNullOrWhiteSpace(dto.Country) 
+                    ? "US" 
+                    : CountryHelper.NormalizeToIsoCode(dto.Country),
                     PostalCode = dto.PostalCode,
                     Phone = dto.Phone,
                     Email = dto.Email,

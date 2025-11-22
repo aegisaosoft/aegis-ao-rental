@@ -100,6 +100,38 @@ public class CompanyStripeManagementController : ControllerBase
     }
 
     /// <summary>
+    /// Sync/Fetch account status from Stripe API and update database
+    /// </summary>
+    [HttpPost("sync")]
+    public async Task<ActionResult> SyncAccount(Guid companyId)
+    {
+        try
+        {
+            var status = await _stripeConnectService.GetAccountStatusAsync(companyId);
+            
+            if (string.IsNullOrEmpty(status.StripeAccountId))
+            {
+                return BadRequest(new { error = "Company does not have a Stripe account" });
+            }
+
+            await _stripeConnectService.SyncAccountStatusAsync(status.StripeAccountId);
+
+            // Return updated status
+            var updatedStatus = await _stripeConnectService.GetAccountStatusAsync(companyId);
+            return Ok(new 
+            { 
+                message = "Account status synced successfully",
+                status = updatedStatus
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error syncing Stripe account for company {CompanyId}", companyId);
+            return StatusCode(500, new { error = "Internal server error", message = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// Suspend company's Stripe account
     /// </summary>
     [HttpPost("suspend")]

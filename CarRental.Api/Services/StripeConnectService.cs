@@ -38,6 +38,7 @@ public interface IStripeConnectService
     Task<(bool success, string? error)> DeleteAccountAsync(string stripeAccountId);
     Task<List<ConnectedAccountDetailsDto>> GetAllAccountsAsync(int limit);
     Task<ConnectedAccountDetailsDto?> GetAccountDetailsAsync(string stripeAccountId);
+    Task<int> FindAndSyncAccountsForCompaniesAsync(int limit = 100);
 }
 
 public class StripeConnectService : IStripeConnectService
@@ -85,11 +86,12 @@ public class StripeConnectService : IStripeConnectService
                 }
             }
 
-            // Create Stripe Connected Account
+            // Create Stripe Connected Account (pass companyId to use company-specific Stripe settings)
             var account = await _stripeService.CreateConnectedAccountAsync(
                 company.Email,
                 company.StripeAccountType ?? "express",
-                company.Country ?? "US"
+                company.Country ?? "US",
+                companyId
             );
 
             // Encrypt and store account ID
@@ -145,11 +147,12 @@ public class StripeConnectService : IStripeConnectService
                 accountId = _encryptionService.Decrypt(company.StripeAccountId);
             }
 
-            // Create account link for onboarding
+            // Create account link for onboarding (pass companyId to use company-specific Stripe settings)
             var accountLink = await _stripeService.CreateAccountLinkAsync(
                 accountId,
                 returnUrl,
-                refreshUrl
+                refreshUrl,
+                companyId
             );
 
             // Save onboarding session
@@ -594,6 +597,106 @@ public class StripeConnectService : IStripeConnectService
         {
             _logger.LogError(ex, "Error getting all accounts");
             return new List<ConnectedAccountDetailsDto>();
+        }
+    }
+
+    /// <summary>
+    /// Find Stripe accounts and sync them with companies by matching email addresses
+    /// </summary>
+    public async Task<int> FindAndSyncAccountsForCompaniesAsync(int limit = 100)
+    {
+        try
+        {
+            _logger.LogInformation("Finding and syncing Stripe accounts for companies (limit: {Limit})", limit);
+
+            var service = new AccountService();
+            var options = new AccountListOptions
+            {
+                Limit = limit
+            };
+
+            var accounts = await service.ListAsync(options);
+
+            int syncedCount = 0;
+
+            foreach (var account in accounts.Data)
+            {
+                _logger.LogInformation("Processing account: ID={AccountId}, Email={Email}, Type={Type}", 
+                    account.Id, account.Email, account.Type);
+
+                // Find company by email
+                var company = await _context.Companies
+                    .FirstOrDefaultAsync(c => c.Email != null && 
+                        c.Email.Equals(account.Email, StringComparison.OrdinalIgnoreCase));
+
+                if (company == null)
+                {
+                    _logger.LogWarning("No company found for Stripe account {AccountId} with email {Email}", 
+                        account.Id, account.Email);
+                    continue;
+                }
+
+                // Check if company already has this account linked
+                string? existingAccountId = null;
+                if (!string.IsNullOrEmpty(company.StripeAccountId))
+                {
+                    try
+                    {
+                        existingAccountId = _encryptionService.Decrypt(company.StripeAccountId);
+                    }
+                    catch
+                    {
+                        // Account ID might not be encrypted, use as-is
+                        existingAccountId = company.StripeAccountId;
+                    }
+                }
+
+                // If account is already linked, just sync the status
+                if (existingAccountId == account.Id)
+                {
+                    _logger.LogInformation("Account {AccountId} already linked to company {CompanyId}, syncing status", 
+                        account.Id, company.Id);
+                    await SyncAccountStatusAsync(account.Id);
+                    syncedCount++;
+                    continue;
+                }
+
+                // Link the account to the company
+                var encryptedAccountId = _encryptionService.Encrypt(account.Id);
+                company.StripeAccountId = encryptedAccountId;
+                company.StripeAccountType = account.Type;
+                company.StripeChargesEnabled = account.ChargesEnabled;
+                company.StripePayoutsEnabled = account.PayoutsEnabled;
+                company.StripeDetailsSubmitted = account.DetailsSubmitted;
+                company.StripeOnboardingCompleted = account.ChargesEnabled && 
+                                                   account.PayoutsEnabled && 
+                                                   account.DetailsSubmitted;
+                company.StripeRequirementsCurrentlyDue = account.Requirements?.CurrentlyDue?.ToArray();
+                company.StripeRequirementsEventuallyDue = account.Requirements?.EventuallyDue?.ToArray();
+                company.StripeRequirementsPastDue = account.Requirements?.PastDue?.ToArray();
+                company.StripeRequirementsDisabledReason = account.Requirements?.DisabledReason;
+                company.StripeLastSyncAt = DateTime.UtcNow;
+                company.UpdatedAt = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Linked Stripe account {AccountId} to company {CompanyId} ({CompanyName})", 
+                    account.Id, company.Id, company.CompanyName);
+                syncedCount++;
+            }
+
+            _logger.LogInformation("Completed syncing accounts. Total synced: {SyncedCount}", syncedCount);
+            return syncedCount;
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error finding and syncing accounts");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error finding and syncing accounts");
+            throw;
         }
     }
 

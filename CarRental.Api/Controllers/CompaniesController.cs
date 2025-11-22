@@ -21,6 +21,7 @@ using CarRental.Api.Models;
 using CarRental.Api.Services;
 using CarRental.Api.Extensions;
 using CarRental.Api.DTOs;
+using CarRental.Api.Helpers;
 using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -28,7 +29,6 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
 using System.Text.Encodings.Web;
 using System.Linq;
-using CarRental.Api.Helpers;
 
 namespace CarRental.Api.Controllers;
 
@@ -254,7 +254,9 @@ public class CompaniesController : ControllerBase
                 SecondaryColor = request.SecondaryColor ?? "#6c757d",
                 LogoUrl = request.LogoUrl,
                 FaviconUrl = request.FaviconUrl,
-                Country = request.Country,
+                Country = string.IsNullOrWhiteSpace(request.Country) 
+                    ? null 
+                    : CountryHelper.NormalizeToIsoCode(request.Country),
                 Language = request.Language ?? "en",
                 Motto = request.Motto,
                 MottoDescription = request.MottoDescription,
@@ -413,7 +415,9 @@ public class CompaniesController : ControllerBase
 
             if (request.Country != null)
             {
-                var normalizedCountry = string.IsNullOrWhiteSpace(request.Country) ? null : request.Country;
+                var normalizedCountry = string.IsNullOrWhiteSpace(request.Country) 
+                    ? null 
+                    : CountryHelper.NormalizeToIsoCode(request.Country);
                 company.Country = normalizedCountry;
                 countryUpdated = !string.Equals(originalCountry, normalizedCountry, StringComparison.OrdinalIgnoreCase);
             }

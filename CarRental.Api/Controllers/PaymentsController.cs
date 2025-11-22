@@ -1428,12 +1428,22 @@ public class PaymentsController : ControllerBase
     private async Task HandleAccountUpdated(Event stripeEvent)
     {
         var account = stripeEvent.Data.Object as Stripe.Account;
-        if (account == null) return;
+        if (account == null)
+        {
+            _logger.LogWarning("[Webhook] account.updated event received but account object is null");
+            return;
+        }
+
+        _logger.LogInformation("[Webhook] Processing account.updated for Stripe account {AccountId}", account.Id);
 
         try
         {
             // Find company by Stripe account ID
-            var companies = await _context.Companies.ToListAsync();
+            // First, try to find companies with StripeAccountId set
+            var companies = await _context.Companies
+                .Where(c => !string.IsNullOrEmpty(c.StripeAccountId))
+                .ToListAsync();
+
             Company? targetCompany = null;
 
             foreach (var company in companies)
@@ -1446,40 +1456,67 @@ public class PaymentsController : ControllerBase
                         if (decryptedId == account.Id)
                         {
                             targetCompany = company;
+                            _logger.LogInformation("[Webhook] Found company {CompanyId} ({CompanyName}) for Stripe account {AccountId}", 
+                                company.Id, company.CompanyName, account.Id);
                             break;
                         }
                     }
-                    catch
+                    catch (Exception decryptEx)
                     {
-                        // Skip if decryption fails
+                        // Log decryption failures for debugging
+                        _logger.LogWarning(decryptEx, "[Webhook] Failed to decrypt StripeAccountId for company {CompanyId}", company.Id);
                         continue;
                     }
                 }
             }
 
-            if (targetCompany != null)
+            if (targetCompany == null)
             {
-                targetCompany.StripeChargesEnabled = account.ChargesEnabled;
-                targetCompany.StripePayoutsEnabled = account.PayoutsEnabled;
-                targetCompany.StripeDetailsSubmitted = account.DetailsSubmitted;
-                targetCompany.StripeOnboardingCompleted = account.ChargesEnabled && 
-                                                         account.PayoutsEnabled && 
-                                                         account.DetailsSubmitted;
-                targetCompany.StripeRequirementsCurrentlyDue = account.Requirements?.CurrentlyDue?.ToArray();
-                targetCompany.StripeRequirementsEventuallyDue = account.Requirements?.EventuallyDue?.ToArray();
-                targetCompany.StripeRequirementsPastDue = account.Requirements?.PastDue?.ToArray();
-                targetCompany.StripeRequirementsDisabledReason = account.Requirements?.DisabledReason;
-                targetCompany.StripeLastSyncAt = DateTime.UtcNow;
-                targetCompany.UpdatedAt = DateTime.UtcNow;
-
-                await _context.SaveChangesAsync();
-
-                _logger.LogInformation("Updated Stripe account status for company {CompanyId}", targetCompany.Id);
+                _logger.LogWarning("[Webhook] No company found for Stripe account {AccountId}. Searched {CompanyCount} companies with StripeAccountId set.", 
+                    account.Id, companies.Count);
+                return;
             }
+
+            // Update company with account status
+            var oldChargesEnabled = targetCompany.StripeChargesEnabled;
+            var oldPayoutsEnabled = targetCompany.StripePayoutsEnabled;
+            var oldDetailsSubmitted = targetCompany.StripeDetailsSubmitted;
+            var oldOnboardingCompleted = targetCompany.StripeOnboardingCompleted;
+
+            targetCompany.StripeChargesEnabled = account.ChargesEnabled;
+            targetCompany.StripePayoutsEnabled = account.PayoutsEnabled;
+            targetCompany.StripeDetailsSubmitted = account.DetailsSubmitted;
+            targetCompany.StripeOnboardingCompleted = account.ChargesEnabled && 
+                                                     account.PayoutsEnabled && 
+                                                     account.DetailsSubmitted;
+            targetCompany.StripeRequirementsCurrentlyDue = account.Requirements?.CurrentlyDue?.ToArray();
+            targetCompany.StripeRequirementsEventuallyDue = account.Requirements?.EventuallyDue?.ToArray();
+            targetCompany.StripeRequirementsPastDue = account.Requirements?.PastDue?.ToArray();
+            targetCompany.StripeRequirementsDisabledReason = account.Requirements?.DisabledReason;
+            targetCompany.StripeLastSyncAt = DateTime.UtcNow;
+            targetCompany.UpdatedAt = DateTime.UtcNow;
+
+            // Explicitly mark as modified to ensure EF tracks changes
+            _context.Companies.Update(targetCompany);
+            
+            var changesSaved = await _context.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "[Webhook] Updated Stripe account status for company {CompanyId} ({CompanyName}). " +
+                "Changes: ChargesEnabled {OldCharges}->{NewCharges}, PayoutsEnabled {OldPayouts}->{NewPayouts}, " +
+                "DetailsSubmitted {OldDetails}->{NewDetails}, OnboardingCompleted {OldOnboarding}->{NewOnboarding}. " +
+                "SaveChanges returned {ChangesSaved}",
+                targetCompany.Id, 
+                targetCompany.CompanyName,
+                oldChargesEnabled, account.ChargesEnabled,
+                oldPayoutsEnabled, account.PayoutsEnabled,
+                oldDetailsSubmitted, account.DetailsSubmitted,
+                oldOnboardingCompleted, targetCompany.StripeOnboardingCompleted,
+                changesSaved);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling account.updated webhook");
+            _logger.LogError(ex, "[Webhook] Error handling account.updated webhook for account {AccountId}", account.Id);
         }
     }
 

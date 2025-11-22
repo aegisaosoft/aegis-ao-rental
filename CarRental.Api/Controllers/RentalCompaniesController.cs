@@ -303,7 +303,9 @@ public class RentalCompaniesController : ControllerBase
             LogoUrl = createCompanyDto.LogoUrl,
             FaviconUrl = createCompanyDto.FaviconUrl,
             CustomCss = createCompanyDto.CustomCss,
-            Country = createCompanyDto.Country,
+            Country = string.IsNullOrWhiteSpace(createCompanyDto.Country) 
+                ? null 
+                : CountryHelper.NormalizeToIsoCode(createCompanyDto.Country),
             Currency = CurrencyHelper.ResolveCurrency(createCompanyDto.Currency, createCompanyDto.Country),
             SecurityDeposit = createCompanyDto.SecurityDeposit ?? 1000m,
             IsSecurityDepositMandatory = createCompanyDto.IsSecurityDepositMandatory ?? true,
@@ -485,8 +487,11 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.Country != null)
         {
-            company.Country = updateCompanyDto.Country;
-            countryUpdated = !string.Equals(originalCountry, updateCompanyDto.Country, StringComparison.OrdinalIgnoreCase);
+            var normalizedCountry = string.IsNullOrWhiteSpace(updateCompanyDto.Country) 
+                ? null 
+                : CountryHelper.NormalizeToIsoCode(updateCompanyDto.Country);
+            company.Country = normalizedCountry;
+            countryUpdated = !string.Equals(originalCountry, normalizedCountry, StringComparison.OrdinalIgnoreCase);
         }
 
         if (!string.IsNullOrWhiteSpace(updateCompanyDto.Currency))

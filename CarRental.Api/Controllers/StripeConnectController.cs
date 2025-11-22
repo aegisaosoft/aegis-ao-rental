@@ -305,5 +305,28 @@ public class StripeConnectController : ControllerBase
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
+
+    /// <summary>
+    /// Find and sync Stripe accounts with companies by matching email addresses
+    /// </summary>
+    [HttpPost("accounts/find-and-sync")]
+    [Authorize(Roles = "admin,mainadmin")]
+    public async Task<ActionResult> FindAndSyncAccountsForCompanies([FromQuery] int limit = 100)
+    {
+        try
+        {
+            var syncedCount = await _stripeConnectService.FindAndSyncAccountsForCompaniesAsync(limit);
+            return Ok(new 
+            { 
+                message = $"Successfully synced {syncedCount} Stripe account(s) with companies",
+                syncedCount 
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error finding and syncing accounts");
+            return StatusCode(500, new { error = "Internal server error", message = ex.Message });
+        }
+    }
 }
 

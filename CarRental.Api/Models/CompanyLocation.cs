@@ -47,7 +47,7 @@ public class CompanyLocation
 
     [MaxLength(100)]
     [Column("country")]
-    public string Country { get; set; } = "USA";
+    public string Country { get; set; } = "US";
 
     [MaxLength(20)]
     [Column("postal_code")]

@@ -37,7 +37,7 @@ public class LocationDto
     public string? State { get; set; }
 
     [MaxLength(100)]
-    public string Country { get; set; } = "USA";
+    public string Country { get; set; } = "US";
 
     [MaxLength(20)]
     public string? PostalCode { get; set; }
@@ -89,7 +89,7 @@ public class CreateLocationDto
     public string? State { get; set; }
 
     [MaxLength(100)]
-    public string Country { get; set; } = "USA";
+    public string Country { get; set; } = "US";
 
     [MaxLength(20)]
     public string? PostalCode { get; set; }
@@ -135,7 +135,7 @@ public class UpdateLocationDto
     public string? State { get; set; }
 
     [MaxLength(100)]
-    public string Country { get; set; } = "USA";
+    public string Country { get; set; } = "US";
 
     [MaxLength(20)]
     public string? PostalCode { get; set; }

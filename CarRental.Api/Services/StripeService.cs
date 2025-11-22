@@ -21,6 +21,8 @@ using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System.Threading;
 using System.Text;
+using System.Linq;
+using CarRental.Api.Helpers;
 
 namespace CarRental.Api.Services;
 
@@ -46,8 +48,8 @@ public interface IStripeService
     Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount);
     
     // Stripe Connect methods
-    Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country);
-    Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl);
+    Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country, Guid? companyId = null);
+    Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl, Guid? companyId = null);
     Task<Account> GetAccountAsync(string accountId);
     Task<Account> UpdateAccountAsync(string accountId);
     
@@ -200,7 +202,7 @@ public class StripeService : IStripeService
                         }
                         else
                         {
-                            _logger.LogInformation("[Stripe] No StripeSettingsId found in stripe_company table for company {CompanyId}, will use global settings", companyId);
+                            _logger.LogInformation("[Stripe] No StripeSettingsId found in stripe_company table for company {CompanyId}, will try default stripe_settings", companyId);
                         }
                     }
 
@@ -217,13 +219,53 @@ public class StripeService : IStripeService
                         secretKey = DecryptKey(stripeSettings.SecretKey);
                         publishableKey = DecryptKey(stripeSettings.PublishableKey);
                         webhookSecret = DecryptKey(stripeSettings.WebhookSecret);
-                        _logger.LogInformation("[Stripe] Using company-specific settings from stripe_settings table for company {CompanyId}. SettingsId={SettingsId}, SettingsName={SettingsName}", 
-                            companyId, settingsId, stripeSettings.Name);
+                        
+                        if (string.IsNullOrWhiteSpace(secretKey))
+                        {
+                            _logger.LogWarning("[Stripe] Decrypted secret key is null or empty for stripe_settings Id={SettingsId}, Name={SettingsName} (company {CompanyId})", 
+                                settingsId, stripeSettings.Name, companyId);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("[Stripe] Using company-specific settings from stripe_settings table for company {CompanyId}. SettingsId={SettingsId}, SettingsName={SettingsName}", 
+                                companyId, settingsId, stripeSettings.Name);
+                        }
                     }
                     else
                     {
                         _logger.LogWarning("[Stripe] StripeSettings not found for settingsId={SettingsId} (company {CompanyId})", settingsId, companyId);
                     }
+                    }
+                    else
+                    {
+                        // No settingsId found for company - try to use first available stripe_settings record
+                        _logger.LogInformation("[Stripe] Company {CompanyId} has no StripeSettingsId, trying to use first available stripe_settings record", companyId);
+                        var defaultStripeSettings = await _context.StripeSettings
+                            .AsNoTracking()
+                            .OrderBy(ss => ss.CreatedAt)
+                            .FirstOrDefaultAsync();
+
+                        if (defaultStripeSettings != null)
+                        {
+                            secretKey = DecryptKey(defaultStripeSettings.SecretKey);
+                            publishableKey = DecryptKey(defaultStripeSettings.PublishableKey);
+                            webhookSecret = DecryptKey(defaultStripeSettings.WebhookSecret);
+                            
+                            if (string.IsNullOrWhiteSpace(secretKey))
+                            {
+                                _logger.LogWarning("[Stripe] Decrypted secret key is null or empty for stripe_settings Id={SettingsId}, Name={SettingsName}", 
+                                    defaultStripeSettings.Id, defaultStripeSettings.Name);
+                            }
+                            else
+                            {
+                                _logger.LogInformation("[Stripe] Using default stripe_settings record (Id={SettingsId}, Name={SettingsName}) for company {CompanyId}", 
+                                    defaultStripeSettings.Id, defaultStripeSettings.Name, companyId);
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("[Stripe] No stripe_settings records found in database for company {CompanyId}", companyId);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -622,16 +664,19 @@ public class StripeService : IStripeService
     }
 
     // Stripe Connect methods - new implementations
-    public async Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country)
+    public async Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country, Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CreateConnectedAccountAsync email={Email} accountType={AccountType} country={Country}", email, accountType, country);
+        await EnsureInitializedAsync(companyId);
+        _logger.LogWarning("[Stripe] CreateConnectedAccountAsync email={Email} accountType={AccountType} country={Country}, companyId={CompanyId}", email, accountType, country, companyId);
         try
         {
+            // Convert country name to ISO 3166-1 alpha-2 code if needed
+            var countryCode = CountryHelper.NormalizeToIsoCode(country);
+            
             var options = new AccountCreateOptions
             {
                 Type = accountType, // "express" or "standard"
-                Country = country,
+                Country = countryCode,
                 Email = email,
                 Capabilities = new AccountCapabilitiesOptions
                 {
@@ -656,10 +701,11 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl)
+
+    public async Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl, Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CreateAccountLinkAsync accountId={AccountId}", accountId);
+        await EnsureInitializedAsync(companyId);
+        _logger.LogWarning("[Stripe] CreateAccountLinkAsync accountId={AccountId}, companyId={CompanyId}", accountId, companyId);
         try
         {
             var options = new AccountLinkCreateOptions

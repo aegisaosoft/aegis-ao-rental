@@ -24,6 +24,7 @@ using System.IO;
 using System.Text;
 using System.Linq;
 using BCrypt.Net;
+using Microsoft.Extensions.Configuration;
 
 namespace CarRental.Api.Controllers;
 
@@ -34,15 +35,18 @@ public class WebhooksController : ControllerBase
     private readonly CarRentalDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly ILogger<WebhooksController> _logger;
+    private readonly IEncryptionService _encryptionService;
 
     public WebhooksController(
         CarRentalDbContext context,
         IConfiguration configuration,
-        ILogger<WebhooksController> logger)
+        ILogger<WebhooksController> logger,
+        IEncryptionService encryptionService)
     {
         _context = context;
         _configuration = configuration;
         _logger = logger;
+        _encryptionService = encryptionService;
     }
 
     [HttpPost("stripe")]
@@ -117,14 +121,17 @@ public class WebhooksController : ControllerBase
                     await HandleCheckoutSessionCompleted(stripeEvent);
                     break;
 
-                // Stripe Connect events - acknowledge but don't process
+                // Stripe Connect events
                 case "transfer.created":
                 case "payout.paid":
                 case "payout.failed":
-                case "account.updated":
                 case "account.application.authorized":
                 case "account.application.deauthorized":
                     _logger.LogInformation("Stripe Connect event received (not processed): {EventType}", stripeEvent.Type);
+                    break;
+                
+                case "account.updated":
+                    await HandleAccountUpdated(stripeEvent);
                     break;
 
                 // Additional payment intent events
@@ -981,6 +988,101 @@ public class WebhooksController : ControllerBase
                 "Error sending invitation email after payment for booking {BookingId}",
                 reservation.Id);
             // Don't throw - payment was successful, email failure shouldn't break the flow
+        }
+    }
+
+    private async Task HandleAccountUpdated(Event stripeEvent)
+    {
+        var account = stripeEvent.Data.Object as Stripe.Account;
+        if (account == null)
+        {
+            _logger.LogWarning("[Webhook] account.updated event received but account object is null");
+            return;
+        }
+
+        _logger.LogInformation("[Webhook] Processing account.updated for Stripe account {AccountId}", account.Id);
+
+        try
+        {
+            // Find company by Stripe account ID
+            // First, try to find companies with StripeAccountId set
+            var companies = await _context.Companies
+                .Where(c => !string.IsNullOrEmpty(c.StripeAccountId))
+                .ToListAsync();
+
+            Company? targetCompany = null;
+
+            foreach (var company in companies)
+            {
+                if (!string.IsNullOrEmpty(company.StripeAccountId))
+                {
+                    try
+                    {
+                        var decryptedId = _encryptionService.Decrypt(company.StripeAccountId);
+                        if (decryptedId == account.Id)
+                        {
+                            targetCompany = company;
+                            _logger.LogInformation("[Webhook] Found company {CompanyId} ({CompanyName}) for Stripe account {AccountId}", 
+                                company.Id, company.CompanyName, account.Id);
+                            break;
+                        }
+                    }
+                    catch (Exception decryptEx)
+                    {
+                        // Log decryption failures for debugging
+                        _logger.LogWarning(decryptEx, "[Webhook] Failed to decrypt StripeAccountId for company {CompanyId}", company.Id);
+                        continue;
+                    }
+                }
+            }
+
+            if (targetCompany == null)
+            {
+                _logger.LogWarning("[Webhook] No company found for Stripe account {AccountId}. Searched {CompanyCount} companies with StripeAccountId set.", 
+                    account.Id, companies.Count);
+                return;
+            }
+
+            // Update company with account status
+            var oldChargesEnabled = targetCompany.StripeChargesEnabled;
+            var oldPayoutsEnabled = targetCompany.StripePayoutsEnabled;
+            var oldDetailsSubmitted = targetCompany.StripeDetailsSubmitted;
+            var oldOnboardingCompleted = targetCompany.StripeOnboardingCompleted;
+
+            targetCompany.StripeChargesEnabled = account.ChargesEnabled;
+            targetCompany.StripePayoutsEnabled = account.PayoutsEnabled;
+            targetCompany.StripeDetailsSubmitted = account.DetailsSubmitted;
+            targetCompany.StripeOnboardingCompleted = account.ChargesEnabled && 
+                                                     account.PayoutsEnabled && 
+                                                     account.DetailsSubmitted;
+            targetCompany.StripeRequirementsCurrentlyDue = account.Requirements?.CurrentlyDue?.ToArray();
+            targetCompany.StripeRequirementsEventuallyDue = account.Requirements?.EventuallyDue?.ToArray();
+            targetCompany.StripeRequirementsPastDue = account.Requirements?.PastDue?.ToArray();
+            targetCompany.StripeRequirementsDisabledReason = account.Requirements?.DisabledReason;
+            targetCompany.StripeLastSyncAt = DateTime.UtcNow;
+            targetCompany.UpdatedAt = DateTime.UtcNow;
+
+            // Explicitly mark as modified to ensure EF tracks changes
+            _context.Companies.Update(targetCompany);
+            
+            var changesSaved = await _context.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "[Webhook] Updated Stripe account status for company {CompanyId} ({CompanyName}). " +
+                "Changes: ChargesEnabled {OldCharges}->{NewCharges}, PayoutsEnabled {OldPayouts}->{NewPayouts}, " +
+                "DetailsSubmitted {OldDetails}->{NewDetails}, OnboardingCompleted {OldOnboarding}->{NewOnboarding}. " +
+                "SaveChanges returned {ChangesSaved}",
+                targetCompany.Id, 
+                targetCompany.CompanyName,
+                oldChargesEnabled, account.ChargesEnabled,
+                oldPayoutsEnabled, account.PayoutsEnabled,
+                oldDetailsSubmitted, account.DetailsSubmitted,
+                oldOnboardingCompleted, targetCompany.StripeOnboardingCompleted,
+                changesSaved);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Webhook] Error handling account.updated webhook for account {AccountId}", account.Id);
         }
     }
 }

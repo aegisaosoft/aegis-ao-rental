@@ -20,6 +20,7 @@ using System.Security.Claims;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
+using CarRental.Api.Helpers;
 
 namespace CarRental.Api.Controllers;
 
@@ -322,7 +323,9 @@ public class LocationsController : ControllerBase
                 Address = dto.Address,
                 City = dto.City,
                 State = dto.State,
-                Country = dto.Country,
+                Country = string.IsNullOrWhiteSpace(dto.Country) 
+                    ? "US" 
+                    : CountryHelper.NormalizeToIsoCode(dto.Country),
                 PostalCode = dto.PostalCode,
                 Phone = dto.Phone,
                 Email = dto.Email,
@@ -423,7 +426,9 @@ public class LocationsController : ControllerBase
             existingLocation.Address = dto.Address;
             existingLocation.City = dto.City;
             existingLocation.State = dto.State;
-            existingLocation.Country = dto.Country;
+            existingLocation.Country = string.IsNullOrWhiteSpace(dto.Country) 
+                ? "US" 
+                : CountryHelper.NormalizeToIsoCode(dto.Country);
             existingLocation.PostalCode = dto.PostalCode;
             existingLocation.Phone = dto.Phone;
             existingLocation.Email = dto.Email;
