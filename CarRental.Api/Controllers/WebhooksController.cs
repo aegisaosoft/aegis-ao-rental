@@ -829,15 +829,13 @@ public class WebhooksController : ControllerBase
                 return; // Customer already has access
             }
 
-            // Skip if customer was recently updated (within last 5 minutes) - indicates invitation email was already sent
-            // This prevents duplicate emails from multiple webhook events
-            if (customer.UpdatedAt > DateTime.UtcNow.AddMinutes(-5))
+            // Check if customer has an email address
+            if (string.IsNullOrWhiteSpace(customer.Email))
             {
-                _logger.LogInformation(
-                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} was recently updated (UpdatedAt: {UpdatedAt}), invitation email likely already sent",
-                    customer.Id,
-                    customer.UpdatedAt);
-                return; // Invitation email was likely already sent recently
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} has no email address set",
+                    customer.Id);
+                return; // Cannot send email without an email address
             }
 
             // Reload customer with tracking to update it
@@ -854,6 +852,15 @@ public class WebhooksController : ControllerBase
             // Double-check: If customer already has a password hash, another webhook may have already processed this
             // Reload to get the latest state (in case another webhook updated it)
             await _context.Entry(customerToUpdate).ReloadAsync();
+            
+            // Check if customer has an email address after reload
+            if (string.IsNullOrWhiteSpace(customerToUpdate.Email))
+            {
+                _logger.LogWarning(
+                    "SendInvitationEmailAfterPayment: Skipping - Customer {CustomerId} has no email address set after reload",
+                    customerToUpdate.Id);
+                return; // Cannot send email without an email address
+            }
             
             // If customer already has a password hash and was recently updated, skip (another webhook already sent invitation)
             if (!string.IsNullOrEmpty(customerToUpdate.PasswordHash) && 
