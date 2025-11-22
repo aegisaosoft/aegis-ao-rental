@@ -125,8 +125,9 @@ public class CompaniesController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting companies");
-            return StatusCode(500, new { error = "Internal server error" });
+            _logger.LogError(ex, "Error getting companies: {Message}", ex.Message);
+            _logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
+            return StatusCode(500, new { error = "Internal server error", message = ex.Message });
         }
     }
 
@@ -174,6 +175,7 @@ public class CompaniesController : ControllerBase
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
                 hasStripeAccount = !string.IsNullOrEmpty(company.StripeAccountId),
+                stripeSettingsId = company.StripeSettingsId,
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
@@ -322,6 +324,7 @@ public class CompaniesController : ControllerBase
                 taxId = company.TaxId,
                 stripeAccountId = (string?)null,
                 hasStripeAccount = !string.IsNullOrEmpty(company.StripeAccountId),
+                stripeSettingsId = company.StripeSettingsId,
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
@@ -457,6 +460,14 @@ public class CompaniesController : ControllerBase
             if (request.TaxId != null)
                 company.TaxId = request.TaxId;
 
+            if (request.StripeSettingsId.HasValue)
+                company.StripeSettingsId = request.StripeSettingsId.Value;
+            else if (request.StripeSettingsId == null && request.GetType().GetProperty("StripeSettingsId")?.GetValue(request) == null)
+            {
+                // Explicitly set to null if the property was included in the request with null value
+                company.StripeSettingsId = null;
+            }
+
             if (request.StripeAccountId != null)
             {
                 company.StripeAccountId = string.IsNullOrWhiteSpace(request.StripeAccountId)
@@ -520,6 +531,7 @@ public class CompaniesController : ControllerBase
                 taxId = company.TaxId,
                 stripeAccountId = (string?)null,
                 hasStripeAccount = !string.IsNullOrEmpty(company.StripeAccountId),
+                stripeSettingsId = company.StripeSettingsId,
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
@@ -1644,6 +1656,7 @@ public class UpdateCompanyRequest
     public string? Texts { get; set; }
     public bool? BookingIntegrated { get; set; }
     public string? TaxId { get; set; }
+    public Guid? StripeSettingsId { get; set; }
     public string? StripeAccountId { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }

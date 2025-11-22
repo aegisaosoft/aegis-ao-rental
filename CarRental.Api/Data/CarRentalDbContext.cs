@@ -49,6 +49,10 @@ public class CarRentalDbContext : DbContext
     public DbSet<VehicleModel> VehicleModels { get; set; }
     public DbSet<Setting> Settings { get; set; }
     
+    // Stripe Settings Tables
+    public DbSet<StripeSettings> StripeSettings { get; set; }
+    public DbSet<StripeCompany> StripeCompanies { get; set; }
+    
     // Stripe & Payment Tables
     public DbSet<Currency> Currencies { get; set; }
     public DbSet<StripeTransfer> StripeTransfers { get; set; }
@@ -83,6 +87,20 @@ public class CarRentalDbContext : DbContext
             .Property(e => e.IsSecurityDepositMandatory)
             .HasDefaultValue(true)
             .IsRequired();
+
+        // Configure StripeSettingsId (nullable foreign key)
+        modelBuilder.Entity<Company>()
+            .Property(e => e.StripeSettingsId)
+            .HasColumnName("stripe_settings_id")
+            .IsRequired(false);
+
+        // Configure Company to StripeSettings relationship (optional)
+        modelBuilder.Entity<Company>()
+            .HasOne<StripeSettings>()
+            .WithMany()
+            .HasForeignKey(c => c.StripeSettingsId)
+            .HasPrincipalKey(ss => ss.Id)
+            .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<Customer>()
             .Property(e => e.Id)

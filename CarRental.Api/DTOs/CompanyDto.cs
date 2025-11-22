@@ -36,6 +36,8 @@ public class RentalCompanyDto
     
     public string? StripeAccountId { get; set; }
     
+    public Guid? StripeSettingsId { get; set; }
+    
     [MaxLength(100)]
     public string? TaxId { get; set; }
     
@@ -197,6 +199,8 @@ public class UpdateRentalCompanyDto
     
     [MaxLength(100)]
     public string? TaxId { get; set; }
+    
+    public Guid? StripeSettingsId { get; set; }
     
     [MaxLength(500)]
     public string? VideoLink { get; set; }

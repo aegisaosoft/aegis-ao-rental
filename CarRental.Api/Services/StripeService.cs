@@ -16,8 +16,11 @@
 using Stripe;
 using Stripe.Checkout;
 using CarRental.Api.Models;
+using CarRental.Api.Data;
+using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System.Threading;
+using System.Text;
 
 namespace CarRental.Api.Services;
 
@@ -35,7 +38,8 @@ public interface IStripeService
         string? paymentMethodId = null,
         IDictionary<string, string>? metadata = null,
         bool captureImmediately = true,
-        bool requestExtendedAuthorization = false);
+        bool requestExtendedAuthorization = false,
+        Guid? companyId = null);
     Task<PaymentIntent> ConfirmPaymentIntentAsync(string paymentIntentId);
     Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId);
     Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null, string? currency = null);
@@ -69,58 +73,211 @@ public interface IStripeService
         string currency, 
         string paymentMethodId,
         string connectedAccountId,
-        Dictionary<string, string> metadata);
+        Dictionary<string, string> metadata,
+        Guid? companyId = null);
     
     Task<WebhookEndpoint> CreateWebhookEndpointAsync(string url, string[] events);
     Task<Event> ConstructWebhookEventAsync(string payload, string signature, string webhookSecret);
-    Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null);
+    Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null, Guid? companyId = null);
 }
 
 public class StripeService : IStripeService
 {
     private readonly ISettingsService _settingsService;
+    private readonly CarRentalDbContext _context;
     private readonly ILogger<StripeService> _logger;
+    private readonly IEncryptionService _encryptionService;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
-    private bool _initialized;
-    private string? _publishableKey;
-    private string? _webhookSecret;
+    private readonly Dictionary<Guid, (string secretKey, string? publishableKey, string? webhookSecret)> _companySettingsCache = new();
+    private bool _globalInitialized;
+    private string? _globalPublishableKey;
+    private string? _globalWebhookSecret;
 
     private const string SecretKeySetting = "stripe.secretKey";
     private const string PublishableKeySetting = "stripe.publishableKey";
     private const string WebhookSecretSetting = "stripe.webhookSecret";
 
-    public StripeService(ISettingsService settingsService, ILogger<StripeService> logger)
+    public StripeService(ISettingsService settingsService, CarRentalDbContext context, ILogger<StripeService> logger, IEncryptionService encryptionService)
     {
         _settingsService = settingsService;
+        _context = context;
         _logger = logger;
+        _encryptionService = encryptionService;
     }
 
-    private async Task EnsureInitializedAsync()
+    /// <summary>
+    /// Decrypt a key using the same decryption as SettingsService
+    /// </summary>
+    private string? DecryptKey(string? encryptedKey)
     {
-        if (_initialized)
+        if (string.IsNullOrWhiteSpace(encryptedKey))
+            return null;
+        
+        try
+        {
+            return _encryptionService.Decrypt(encryptedKey);
+        }
+        catch (Exception ex) when (ex is FormatException || ex is System.Security.Cryptography.CryptographicException)
+        {
+            // Key might be stored in plaintext (backward compatibility)
+            _logger.LogWarning(ex, "Key appears to be stored in plaintext");
+            return encryptedKey;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to decrypt key");
+            return null;
+        }
+    }
+
+    private async Task EnsureInitializedAsync(Guid? companyId = null)
+    {
+        // Check if we already have settings for this company cached
+        if (companyId.HasValue && _companySettingsCache.ContainsKey(companyId.Value))
+        {
+            var settings = _companySettingsCache[companyId.Value];
+            StripeConfiguration.ApiKey = settings.secretKey;
+            _globalPublishableKey = settings.publishableKey;
+            _globalWebhookSecret = settings.webhookSecret;
+            return;
+        }
+
+        // Check if global initialization is done (for backward compatibility)
+        if (!companyId.HasValue && _globalInitialized)
             return;
 
         await _initializationLock.WaitAsync();
         try
         {
-            if (_initialized)
-                return;
-
-            var secretKey = await _settingsService.GetValueAsync(SecretKeySetting) ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(secretKey))
+            // Double-check after acquiring lock
+            if (companyId.HasValue && _companySettingsCache.ContainsKey(companyId.Value))
             {
-                throw new InvalidOperationException($"Stripe secret key is not configured. Set the '{SecretKeySetting}' setting.");
+                var settings = _companySettingsCache[companyId.Value];
+                StripeConfiguration.ApiKey = settings.secretKey;
+                _globalPublishableKey = settings.publishableKey;
+                _globalWebhookSecret = settings.webhookSecret;
+                return;
             }
 
-            _logger.LogWarning("[Stripe] Using secret key: {SecretKey}", secretKey);
+            if (!companyId.HasValue && _globalInitialized)
+                return;
 
-            StripeConfiguration.ApiKey = secretKey;
-            _publishableKey = await _settingsService.GetValueAsync(PublishableKeySetting);
-            _webhookSecret = await _settingsService.GetValueAsync(WebhookSecretSetting);
+            string? secretKey = null;
+            string? publishableKey = null;
+            string? webhookSecret = null;
 
-            _logger.LogWarning("[Stripe] Publishable key: {Publishable}", _publishableKey);
-            _logger.LogWarning("[Stripe] Webhook secret: {WebhookSecret}", _webhookSecret);
-            _initialized = true;
+            // Try to get from new stripe_settings table (company-specific)
+            if (companyId.HasValue)
+            {
+                try
+                {
+                    // First, try to get from companies.stripe_settings_id
+                    var company = await _context.Companies
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(c => c.Id == companyId.Value);
+
+                    Guid? settingsId = null;
+                    if (company?.StripeSettingsId.HasValue == true)
+                    {
+                        settingsId = company.StripeSettingsId;
+                        _logger.LogInformation("[Stripe] Found StripeSettingsId={SettingsId} directly on company {CompanyId}", 
+                            settingsId, companyId);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("[Stripe] Company {CompanyId} does not have StripeSettingsId, checking stripe_company table", companyId);
+                        // Fallback: try stripe_company table
+                        var stripeCompany = await _context.StripeCompanies
+                            .AsNoTracking()
+                            .Include(sc => sc.Settings)
+                            .FirstOrDefaultAsync(sc => sc.CompanyId == companyId.Value);
+
+                        if (stripeCompany?.Settings != null)
+                        {
+                            settingsId = stripeCompany.Settings.Id;
+                            _logger.LogInformation("[Stripe] Found StripeSettingsId={SettingsId} via stripe_company table for company {CompanyId}", 
+                                settingsId, companyId);
+                        }
+                        else
+                        {
+                            _logger.LogInformation("[Stripe] No StripeSettingsId found in stripe_company table for company {CompanyId}, will use global settings", companyId);
+                        }
+                    }
+
+                    if (settingsId.HasValue)
+                    {
+                        var stripeSettings = await _context.StripeSettings
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(ss => ss.Id == settingsId.Value);
+
+                    if (stripeSettings != null)
+                    {
+                        // Decrypt keys from database before using with Stripe API
+                        // Keys are stored encrypted in DB, must be decrypted to plain text for Stripe
+                        secretKey = DecryptKey(stripeSettings.SecretKey);
+                        publishableKey = DecryptKey(stripeSettings.PublishableKey);
+                        webhookSecret = DecryptKey(stripeSettings.WebhookSecret);
+                        _logger.LogInformation("[Stripe] Using company-specific settings from stripe_settings table for company {CompanyId}. SettingsId={SettingsId}, SettingsName={SettingsName}", 
+                            companyId, settingsId, stripeSettings.Name);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[Stripe] StripeSettings not found for settingsId={SettingsId} (company {CompanyId})", settingsId, companyId);
+                    }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[Stripe] Error loading company-specific settings, falling back to global settings");
+                }
+            }
+
+            // Fallback to settings table if not found in new tables
+            // SettingsService.GetValueAsync already decrypts keys automatically
+            if (string.IsNullOrWhiteSpace(secretKey))
+            {
+                secretKey = await _settingsService.GetValueAsync(SecretKeySetting) ?? string.Empty;
+                publishableKey = await _settingsService.GetValueAsync(PublishableKeySetting);
+                webhookSecret = await _settingsService.GetValueAsync(WebhookSecretSetting);
+                
+                if (!string.IsNullOrWhiteSpace(secretKey))
+                {
+                    _logger.LogInformation("[Stripe] Using settings from settings table (fallback) - keys are already decrypted by SettingsService");
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(secretKey))
+            {
+                throw new InvalidOperationException($"Stripe secret key is not configured. Set the '{SecretKeySetting}' setting or configure stripe_settings table.");
+            }
+
+            // secretKey is guaranteed to be non-null at this point due to the check above
+            var nonNullSecretKey = secretKey!;
+
+            // All keys are now decrypted (plain text) and ready to use with Stripe API
+            _logger.LogInformation("[Stripe] Initialized for company {CompanyId}. Using secret key prefix: {SecretKeyPrefix}", 
+                companyId?.ToString() ?? "GLOBAL", 
+                nonNullSecretKey.Substring(0, Math.Min(10, nonNullSecretKey.Length)));
+
+            StripeConfiguration.ApiKey = nonNullSecretKey;
+            
+            if (companyId.HasValue)
+            {
+                // Cache company-specific settings (secretKey is guaranteed non-null here)
+                _companySettingsCache[companyId.Value] = (nonNullSecretKey, publishableKey, webhookSecret);
+                _globalPublishableKey = publishableKey;
+                _globalWebhookSecret = webhookSecret;
+            }
+            else
+            {
+                // Global initialization
+                _globalPublishableKey = publishableKey;
+                _globalWebhookSecret = webhookSecret;
+                _globalInitialized = true;
+            }
+
+            _logger.LogWarning("[Stripe] Publishable key: {Publishable}", publishableKey);
+            _logger.LogWarning("[Stripe] Webhook secret: {WebhookSecret}", webhookSecret);
         }
         finally
         {
@@ -130,7 +287,7 @@ public class StripeService : IStripeService
 
     public async Task<Models.Customer> CreateCustomerAsync(Models.Customer customer)
     {
-        await EnsureInitializedAsync();
+        await EnsureInitializedAsync(customer.CompanyId);
         _logger.LogWarning("[Stripe] CreateCustomerAsync payload: {@Customer}", customer);
         try
         {
@@ -170,7 +327,7 @@ public class StripeService : IStripeService
 
     public async Task<Models.Customer> UpdateCustomerAsync(Models.Customer customer)
     {
-        await EnsureInitializedAsync();
+        await EnsureInitializedAsync(customer.CompanyId);
         _logger.LogWarning("[Stripe] UpdateCustomerAsync payload: {@Customer}", customer);
         try
         {
@@ -287,9 +444,10 @@ public class StripeService : IStripeService
         string? paymentMethodId = null,
         IDictionary<string, string>? metadata = null,
         bool captureImmediately = true,
-        bool requestExtendedAuthorization = false)
+        bool requestExtendedAuthorization = false,
+        Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
+        await EnsureInitializedAsync(companyId);
         _logger.LogWarning("[Stripe] CreatePaymentIntentAsync amount={Amount} currency={Currency} customerId={CustomerId} paymentMethodId={PaymentMethodId} captureImmediately={CaptureImmediately}",
             amount, currency, customerId, paymentMethodId, captureImmediately);
         try
@@ -336,7 +494,16 @@ public class StripeService : IStripeService
                 }
             }
 
-            var paymentIntent = await new PaymentIntentService().CreateAsync(paymentIntentOptions);
+            // Use RequestOptions with company-specific API key if available
+            RequestOptions? requestOptions = null;
+            if (companyId.HasValue && _companySettingsCache.ContainsKey(companyId.Value))
+            {
+                var settings = _companySettingsCache[companyId.Value];
+                requestOptions = new RequestOptions { ApiKey = settings.secretKey };
+            }
+
+            var service = new PaymentIntentService();
+            var paymentIntent = await service.CreateAsync(paymentIntentOptions, requestOptions);
             
             return paymentIntent;
         }
@@ -593,9 +760,10 @@ public class StripeService : IStripeService
         string currency,
         string paymentMethodId,
         string connectedAccountId,
-        Dictionary<string, string> metadata)
+        Dictionary<string, string> metadata,
+        Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
+        await EnsureInitializedAsync(companyId);
         _logger.LogWarning("[Stripe] CreateSecurityDepositAsync customerId={CustomerId} amount={Amount} currency={Currency} connectedAccountId={ConnectedAccountId}", 
             customerId, amount, currency, connectedAccountId);
         try
@@ -615,8 +783,16 @@ public class StripeService : IStripeService
                 }
             };
 
+            // Use RequestOptions with company-specific API key if available
+            RequestOptions? requestOptions = null;
+            if (companyId.HasValue && _companySettingsCache.ContainsKey(companyId.Value))
+            {
+                var settings = _companySettingsCache[companyId.Value];
+                requestOptions = new RequestOptions { ApiKey = settings.secretKey };
+            }
+
             var service = new PaymentIntentService();
-            return await service.CreateAsync(options);
+            return await service.CreateAsync(options, requestOptions);
         }
         catch (StripeException ex)
         {
@@ -670,11 +846,11 @@ public class StripeService : IStripeService
     public async Task<Event> ConstructWebhookEventAsync(string payload, string signature, string webhookSecret)
     {
         await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] ConstructWebhookEventAsync signature={Signature} incomingSecret={IncomingSecret} storedSecret={StoredSecret}", signature, webhookSecret, _webhookSecret);
+        _logger.LogWarning("[Stripe] ConstructWebhookEventAsync signature={Signature} incomingSecret={IncomingSecret} storedSecret={StoredSecret}", signature, webhookSecret, _globalWebhookSecret);
         try
         {
-            var webhookSecretKey = !string.IsNullOrWhiteSpace(_webhookSecret)
-                ? _webhookSecret!
+            var webhookSecretKey = !string.IsNullOrWhiteSpace(_globalWebhookSecret)
+                ? _globalWebhookSecret!
                 : webhookSecret;
 
             if (string.IsNullOrWhiteSpace(webhookSecretKey))
@@ -691,9 +867,17 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null)
+    public async Task<Session> CreateCheckoutSessionAsync(SessionCreateOptions options, RequestOptions? requestOptions = null, Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
+        await EnsureInitializedAsync(companyId);
+        
+        // If companyId is provided, use company-specific API key in RequestOptions
+        if (companyId.HasValue && _companySettingsCache.ContainsKey(companyId.Value))
+        {
+            var settings = _companySettingsCache[companyId.Value];
+            requestOptions ??= new RequestOptions();
+            requestOptions.ApiKey = settings.secretKey;
+        }
         _logger.LogWarning("[Stripe] CreateCheckoutSessionAsync options={Options} requestOptions={RequestOptions}", options, requestOptions);
         try
         {

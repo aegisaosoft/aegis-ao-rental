@@ -49,6 +49,7 @@ public class CreateAccountLinkDto
 
 public class StripeAccountStatusDto
 {
+    public string? StripeAccountId { get; set; }
     public bool ChargesEnabled { get; set; }
 
     public bool PayoutsEnabled { get; set; }

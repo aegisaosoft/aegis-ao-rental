@@ -44,6 +44,9 @@ public class Company
     [Column("stripe_account_id")]
     public string? StripeAccountId { get; set; }
 
+    [Column("stripe_settings_id")]
+    public Guid? StripeSettingsId { get; set; }
+
     [MaxLength(100)]
     [Column("tax_id")]
     public string? TaxId { get; set; }

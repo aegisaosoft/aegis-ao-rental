@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using CarRental.Api.Data;
 using CarRental.Api.Models;
 using CarRental.Api.DTOs.Stripe;
+using System.Linq;
 
 namespace CarRental.Api.Services;
 
@@ -32,6 +33,11 @@ public interface IStripeConnectService
         Guid bookingId, 
         string paymentMethodId, 
         decimal amount);
+    Task<(bool success, string? error)> SuspendAccountAsync(string stripeAccountId, string reason);
+    Task<(bool success, string? error)> ReactivateAccountAsync(string stripeAccountId);
+    Task<(bool success, string? error)> DeleteAccountAsync(string stripeAccountId);
+    Task<List<ConnectedAccountDetailsDto>> GetAllAccountsAsync(int limit);
+    Task<ConnectedAccountDetailsDto?> GetAccountDetailsAsync(string stripeAccountId);
 }
 
 public class StripeConnectService : IStripeConnectService
@@ -186,12 +192,16 @@ public class StripeConnectService : IStripeConnectService
         {
             return new StripeAccountStatusDto
             {
+                StripeAccountId = null,
                 AccountStatus = "not_started"
             };
         }
 
+        var stripeAccountId = _encryptionService.Decrypt(company.StripeAccountId);
+
         return new StripeAccountStatusDto
         {
+            StripeAccountId = stripeAccountId,
             ChargesEnabled = company.StripeChargesEnabled ?? false,
             PayoutsEnabled = company.StripePayoutsEnabled ?? false,
             DetailsSubmitted = company.StripeDetailsSubmitted ?? false,
@@ -392,6 +402,278 @@ public class StripeConnectService : IStripeConnectService
             _logger.LogError(ex, "Error authorizing security deposit for booking {BookingId}", bookingId);
             return (false, null, ex.Message);
         }
+    }
+
+    public async Task<(bool success, string? error)> SuspendAccountAsync(string stripeAccountId, string reason)
+    {
+        try
+        {
+            _logger.LogInformation("Suspending Stripe account {AccountId} for reason: {Reason}", 
+                stripeAccountId, reason);
+
+            var service = new AccountService();
+            
+            // Update account to reject future charges
+            var options = new AccountUpdateOptions
+            {
+                // Stripe не позволяет напрямую "suspend", но можно отключить capabilities
+                Capabilities = new AccountCapabilitiesOptions
+                {
+                    CardPayments = new AccountCapabilitiesCardPaymentsOptions
+                    {
+                        Requested = false // Отключить приём платежей
+                    },
+                    Transfers = new AccountCapabilitiesTransfersOptions
+                    {
+                        Requested = false // Отключить переводы
+                    }
+                }
+            };
+
+            await service.UpdateAsync(stripeAccountId, options);
+
+            // Обновить статус в базе данных
+            var company = await _context.Companies
+                .FirstOrDefaultAsync(c => c.StripeAccountId != null && 
+                    _encryptionService.Decrypt(c.StripeAccountId) == stripeAccountId);
+
+            if (company != null)
+            {
+                company.StripeChargesEnabled = false;
+                company.StripePayoutsEnabled = false;
+                company.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            _logger.LogInformation("Successfully suspended account {AccountId}", stripeAccountId);
+            return (true, null);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error suspending account {AccountId}", stripeAccountId);
+            return (false, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error suspending account {AccountId}", stripeAccountId);
+            return (false, "Failed to suspend account");
+        }
+    }
+
+    public async Task<(bool success, string? error)> ReactivateAccountAsync(string stripeAccountId)
+    {
+        try
+        {
+            _logger.LogInformation("Reactivating Stripe account {AccountId}", stripeAccountId);
+
+            var service = new AccountService();
+            
+            // Включить обратно capabilities
+            var options = new AccountUpdateOptions
+            {
+                Capabilities = new AccountCapabilitiesOptions
+                {
+                    CardPayments = new AccountCapabilitiesCardPaymentsOptions
+                    {
+                        Requested = true
+                    },
+                    Transfers = new AccountCapabilitiesTransfersOptions
+                    {
+                        Requested = true
+                    }
+                }
+            };
+
+            var account = await service.UpdateAsync(stripeAccountId, options);
+
+            // Обновить статус в базе данных
+            var company = await _context.Companies
+                .FirstOrDefaultAsync(c => c.StripeAccountId != null && 
+                    _encryptionService.Decrypt(c.StripeAccountId) == stripeAccountId);
+
+            if (company != null)
+            {
+                company.StripeChargesEnabled = account.ChargesEnabled;
+                company.StripePayoutsEnabled = account.PayoutsEnabled;
+                company.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            _logger.LogInformation("Successfully reactivated account {AccountId}", stripeAccountId);
+            return (true, null);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error reactivating account {AccountId}", stripeAccountId);
+            return (false, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reactivating account {AccountId}", stripeAccountId);
+            return (false, "Failed to reactivate account");
+        }
+    }
+
+    public async Task<(bool success, string? error)> DeleteAccountAsync(string stripeAccountId)
+    {
+        try
+        {
+            _logger.LogInformation("Deleting Stripe account {AccountId}", stripeAccountId);
+
+            // Проверить, что нет активных платежей
+            var company = await _context.Companies
+                .FirstOrDefaultAsync(c => c.StripeAccountId != null && 
+                    _encryptionService.Decrypt(c.StripeAccountId) == stripeAccountId);
+
+            if (company == null)
+            {
+                return (false, "Account not found in database");
+            }
+
+            // Проверить, есть ли bookings с платежами
+            var hasPayments = await _context.Bookings
+                .AnyAsync(b => b.CompanyId == company.Id && 
+                          !string.IsNullOrEmpty(b.StripePaymentIntentId));
+
+            if (hasPayments)
+            {
+                return (false, "Cannot delete account with existing payments. Suspend it instead.");
+            }
+
+            var service = new AccountService();
+            
+            // Удалить account в Stripe
+            await service.DeleteAsync(stripeAccountId);
+
+            // Очистить ссылку в Company
+            company.StripeAccountId = null;
+            company.StripeAccountType = null;
+            company.StripeChargesEnabled = false;
+            company.StripePayoutsEnabled = false;
+            company.StripeDetailsSubmitted = false;
+            company.StripeOnboardingCompleted = false;
+            company.UpdatedAt = DateTime.UtcNow;
+            
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Successfully deleted account {AccountId}", stripeAccountId);
+            return (true, null);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error deleting account {AccountId}", stripeAccountId);
+            return (false, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting account {AccountId}", stripeAccountId);
+            return (false, "Failed to delete account");
+        }
+    }
+
+    public async Task<List<ConnectedAccountDetailsDto>> GetAllAccountsAsync(int limit)
+    {
+        try
+        {
+            var service = new AccountService();
+            var options = new AccountListOptions
+            {
+                Limit = limit
+            };
+
+            var accounts = await service.ListAsync(options);
+
+            return accounts.Data.Select(a => MapToDetailsDto(a)).ToList();
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error getting all accounts");
+            return new List<ConnectedAccountDetailsDto>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all accounts");
+            return new List<ConnectedAccountDetailsDto>();
+        }
+    }
+
+    public async Task<ConnectedAccountDetailsDto?> GetAccountDetailsAsync(string stripeAccountId)
+    {
+        try
+        {
+            var service = new AccountService();
+            var account = await service.GetAsync(stripeAccountId);
+
+            return MapToDetailsDto(account);
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error getting account details {AccountId}", stripeAccountId);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting account details {AccountId}", stripeAccountId);
+            return null;
+        }
+    }
+
+    private ConnectedAccountDetailsDto MapToDetailsDto(Account account)
+    {
+        ExternalAccountDto? externalAccount = null;
+        
+        if (account.ExternalAccounts?.Data?.Any() == true)
+        {
+            var bankAccount = account.ExternalAccounts.Data.FirstOrDefault() as BankAccount;
+            if (bankAccount != null)
+            {
+                externalAccount = new ExternalAccountDto
+                {
+                    BankName = bankAccount.BankName,
+                    Last4 = bankAccount.Last4,
+                    Country = bankAccount.Country,
+                    Currency = bankAccount.Currency
+                };
+            }
+        }
+
+        var capabilities = new Dictionary<string, string>();
+        if (account.Capabilities != null)
+        {
+            // In this Stripe.NET version, capabilities are stored as strings directly
+            if (!string.IsNullOrEmpty(account.Capabilities.CardPayments))
+                capabilities["card_payments"] = account.Capabilities.CardPayments;
+            if (!string.IsNullOrEmpty(account.Capabilities.Transfers))
+                capabilities["transfers"] = account.Capabilities.Transfers;
+            if (!string.IsNullOrEmpty(account.Capabilities.LegacyPayments))
+                capabilities["legacy_payments"] = account.Capabilities.LegacyPayments;
+        }
+
+        // account.Created is already a DateTime in this Stripe.NET version
+        DateTime created = account.Created;
+
+        // account.Requirements.CurrentDeadline is already a DateTime? in this Stripe.NET version
+        DateTime? currentDeadline = account.Requirements?.CurrentDeadline;
+
+        return new ConnectedAccountDetailsDto
+        {
+            Id = account.Id,
+            Type = account.Type ?? "unknown",
+            Email = account.Email,
+            Country = account.Country,
+            ChargesEnabled = account.ChargesEnabled,
+            PayoutsEnabled = account.PayoutsEnabled,
+            DetailsSubmitted = account.DetailsSubmitted,
+            Created = created,
+            BusinessName = account.BusinessProfile?.Name,
+            BusinessType = account.BusinessType,
+            CurrentlyDue = account.Requirements?.CurrentlyDue?.ToList(),
+            EventuallyDue = account.Requirements?.EventuallyDue?.ToList(),
+            CurrentDeadline = currentDeadline,
+            DisabledReason = account.Requirements?.DisabledReason,
+            Capabilities = capabilities,
+            ExternalAccount = externalAccount
+        };
     }
 
     private string DetermineAccountStatus(Company company)

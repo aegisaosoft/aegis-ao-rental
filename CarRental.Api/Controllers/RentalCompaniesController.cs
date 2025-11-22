@@ -127,6 +127,7 @@ public class RentalCompaniesController : ControllerBase
                 Email = c.Email,
                 Website = c.Website,
                 StripeAccountId = null,
+                StripeSettingsId = c.StripeSettingsId,
                 TaxId = c.TaxId,
                 VideoLink = c.VideoLink,
                 BannerLink = c.BannerLink,
@@ -179,6 +180,7 @@ public class RentalCompaniesController : ControllerBase
             Email = company.Email,
             Website = company.Website,
             StripeAccountId = null,
+            StripeSettingsId = company.StripeSettingsId,
             TaxId = company.TaxId,
             VideoLink = company.VideoLink,
             BannerLink = company.BannerLink,
@@ -231,6 +233,7 @@ public class RentalCompaniesController : ControllerBase
             Email = company.Email,
             Website = company.Website,
             StripeAccountId = null,
+            StripeSettingsId = company.StripeSettingsId,
             TaxId = company.TaxId,
             VideoLink = company.VideoLink,
             BannerLink = company.BannerLink,
@@ -416,6 +419,15 @@ public class RentalCompaniesController : ControllerBase
 
         if (updateCompanyDto.TaxId != null)
             company.TaxId = updateCompanyDto.TaxId;
+
+        if (updateCompanyDto.StripeSettingsId.HasValue)
+            company.StripeSettingsId = updateCompanyDto.StripeSettingsId.Value;
+        else if (updateCompanyDto.StripeSettingsId == null && updateCompanyDto.GetType().GetProperty("StripeSettingsId")?.GetValue(updateCompanyDto) == null)
+        {
+            // Explicitly set to null if the property was included in the request with null value
+            // This allows clearing the StripeSettingsId
+            company.StripeSettingsId = null;
+        }
 
         if (updateCompanyDto.VideoLink != null)
             company.VideoLink = updateCompanyDto.VideoLink;

@@ -56,6 +56,62 @@ public class BookingController : ControllerBase
     }
 
     /// <summary>
+    /// Get Stripe secret key for a company from new stripe_settings table, falling back to settings table
+    /// </summary>
+    private async Task<string?> GetStripeSecretKeyAsync(Guid? companyId)
+    {
+        if (companyId.HasValue)
+        {
+            try
+            {
+                // Try to get from companies.stripe_settings_id
+                var company = await _context.Companies
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == companyId.Value);
+
+                Guid? settingsId = null;
+                if (company?.StripeSettingsId.HasValue == true)
+                {
+                    settingsId = company.StripeSettingsId;
+                }
+                else
+                {
+                    // Fallback: try stripe_company table
+                    var stripeCompany = await _context.StripeCompanies
+                        .AsNoTracking()
+                        .Include(sc => sc.Settings)
+                        .FirstOrDefaultAsync(sc => sc.CompanyId == companyId.Value);
+
+                    if (stripeCompany?.Settings != null)
+                    {
+                        settingsId = stripeCompany.Settings.Id;
+                    }
+                }
+
+                if (settingsId.HasValue)
+                {
+                    var stripeSettings = await _context.StripeSettings
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(ss => ss.Id == settingsId.Value);
+
+                    if (!string.IsNullOrWhiteSpace(stripeSettings?.SecretKey))
+                    {
+                        _logger.LogInformation("[Stripe] Using company-specific secret key from stripe_settings table for company {CompanyId}", companyId);
+                        return stripeSettings.SecretKey;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Stripe] Error loading company-specific settings, falling back to global settings");
+            }
+        }
+
+        // Fallback to settings table
+        return await _settingsService.GetValueAsync("stripe.secretKey");
+    }
+
+    /// <summary>
     /// Create a booking token and send booking link to customer
     /// </summary>
     [HttpPost("create-token")]
@@ -455,7 +511,8 @@ public class BookingController : ControllerBase
                 bookingData.TotalAmount,
                 currency,
                 customer.StripeCustomerId ?? "",
-                processDto.PaymentMethodId);
+                processDto.PaymentMethodId,
+                companyId: bookingToken.CompanyId);
 
             // Confirm payment
             var confirmedPayment = await _stripeService.ConfirmPaymentIntentAsync(paymentIntent.Id);
@@ -1394,8 +1451,8 @@ public class BookingController : ControllerBase
                 
                 try
                 {
-                    // Get Stripe API key from settings
-                    var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+                    // Get Stripe API key from new tables or settings fallback
+                    var stripeSecretKey = await GetStripeSecretKeyAsync(reservation.CompanyId);
                     if (string.IsNullOrEmpty(stripeSecretKey))
                     {
                         _logger.LogError("Stripe secret key not configured in database settings");
@@ -1728,7 +1785,8 @@ public class BookingController : ControllerBase
                                         { "payment_type", "security_deposit" },
                                         { "booking_number", reservation.BookingNumber }
                                     },
-                                    captureImmediately: true);
+                                    captureImmediately: true,
+                                    companyId: reservation.CompanyId);
 
                                 // Confirm the payment intent
                                 var confirmedIntent = await _stripeService.ConfirmPaymentIntentAsync(securityDepositIntent.Id);
@@ -2530,8 +2588,9 @@ public class BookingController : ControllerBase
         
         try
         {
-            // Configure Stripe API key from database
-            var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+            // Configure Stripe API key from new tables or settings fallback
+            // Note: For bulk operations, we use the first booking's company ID or fallback to global settings
+            var stripeSecretKey = await GetStripeSecretKeyAsync(null);
             if (string.IsNullOrEmpty(stripeSecretKey))
             {
                 _logger.LogError("Stripe secret key not configured in database settings");
@@ -2726,8 +2785,8 @@ public class BookingController : ControllerBase
             if (booking == null)
                 return NotFound(new { error = "Booking not found" });
 
-            // Get Stripe API key from settings
-            var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+            // Get Stripe API key from new tables or settings fallback
+            var stripeSecretKey = await GetStripeSecretKeyAsync(booking.CompanyId);
             if (string.IsNullOrEmpty(stripeSecretKey))
             {
                 _logger.LogError("Stripe secret key not configured");
@@ -2823,8 +2882,8 @@ public class BookingController : ControllerBase
             if (booking == null)
                 return NotFound(new { error = "Booking not found" });
 
-            // Get Stripe API key from settings
-            var stripeSecretKey = await _settingsService.GetValueAsync("stripe.secretKey");
+            // Get Stripe API key from new tables or settings fallback
+            var stripeSecretKey = await GetStripeSecretKeyAsync(booking.CompanyId);
             if (string.IsNullOrEmpty(stripeSecretKey))
             {
                 _logger.LogError("Stripe secret key not configured");

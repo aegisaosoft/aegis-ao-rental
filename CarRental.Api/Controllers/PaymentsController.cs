@@ -505,7 +505,7 @@ public class PaymentsController : ControllerBase
                 TransferDestination = sessionOptions.PaymentIntentData?.TransferData?.Destination
             });
 
-            var session = await _stripeService.CreateCheckoutSessionAsync(sessionOptions);
+            var session = await _stripeService.CreateCheckoutSessionAsync(sessionOptions, companyId: company.Id);
 
             _logger.LogInformation("[Stripe] Checkout session created. SessionId={SessionId} Url={Url}", session.Id, session.Url);
 

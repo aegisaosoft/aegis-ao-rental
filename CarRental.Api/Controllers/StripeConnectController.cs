@@ -191,5 +191,119 @@ public class StripeConnectController : ControllerBase
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
+
+    /// <summary>
+    /// Suspend (disable) a connected account
+    /// </summary>
+    [HttpPost("accounts/{stripeAccountId}/suspend")]
+    public async Task<ActionResult> SuspendAccount(string stripeAccountId, [FromBody] SuspendAccountDto dto)
+    {
+        try
+        {
+            var (success, error) = await _stripeConnectService.SuspendAccountAsync(stripeAccountId, dto.Reason);
+
+            if (!success)
+            {
+                return BadRequest(new { error });
+            }
+
+            return Ok(new { message = "Account suspended successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error suspending account {AccountId}", stripeAccountId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Reactivate a suspended connected account
+    /// </summary>
+    [HttpPost("accounts/{stripeAccountId}/reactivate")]
+    public async Task<ActionResult> ReactivateAccount(string stripeAccountId)
+    {
+        try
+        {
+            var (success, error) = await _stripeConnectService.ReactivateAccountAsync(stripeAccountId);
+
+            if (!success)
+            {
+                return BadRequest(new { error });
+            }
+
+            return Ok(new { message = "Account reactivated successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reactivating account {AccountId}", stripeAccountId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Delete a connected account (only if not used)
+    /// </summary>
+    [HttpDelete("accounts/{stripeAccountId}")]
+    public async Task<ActionResult> DeleteAccount(string stripeAccountId)
+    {
+        try
+        {
+            var (success, error) = await _stripeConnectService.DeleteAccountAsync(stripeAccountId);
+
+            if (!success)
+            {
+                return BadRequest(new { error });
+            }
+
+            return Ok(new { message = "Account deleted successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting account {AccountId}", stripeAccountId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Get all connected accounts
+    /// </summary>
+    [HttpGet("accounts")]
+    public async Task<ActionResult> GetAllAccounts([FromQuery] int limit = 20)
+    {
+        try
+        {
+            var accounts = await _stripeConnectService.GetAllAccountsAsync(limit);
+            return Ok(accounts);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting all accounts");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Get detailed account information
+    /// </summary>
+    [HttpGet("accounts/{stripeAccountId}")]
+    public async Task<ActionResult> GetAccountDetails(string stripeAccountId)
+    {
+        try
+        {
+            var account = await _stripeConnectService.GetAccountDetailsAsync(stripeAccountId);
+            
+            if (account == null)
+            {
+                return NotFound(new { error = "Account not found" });
+            }
+
+            return Ok(account);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting account details {AccountId}", stripeAccountId);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
 }
 
