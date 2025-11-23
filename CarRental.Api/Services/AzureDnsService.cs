@@ -23,7 +23,6 @@ using Azure.ResourceManager.KeyVault;
 using Azure.Security.KeyVault.Certificates;
 using Azure.Core;
 using System.Security.Cryptography.X509Certificates;
-using System.Text;
 
 namespace CarRental.Api.Services;
 
@@ -205,15 +204,9 @@ public class AzureDnsService : IAzureDnsService
                 return null;
             }
 
-            // Convert DER-encoded certificate to PEM format for X509CertificateLoader
-            var pemBuilder = new StringBuilder();
-            pemBuilder.AppendLine("-----BEGIN CERTIFICATE-----");
-            pemBuilder.AppendLine(Convert.ToBase64String(certBytes));
-            pemBuilder.AppendLine("-----END CERTIFICATE-----");
-            var pemBytes = Encoding.UTF8.GetBytes(pemBuilder.ToString());
-
             // Load certificate using X509CertificateLoader (replaces obsolete constructor)
-            using var x509Cert = X509CertificateLoader.LoadPemCertificate(pemBytes);
+            // LoadCertificate handles both DER and PEM formats automatically
+            using var x509Cert = X509CertificateLoader.LoadCertificate(certBytes);
             var thumbprint = x509Cert.Thumbprint;
             
             _logger.LogInformation("Certificate thumbprint retrieved: {Thumbprint}", thumbprint);
