@@ -36,19 +36,22 @@ public class RentalCompaniesController : ControllerBase
     private readonly ILogger<RentalCompaniesController> _logger;
     private readonly IEncryptionService _encryptionService;
     private readonly IStripeConnectService _stripeConnectService;
+    private readonly IAzureDnsService? _azureDnsService;
 
     public RentalCompaniesController(
         CarRentalDbContext context, 
         IStripeService stripeService, 
         ILogger<RentalCompaniesController> logger,
         IEncryptionService encryptionService,
-        IStripeConnectService stripeConnectService)
+        IStripeConnectService stripeConnectService,
+        IAzureDnsService? azureDnsService = null)
     {
         _context = context;
         _stripeService = stripeService;
         _logger = logger;
         _encryptionService = encryptionService;
         _stripeConnectService = stripeConnectService;
+        _azureDnsService = azureDnsService;
     }
 
     private async Task<string?> ResolveStripeAccountIdAsync(Company company)
@@ -280,6 +283,60 @@ public class RentalCompaniesController : ControllerBase
         if (existingCompany != null)
             return Conflict("Company with this email already exists");
 
+        // Validate subdomain if provided
+        string? subdomain = null;
+        if (!string.IsNullOrWhiteSpace(createCompanyDto.Subdomain))
+        {
+            // Normalize subdomain: lowercase and trim
+            subdomain = createCompanyDto.Subdomain.ToLower().Trim();
+            
+            // Validate subdomain format (alphanumeric and hyphens only, no spaces)
+            if (!System.Text.RegularExpressions.Regex.IsMatch(subdomain, @"^[a-z0-9-]+$"))
+            {
+                return BadRequest("Subdomain can only contain lowercase letters, numbers, and hyphens");
+            }
+            
+            // Check if subdomain already exists in database
+            var existingSubdomain = await _context.Companies
+                .FirstOrDefaultAsync(c => c.Subdomain != null && c.Subdomain.ToLower() == subdomain);
+
+            if (existingSubdomain != null)
+            {
+                return Conflict($"Subdomain '{subdomain}' already exists in database");
+            }
+            
+            // Check if subdomain already exists in Azure DNS (required check - must pass)
+            if (_azureDnsService != null)
+            {
+                try
+                {
+                    var existsInAzure = await _azureDnsService.SubdomainExistsAsync(subdomain);
+                    if (existsInAzure)
+                    {
+                        return Conflict($"Subdomain '{subdomain}' already exists in Azure DNS");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error checking Azure DNS for subdomain availability: {Subdomain}", subdomain);
+                    return StatusCode(500, $"Error checking subdomain availability in Azure DNS: {ex.Message}. " +
+                        "Please ensure Azure DNS is properly configured and accessible.");
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Azure DNS service is not available. Cannot verify subdomain '{Subdomain}' in Azure DNS.", subdomain);
+                return StatusCode(503, "Azure DNS service is not configured. Cannot verify subdomain availability.");
+            }
+        }
+
+        // Resolve StripeSettingsId based on IsTestCompany flag and country code
+        var stripeSettingsId = await ResolveStripeSettingsIdAsync(
+            createCompanyDto.IsTestCompany ?? true,
+            string.IsNullOrWhiteSpace(createCompanyDto.Country) 
+                ? null 
+                : CountryHelper.NormalizeToIsoCode(createCompanyDto.Country));
+
         var company = new Company
         {
             CompanyName = createCompanyDto.CompanyName,
@@ -297,7 +354,7 @@ public class RentalCompaniesController : ControllerBase
             About = createCompanyDto.About,
             BookingIntegrated = createCompanyDto.BookingIntegrated ? "true" : "false",
             CompanyPath = createCompanyDto.CompanyPath,
-            Subdomain = createCompanyDto.Subdomain,
+            Subdomain = subdomain, // Use validated and normalized subdomain
             PrimaryColor = createCompanyDto.PrimaryColor,
             SecondaryColor = createCompanyDto.SecondaryColor,
             LogoUrl = createCompanyDto.LogoUrl,
@@ -310,6 +367,7 @@ public class RentalCompaniesController : ControllerBase
             SecurityDeposit = createCompanyDto.SecurityDeposit ?? 1000m,
             IsSecurityDepositMandatory = createCompanyDto.IsSecurityDepositMandatory ?? true,
             IsTestCompany = createCompanyDto.IsTestCompany ?? true,
+            StripeSettingsId = stripeSettingsId,
             IsActive = true
         };
 
@@ -334,6 +392,32 @@ public class RentalCompaniesController : ControllerBase
             {
                 _logger.LogWarning(ex, "Failed to create Stripe Connect account for company {Email}", company.Email);
                 // Continue without Stripe account for now
+            }
+
+            // Create Azure DNS subdomain if subdomain is provided
+            if (!string.IsNullOrWhiteSpace(company.Subdomain) && _azureDnsService != null)
+            {
+                try
+                {
+                    var dnsCreated = await _azureDnsService.CreateSubdomainAsync(company.Subdomain);
+                    if (dnsCreated)
+                    {
+                        _logger.LogInformation("Azure DNS subdomain created: {Subdomain} for company {CompanyId}", 
+                            company.Subdomain, company.Id);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to create Azure DNS subdomain: {Subdomain} for company {CompanyId}. " +
+                            "Subdomain may already exist in Azure DNS.", company.Subdomain, company.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error creating Azure DNS subdomain: {Subdomain} for company {CompanyId}. " +
+                        "Company was created successfully, but DNS record creation failed.", 
+                        company.Subdomain, company.Id);
+                    // Don't fail company creation if DNS creation fails
+                }
             }
 
             var companyDto = new RentalCompanyDto
@@ -408,6 +492,7 @@ public class RentalCompaniesController : ControllerBase
 
         var originalCountry = company.Country;
         var countryUpdated = false;
+        var originalSubdomain = company.Subdomain;
 
         // Update fields
         if (!string.IsNullOrEmpty(updateCompanyDto.CompanyName))
@@ -422,8 +507,27 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.TaxId != null)
             company.TaxId = updateCompanyDto.TaxId;
 
-        if (updateCompanyDto.StripeSettingsId.HasValue)
+        // Resolve StripeSettingsId if IsTestCompany or Country changed
+        var isTestCompanyChanged = updateCompanyDto.IsTestCompany.HasValue && updateCompanyDto.IsTestCompany.Value != company.IsTestCompany;
+        var countryChanged = !string.IsNullOrWhiteSpace(updateCompanyDto.Country) && 
+            CountryHelper.NormalizeToIsoCode(updateCompanyDto.Country) != company.Country;
+        
+        if (isTestCompanyChanged || countryChanged)
+        {
+            var newStripeSettingsId = await ResolveStripeSettingsIdAsync(
+                updateCompanyDto.IsTestCompany ?? company.IsTestCompany,
+                !string.IsNullOrWhiteSpace(updateCompanyDto.Country) 
+                    ? CountryHelper.NormalizeToIsoCode(updateCompanyDto.Country) 
+                    : company.Country);
+            company.StripeSettingsId = newStripeSettingsId;
+            _logger.LogInformation("Resolved StripeSettingsId: {StripeSettingsId} for company {CompanyId} (IsTestCompany: {IsTestCompany}, Country: {Country})",
+                newStripeSettingsId, id, updateCompanyDto.IsTestCompany ?? company.IsTestCompany, 
+                !string.IsNullOrWhiteSpace(updateCompanyDto.Country) ? CountryHelper.NormalizeToIsoCode(updateCompanyDto.Country) : company.Country);
+        }
+        else if (updateCompanyDto.StripeSettingsId.HasValue)
+        {
             company.StripeSettingsId = updateCompanyDto.StripeSettingsId.Value;
+        }
         else if (updateCompanyDto.StripeSettingsId == null && updateCompanyDto.GetType().GetProperty("StripeSettingsId")?.GetValue(updateCompanyDto) == null)
         {
             // Explicitly set to null if the property was included in the request with null value
@@ -467,8 +571,114 @@ public class RentalCompaniesController : ControllerBase
         if (updateCompanyDto.CompanyPath != null)
             company.CompanyPath = updateCompanyDto.CompanyPath;
 
+        // Handle subdomain changes and Azure DNS updates
         if (updateCompanyDto.Subdomain != null)
-            company.Subdomain = updateCompanyDto.Subdomain;
+        {
+            string? newSubdomain = string.IsNullOrWhiteSpace(updateCompanyDto.Subdomain) 
+                ? null 
+                : updateCompanyDto.Subdomain.ToLower().Trim();
+            
+            // Validate subdomain format if provided
+            if (!string.IsNullOrWhiteSpace(newSubdomain))
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(newSubdomain, @"^[a-z0-9-]+$"))
+                {
+                    return BadRequest("Subdomain can only contain lowercase letters, numbers, and hyphens");
+                }
+                
+                // Check if subdomain already exists in database (excluding current company)
+                var existingSubdomain = await _context.Companies
+                    .FirstOrDefaultAsync(c => c.Subdomain != null && c.Subdomain.ToLower() == newSubdomain && c.Id != id);
+                
+                if (existingSubdomain != null)
+                {
+                    return Conflict($"Subdomain '{newSubdomain}' already exists in database");
+                }
+                
+                // Check if subdomain already exists in Azure DNS (required check - must pass)
+                if (_azureDnsService != null)
+                {
+                    try
+                    {
+                        var existsInAzure = await _azureDnsService.SubdomainExistsAsync(newSubdomain);
+                        if (existsInAzure)
+                        {
+                            return Conflict($"Subdomain '{newSubdomain}' already exists in Azure DNS");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error checking Azure DNS for subdomain availability: {Subdomain}", newSubdomain);
+                        return StatusCode(500, $"Error checking subdomain availability in Azure DNS: {ex.Message}. " +
+                            "Please ensure Azure DNS is properly configured and accessible.");
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Azure DNS service is not available. Cannot verify subdomain '{Subdomain}' in Azure DNS.", newSubdomain);
+                    return StatusCode(503, "Azure DNS service is not configured. Cannot verify subdomain availability.");
+                }
+            }
+            
+            if (newSubdomain != company.Subdomain)
+            {
+                // If subdomain is being changed and Azure DNS service is available
+                if (_azureDnsService != null)
+                {
+                    try
+                    {
+                        // Delete old DNS record if it exists
+                        if (!string.IsNullOrWhiteSpace(originalSubdomain))
+                        {
+                            try
+                            {
+                                await _azureDnsService.DeleteSubdomainAsync(originalSubdomain);
+                                _logger.LogInformation("Deleted old Azure DNS subdomain: {OldSubdomain} for company {CompanyId}", 
+                                    originalSubdomain, id);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to delete old Azure DNS subdomain: {OldSubdomain} for company {CompanyId}", 
+                                    originalSubdomain, id);
+                            }
+                        }
+                        
+                        // Create new DNS record if new subdomain is provided
+                        if (!string.IsNullOrWhiteSpace(newSubdomain))
+                        {
+                            var dnsCreated = await _azureDnsService.CreateSubdomainAsync(newSubdomain);
+                            if (dnsCreated)
+                            {
+                                _logger.LogInformation("Created new Azure DNS subdomain: {NewSubdomain} for company {CompanyId}", 
+                                    newSubdomain, id);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Failed to create Azure DNS subdomain: {NewSubdomain} for company {CompanyId}. " +
+                                    "Subdomain may already exist in Azure DNS.", newSubdomain, id);
+                                return StatusCode(500, $"Failed to create Azure DNS subdomain: '{newSubdomain}'. " +
+                                    "Subdomain may already exist in Azure DNS.");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error updating Azure DNS subdomain for company {CompanyId}. " +
+                            "Old: {OldSubdomain}, New: {NewSubdomain}", 
+                            id, originalSubdomain, newSubdomain);
+                        return StatusCode(500, $"Error updating subdomain in Azure DNS: {ex.Message}. " +
+                            "Please ensure Azure DNS is properly configured and accessible.");
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Azure DNS service is not available. Cannot update subdomain '{Subdomain}' in Azure DNS.", newSubdomain);
+                    return StatusCode(503, "Azure DNS service is not configured. Cannot update subdomain in Azure DNS.");
+                }
+                
+                company.Subdomain = newSubdomain;
+            }
+        }
 
         if (updateCompanyDto.PrimaryColor != null)
             company.PrimaryColor = updateCompanyDto.PrimaryColor;
@@ -1258,5 +1468,67 @@ public class RentalCompaniesController : ControllerBase
                 completed = bookings.Count(b => b.Status == BookingStatus.Returned)
             }
         });
+    }
+
+    /// <summary>
+    /// Resolves StripeSettingsId based on IsTestCompany flag and country code
+    /// Priority: 1. Test settings if IsTestCompany is true, 2. Country-specific settings, 3. US settings as fallback
+    /// </summary>
+    private async Task<Guid?> ResolveStripeSettingsIdAsync(bool isTestCompany, string? countryCode)
+    {
+        try
+        {
+            // If test company, look for "test" settings
+            if (isTestCompany)
+            {
+                var testSettings = await _context.StripeSettings
+                    .FirstOrDefaultAsync(s => s.Name.Equals("test", StringComparison.OrdinalIgnoreCase));
+                
+                if (testSettings != null)
+                {
+                    _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) for test company", 
+                        testSettings.Id, testSettings.Name);
+                    return testSettings.Id;
+                }
+                
+                _logger.LogWarning("Test Stripe settings not found. Falling back to country-based settings.");
+            }
+
+            // Look for country-specific settings
+            if (!string.IsNullOrWhiteSpace(countryCode))
+            {
+                var countrySettings = await _context.StripeSettings
+                    .FirstOrDefaultAsync(s => s.Name.Equals(countryCode, StringComparison.OrdinalIgnoreCase));
+                
+                if (countrySettings != null)
+                {
+                    _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) for country: {Country}", 
+                        countrySettings.Id, countrySettings.Name, countryCode);
+                    return countrySettings.Id;
+                }
+                
+                _logger.LogWarning("Stripe settings for country '{Country}' not found. Falling back to US settings.", countryCode);
+            }
+
+            // Fallback to US settings
+            var usSettings = await _context.StripeSettings
+                .FirstOrDefaultAsync(s => s.Name.Equals("US", StringComparison.OrdinalIgnoreCase));
+            
+            if (usSettings != null)
+            {
+                _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) as fallback US settings", 
+                    usSettings.Id, usSettings.Name);
+                return usSettings.Id;
+            }
+
+            _logger.LogWarning("US Stripe settings not found. No StripeSettingsId will be assigned.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resolving StripeSettingsId for IsTestCompany: {IsTestCompany}, Country: {Country}", 
+                isTestCompany, countryCode);
+            return null;
+        }
     }
 }

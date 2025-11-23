@@ -187,6 +187,9 @@ builder.Services.AddSingleton<IEncryptionService, EncryptionService>();
 // Add Settings Service
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 
+// Add Azure DNS Service
+builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
+
 // Add Translation Service
 builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
 

@@ -42,6 +42,7 @@ public class CompaniesController : ControllerBase
     private readonly ICompanyService _companyService;
     private readonly IWebHostEnvironment _environment;
     private readonly IEncryptionService _encryptionService;
+    private readonly IAzureDnsService? _azureDnsService;
     private static readonly string[] SupportedLanguages = new[] { "en", "es", "pt", "fr", "de" };
     private static readonly HashSet<string> AllowedAiIntegrations = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -56,13 +57,15 @@ public class CompaniesController : ControllerBase
         ILogger<CompaniesController> logger,
         ICompanyService companyService,
         IWebHostEnvironment environment,
-        IEncryptionService encryptionService)
+        IEncryptionService encryptionService,
+        IAzureDnsService? azureDnsService = null)
     {
         _context = context;
         _logger = logger;
         _companyService = companyService;
         _environment = environment;
         _encryptionService = encryptionService;
+        _azureDnsService = azureDnsService;
     }
 
     /// <summary>
@@ -226,13 +229,37 @@ public class CompaniesController : ControllerBase
                     return BadRequest(new { error = "Subdomain can only contain lowercase letters, numbers, and hyphens" });
                 }
                 
-                // Check if subdomain already exists
+                // Check if subdomain already exists in database
                 var existingSubdomain = await _context.Companies
                     .FirstOrDefaultAsync(c => c.Subdomain != null && c.Subdomain.ToLower() == subdomain);
 
                 if (existingSubdomain != null)
                 {
-                    return Conflict(new { error = $"Subdomain '{subdomain}' already exists" });
+                    return Conflict(new { error = $"Subdomain '{subdomain}' already exists in database" });
+                }
+                
+                // Check if subdomain already exists in Azure DNS (required check - must pass)
+                if (_azureDnsService != null)
+                {
+                    try
+                    {
+                        var existsInAzure = await _azureDnsService.SubdomainExistsAsync(subdomain);
+                        if (existsInAzure)
+                        {
+                            return Conflict(new { error = $"Subdomain '{subdomain}' already exists in Azure DNS" });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error checking Azure DNS for subdomain availability: {Subdomain}", subdomain);
+                        return StatusCode(500, new { error = $"Error checking subdomain availability in Azure DNS: {ex.Message}. " +
+                            "Please ensure Azure DNS is properly configured and accessible." });
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Azure DNS service is not available. Cannot verify subdomain '{Subdomain}' in Azure DNS.", subdomain);
+                    return StatusCode(503, new { error = "Azure DNS service is not configured. Cannot verify subdomain availability." });
                 }
             }
 
@@ -244,6 +271,13 @@ public class CompaniesController : ControllerBase
             {
                 return Conflict(new { error = "Email already exists" });
             }
+
+            // Resolve StripeSettingsId based on IsTestCompany flag and country code
+            var stripeSettingsId = await ResolveStripeSettingsIdAsync(
+                request.IsTestCompany ?? false, 
+                string.IsNullOrWhiteSpace(request.Country) 
+                    ? null 
+                    : CountryHelper.NormalizeToIsoCode(request.Country));
 
             var company = new Company
             {
@@ -270,6 +304,7 @@ public class CompaniesController : ControllerBase
                 Invitation = request.Invitation,
                 BookingIntegrated = request.BookingIntegrated.HasValue && request.BookingIntegrated.Value ? "true" : null,
                 TaxId = request.TaxId,
+                StripeSettingsId = stripeSettingsId,
                 StripeAccountId = string.IsNullOrWhiteSpace(request.StripeAccountId)
                     ? null
                     : _encryptionService.Encrypt(request.StripeAccountId),
@@ -278,6 +313,7 @@ public class CompaniesController : ControllerBase
                 Currency = CurrencyHelper.ResolveCurrency(request.Currency, request.Country),
                 SecurityDeposit = request.SecurityDeposit ?? 1000m,
                 IsActive = request.IsActive ?? true,
+                IsTestCompany = request.IsTestCompany ?? false,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -296,6 +332,32 @@ public class CompaniesController : ControllerBase
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Company created: {CompanyName} (ID: {CompanyId})", company.CompanyName, company.Id);
+
+            // Create Azure DNS subdomain if subdomain is provided
+            if (!string.IsNullOrWhiteSpace(company.Subdomain) && _azureDnsService != null)
+            {
+                try
+                {
+                    var dnsCreated = await _azureDnsService.CreateSubdomainAsync(company.Subdomain);
+                    if (dnsCreated)
+                    {
+                        _logger.LogInformation("Azure DNS subdomain created: {Subdomain} for company {CompanyId}", 
+                            company.Subdomain, company.Id);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to create Azure DNS subdomain: {Subdomain} for company {CompanyId}. " +
+                            "Subdomain may already exist in Azure DNS.", company.Subdomain, company.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error creating Azure DNS subdomain: {Subdomain} for company {CompanyId}. " +
+                        "Company was created successfully, but DNS record creation failed.", 
+                        company.Subdomain, company.Id);
+                    // Don't fail company creation if DNS creation fails
+                }
+            }
 
             var result = new
             {
@@ -412,6 +474,101 @@ public class CompaniesController : ControllerBase
 
             var originalCountry = company.Country;
             var countryUpdated = false;
+            var originalSubdomain = company.Subdomain;
+
+            // Handle subdomain changes and Azure DNS updates
+            if (request.Subdomain != null)
+            {
+                string? newSubdomain = string.IsNullOrWhiteSpace(request.Subdomain) ? null : request.Subdomain.ToLower().Trim();
+                
+                // Validate subdomain format if provided
+                if (!string.IsNullOrWhiteSpace(newSubdomain))
+                {
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(newSubdomain, @"^[a-z0-9-]+$"))
+                    {
+                        return BadRequest(new { error = "Subdomain can only contain lowercase letters, numbers, and hyphens" });
+                    }
+                }
+                
+                if (newSubdomain != company.Subdomain)
+                {
+                    // Check if new subdomain already exists in database (excluding current company)
+                    if (!string.IsNullOrWhiteSpace(newSubdomain))
+                    {
+                        var existingSubdomain = await _context.Companies
+                            .FirstOrDefaultAsync(c => c.Subdomain != null && c.Subdomain.ToLower() == newSubdomain && c.Id != id);
+
+                        if (existingSubdomain != null)
+                        {
+                            return Conflict(new { error = $"Subdomain '{newSubdomain}' already exists in database" });
+                        }
+                    }
+                    
+                    // If subdomain is being changed and Azure DNS service is available
+                    if (_azureDnsService != null)
+                    {
+                        try
+                        {
+                            // Check if new subdomain already exists in Azure DNS (required check - must pass)
+                            if (!string.IsNullOrWhiteSpace(newSubdomain))
+                            {
+                                var existsInAzure = await _azureDnsService.SubdomainExistsAsync(newSubdomain);
+                                if (existsInAzure)
+                                {
+                                    return Conflict(new { error = $"Subdomain '{newSubdomain}' already exists in Azure DNS" });
+                                }
+                            }
+                            
+                            // Delete old DNS record if it exists
+                            if (!string.IsNullOrWhiteSpace(originalSubdomain))
+                            {
+                                try
+                                {
+                                    await _azureDnsService.DeleteSubdomainAsync(originalSubdomain);
+                                    _logger.LogInformation("Deleted old Azure DNS subdomain: {OldSubdomain} for company {CompanyId}", 
+                                        originalSubdomain, id);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to delete old Azure DNS subdomain: {OldSubdomain} for company {CompanyId}", 
+                                        originalSubdomain, id);
+                                }
+                            }
+                            
+                            // Create new DNS record if new subdomain is provided
+                            if (!string.IsNullOrWhiteSpace(newSubdomain))
+                            {
+                                var dnsCreated = await _azureDnsService.CreateSubdomainAsync(newSubdomain);
+                                if (dnsCreated)
+                                {
+                                    _logger.LogInformation("Created new Azure DNS subdomain: {NewSubdomain} for company {CompanyId}", 
+                                        newSubdomain, id);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("Failed to create Azure DNS subdomain: {NewSubdomain} for company {CompanyId}. " +
+                                        "Subdomain may already exist in Azure DNS.", newSubdomain, id);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error updating Azure DNS subdomain for company {CompanyId}. " +
+                                "Old: {OldSubdomain}, New: {NewSubdomain}", 
+                                id, originalSubdomain, newSubdomain);
+                            return StatusCode(500, new { error = $"Error updating subdomain in Azure DNS: {ex.Message}. " +
+                                "Please ensure Azure DNS is properly configured and accessible." });
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Azure DNS service is not available. Cannot verify subdomain '{Subdomain}' in Azure DNS.", newSubdomain);
+                        return StatusCode(503, new { error = "Azure DNS service is not configured. Cannot verify subdomain availability." });
+                    }
+                    
+                    company.Subdomain = newSubdomain;
+                }
+            }
 
             if (request.Country != null)
             {
@@ -464,8 +621,27 @@ public class CompaniesController : ControllerBase
             if (request.TaxId != null)
                 company.TaxId = request.TaxId;
 
-            if (request.StripeSettingsId.HasValue)
+            // Resolve StripeSettingsId if IsTestCompany or Country changed
+            var isTestCompanyChanged = request.IsTestCompany.HasValue && request.IsTestCompany.Value != company.IsTestCompany;
+            var countryChanged = !string.IsNullOrWhiteSpace(request.Country) && 
+                CountryHelper.NormalizeToIsoCode(request.Country) != company.Country;
+            
+            if (isTestCompanyChanged || countryChanged)
+            {
+                var newStripeSettingsId = await ResolveStripeSettingsIdAsync(
+                    request.IsTestCompany ?? company.IsTestCompany,
+                    !string.IsNullOrWhiteSpace(request.Country) 
+                        ? CountryHelper.NormalizeToIsoCode(request.Country) 
+                        : company.Country);
+                company.StripeSettingsId = newStripeSettingsId;
+                _logger.LogInformation("Resolved StripeSettingsId: {StripeSettingsId} for company {CompanyId} (IsTestCompany: {IsTestCompany}, Country: {Country})",
+                    newStripeSettingsId, id, request.IsTestCompany ?? company.IsTestCompany, 
+                    !string.IsNullOrWhiteSpace(request.Country) ? CountryHelper.NormalizeToIsoCode(request.Country) : company.Country);
+            }
+            else if (request.StripeSettingsId.HasValue)
+            {
                 company.StripeSettingsId = request.StripeSettingsId.Value;
+            }
             else if (request.StripeSettingsId == null && request.GetType().GetProperty("StripeSettingsId")?.GetValue(request) == null)
             {
                 // Explicitly set to null if the property was included in the request with null value
@@ -499,6 +675,9 @@ public class CompaniesController : ControllerBase
 
             if (request.IsActive.HasValue)
                 company.IsActive = request.IsActive.Value;
+
+            if (request.IsTestCompany.HasValue)
+                company.IsTestCompany = request.IsTestCompany.Value;
 
             company.UpdatedAt = DateTime.UtcNow;
 
@@ -1602,6 +1781,68 @@ public class CompaniesController : ControllerBase
         var normalized = value.Trim().ToLowerInvariant();
         return AllowedAiIntegrations.Contains(normalized) ? normalized : DefaultAiIntegration;
     }
+
+    /// <summary>
+    /// Resolves StripeSettingsId based on IsTestCompany flag and country code
+    /// Priority: 1. Test settings if IsTestCompany is true, 2. Country-specific settings, 3. US settings as fallback
+    /// </summary>
+    private async Task<Guid?> ResolveStripeSettingsIdAsync(bool isTestCompany, string? countryCode)
+    {
+        try
+        {
+            // If test company, look for "test" settings
+            if (isTestCompany)
+            {
+                var testSettings = await _context.StripeSettings
+                    .FirstOrDefaultAsync(s => s.Name.Equals("test", StringComparison.OrdinalIgnoreCase));
+                
+                if (testSettings != null)
+                {
+                    _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) for test company", 
+                        testSettings.Id, testSettings.Name);
+                    return testSettings.Id;
+                }
+                
+                _logger.LogWarning("Test Stripe settings not found. Falling back to country-based settings.");
+            }
+
+            // Look for country-specific settings
+            if (!string.IsNullOrWhiteSpace(countryCode))
+            {
+                var countrySettings = await _context.StripeSettings
+                    .FirstOrDefaultAsync(s => s.Name.Equals(countryCode, StringComparison.OrdinalIgnoreCase));
+                
+                if (countrySettings != null)
+                {
+                    _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) for country: {Country}", 
+                        countrySettings.Id, countrySettings.Name, countryCode);
+                    return countrySettings.Id;
+                }
+                
+                _logger.LogWarning("Stripe settings for country '{Country}' not found. Falling back to US settings.", countryCode);
+            }
+
+            // Fallback to US settings
+            var usSettings = await _context.StripeSettings
+                .FirstOrDefaultAsync(s => s.Name.Equals("US", StringComparison.OrdinalIgnoreCase));
+            
+            if (usSettings != null)
+            {
+                _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) as fallback US settings", 
+                    usSettings.Id, usSettings.Name);
+                return usSettings.Id;
+            }
+
+            _logger.LogWarning("US Stripe settings not found. No StripeSettingsId will be assigned.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resolving StripeSettingsId for IsTestCompany: {IsTestCompany}, Country: {Country}", 
+                isTestCompany, countryCode);
+            return null;
+        }
+    }
 }
 
 public class CreateCompanyRequest
@@ -1631,6 +1872,7 @@ public class CreateCompanyRequest
     public string? StripeAccountId { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
+    public bool? IsTestCompany { get; set; }
     public string? AiIntegration { get; set; }
     public decimal? SecurityDeposit { get; set; }
     public string? TermsOfUse { get; set; }
@@ -1661,6 +1903,7 @@ public class UpdateCompanyRequest
     public bool? BookingIntegrated { get; set; }
     public string? TaxId { get; set; }
     public Guid? StripeSettingsId { get; set; }
+    public bool? IsTestCompany { get; set; }
     public string? StripeAccountId { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
