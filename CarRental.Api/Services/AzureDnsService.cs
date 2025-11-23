@@ -96,13 +96,19 @@ public class AzureDnsService : IAzureDnsService
         var dnsZoneId = new ResourceIdentifier(
             $"/subscriptions/{_subscriptionId}/resourceGroups/{_resourceGroup}/providers/Microsoft.Network/dnsZones/{zoneName}"
         );
-        _dnsZone = armClient.GetDnsZoneResource(dnsZoneId);
+        var dnsZoneResource = armClient.GetDnsZoneResource(dnsZoneId);
+        // Load DNS Zone data
+        var dnsZoneResponse = Task.Run(async () => await dnsZoneResource.GetAsync()).Result;
+        _dnsZone = dnsZoneResponse.Value;
 
         // Get App Service
         var appServiceId = new ResourceIdentifier(
             $"/subscriptions/{_subscriptionId}/resourceGroups/{_resourceGroup}/providers/Microsoft.Web/sites/{_appServiceName}"
         );
-        _appService = armClient.GetWebSiteResource(appServiceId);
+        var appServiceResource = armClient.GetWebSiteResource(appServiceId);
+        // Load App Service data
+        var appServiceResponse = Task.Run(async () => await appServiceResource.GetAsync()).Result;
+        _appService = appServiceResponse.Value;
 
         _logger.LogInformation(
             "AzureDnsService initialized - Zone: {Zone}, App: {App}, KeyVault: {Vault}, Cert: {Cert}",
@@ -140,10 +146,16 @@ public class AzureDnsService : IAzureDnsService
             await Task.Delay(30000);
 
             // Step 3: Create CNAME record
-            if (!await CreateSubdomainAsync(subdomain))
+            _logger.LogInformation("Creating CNAME record for subdomain: {Subdomain}", subdomain);
+            var cnameCreated = await CreateSubdomainAsync(subdomain);
+            if (!cnameCreated)
             {
-                _logger.LogError("Failed to create CNAME record");
-                return false;
+                _logger.LogError("Failed to create CNAME record for subdomain: {Subdomain}. Continuing anyway...", subdomain);
+                // Don't return false - continue to try adding domain and SSL
+            }
+            else
+            {
+                _logger.LogInformation("CNAME record created successfully for subdomain: {Subdomain}", subdomain);
             }
 
             _logger.LogInformation("Waiting 30 seconds for CNAME propagation...");
@@ -230,6 +242,9 @@ public class AzureDnsService : IAzureDnsService
             
             _logger.LogInformation("Enabling SSL for domain: {Domain}", fullDomain);
 
+            // Wait a bit for the domain to be fully registered in App Service
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            
             // Get certificate thumbprint from Key Vault
             var thumbprint = await GetCertificateThumbprintAsync();
             if (string.IsNullOrEmpty(thumbprint))
@@ -249,7 +264,14 @@ public class AzureDnsService : IAzureDnsService
             }
             else
             {
+                // First, ensure the certificate is imported into App Service from Key Vault
+                _logger.LogInformation("Importing certificate from Key Vault into App Service...");
+                await ImportCertificateFromKeyVaultAsync(thumbprint);
+                
                 // Use Key Vault certificate thumbprint
+                // Note: For Key Vault certificates, App Service must have access to the Key Vault
+                // via managed identity or access policies. The certificate should be imported into
+                // App Service or accessible via Key Vault reference.
                 var hostNameBinding = new HostNameBindingData
                 {
                     SiteName = _appServiceName,
@@ -258,8 +280,37 @@ public class AzureDnsService : IAzureDnsService
                     ThumbprintString = thumbprint
                 };
 
-                await _appService.GetSiteHostNameBindings()
-                    .CreateOrUpdateAsync(Azure.WaitUntil.Completed, fullDomain, hostNameBinding);
+                // Try binding with retry logic
+                int maxRetries = 3;
+                int retryCount = 0;
+                bool success = false;
+                
+                while (retryCount < maxRetries && !success)
+                {
+                    try
+                    {
+                        await _appService.GetSiteHostNameBindings()
+                            .CreateOrUpdateAsync(Azure.WaitUntil.Completed, fullDomain, hostNameBinding);
+                        
+                        success = true;
+                        _logger.LogInformation("SSL binding created successfully with thumbprint: {Thumbprint}", thumbprint);
+                    }
+                    catch (Exception ex) when (retryCount < maxRetries - 1)
+                    {
+                        retryCount++;
+                        _logger.LogWarning(ex, "Failed to bind certificate (attempt {Attempt}/{MaxRetries}), retrying in 5 seconds...", 
+                            retryCount, maxRetries);
+                        await Task.Delay(TimeSpan.FromSeconds(5));
+                    }
+                }
+                
+                if (!success)
+                {
+                    _logger.LogError("Failed to bind certificate after {MaxRetries} attempts. " +
+                        "Ensure the certificate with thumbprint {Thumbprint} is imported into App Service " +
+                        "or App Service has access to Key Vault via managed identity.", maxRetries, thumbprint);
+                    throw new InvalidOperationException($"Failed to bind certificate after {maxRetries} attempts");
+                }
             }
 
             _logger.LogInformation("Successfully enabled SSL for: {Domain}", fullDomain);
@@ -271,6 +322,7 @@ public class AzureDnsService : IAzureDnsService
             return false;
         }
     }
+
 
     private async Task<string?> GetAppServiceVerificationIdAsync()
     {
@@ -320,12 +372,13 @@ public class AzureDnsService : IAzureDnsService
             var recordSetName = subdomain.ToLower().Trim();
             var targetHost = customTarget ?? _appServiceHost;
 
-            _logger.LogInformation("Creating subdomain: {Subdomain} -> {Target}", recordSetName, targetHost);
+            _logger.LogInformation("Creating CNAME record: {Subdomain} -> {Target}", recordSetName, targetHost);
 
-            if (await SubdomainExistsAsync(recordSetName))
+            // Check if CNAME already exists
+            bool cnameExists = await SubdomainExistsAsync(recordSetName);
+            if (cnameExists)
             {
-                _logger.LogWarning("Subdomain {Subdomain} already exists", recordSetName);
-                return false;
+                _logger.LogInformation("CNAME record {Subdomain} already exists, updating it", recordSetName);
             }
 
             var cnameData = new DnsCnameRecordData
@@ -334,17 +387,18 @@ public class AzureDnsService : IAzureDnsService
                 TtlInSeconds = 3600
             };
 
+            // Create or update the CNAME record
             await _dnsZone.GetDnsCnameRecords()
                 .CreateOrUpdateAsync(Azure.WaitUntil.Completed, recordSetName, cnameData);
 
-            _logger.LogInformation("Successfully created subdomain: {Subdomain}.{Zone}", 
-                recordSetName, _dnsZone.Data.Name);
+            _logger.LogInformation("Successfully created/updated CNAME record: {Subdomain}.{Zone} -> {Target}", 
+                recordSetName, _dnsZone.Data.Name, targetHost);
 
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create subdomain: {Subdomain}", subdomain);
+            _logger.LogError(ex, "Failed to create CNAME record for subdomain: {Subdomain}", subdomain);
             return false;
         }
     }
@@ -388,6 +442,75 @@ public class AzureDnsService : IAzureDnsService
     public string GetSubdomainUrl(string subdomain)
     {
         return $"https://{subdomain.ToLower()}.{_dnsZone.Data.Name}";
+    }
+
+    /// <summary>
+    /// Imports certificate from Key Vault into App Service
+    /// </summary>
+    private async Task ImportCertificateFromKeyVaultAsync(string thumbprint)
+    {
+        try
+        {
+            _logger.LogInformation("Checking if certificate with thumbprint {Thumbprint} is already imported in App Service", thumbprint);
+            
+            // Check if certificate already exists in App Service by trying to get it
+            var armClient = new ArmClient(_credential);
+            var certificateResourceId = new ResourceIdentifier(
+                $"/subscriptions/{_subscriptionId}/resourceGroups/{_resourceGroup}/providers/Microsoft.Web/certificates/{_certificateName}"
+            );
+            
+            try
+            {
+                var existingCertificateResource = armClient.GetAppCertificateResource(certificateResourceId);
+                var existingCert = await existingCertificateResource.GetAsync();
+                
+                // Check if thumbprint matches
+                if (existingCert.Value.Data.ThumbprintString?.Equals(thumbprint, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    _logger.LogInformation("Certificate with thumbprint {Thumbprint} already imported in App Service", thumbprint);
+                    return;
+                }
+                else
+                {
+                    _logger.LogInformation("Certificate exists but thumbprint doesn't match. Updating...");
+                }
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogInformation("Certificate not found in App Service, importing from Key Vault...");
+            }
+            
+            // Import certificate from Key Vault
+            var keyVaultResourceId = new ResourceIdentifier(
+                $"/subscriptions/{_subscriptionId}/resourceGroups/{_resourceGroup}/providers/Microsoft.KeyVault/vaults/{_keyVaultName}"
+            );
+            
+            var certificateData = new AppCertificateData(_appService.Data.Location)
+            {
+                KeyVaultId = keyVaultResourceId,
+                KeyVaultSecretName = _certificateName
+            };
+            
+            // Create or update the certificate resource
+            // Get subscription, then resource group, then certificate collection
+            var subscription = await armClient.GetDefaultSubscriptionAsync();
+            var resourceGroup = await subscription.GetResourceGroupAsync(_resourceGroup);
+            var certificateCollection = resourceGroup.Value.GetAppCertificates();
+            
+            await certificateCollection.CreateOrUpdateAsync(
+                Azure.WaitUntil.Completed,
+                _certificateName,
+                certificateData
+            );
+            
+            _logger.LogInformation("Successfully imported certificate from Key Vault into App Service with thumbprint: {Thumbprint}", thumbprint);
+        }
+        catch (Exception ex)
+        {
+            // Log warning but don't fail - the binding might still work if certificate is accessible via Key Vault
+            _logger.LogWarning(ex, "Failed to import certificate from Key Vault into App Service. " +
+                "The certificate may still be accessible if App Service has Key Vault access via managed identity.");
+        }
     }
 
     public async Task<bool> CreateVerificationRecordAsync(string subdomain, string verificationId)

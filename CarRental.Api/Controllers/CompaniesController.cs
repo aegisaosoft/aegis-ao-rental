@@ -333,30 +333,52 @@ public class CompaniesController : ControllerBase
 
             _logger.LogInformation("Company created: {CompanyName} (ID: {CompanyId})", company.CompanyName, company.Id);
 
-            // Create Azure DNS subdomain if subdomain is provided
+            // Create Azure DNS subdomain with SSL if subdomain is provided
+            // Run in background to avoid timeout - fire and forget
             if (!string.IsNullOrWhiteSpace(company.Subdomain) && _azureDnsService != null)
             {
-                try
+                var subdomainToSetup = company.Subdomain;
+                var companyIdToSetup = company.Id;
+                
+                // Fire and forget - run in background to avoid timeout
+                _ = Task.Run(async () =>
                 {
-                    var dnsCreated = await _azureDnsService.CreateSubdomainAsync(company.Subdomain);
-                    if (dnsCreated)
+                    try
                     {
-                        _logger.LogInformation("Azure DNS subdomain created: {Subdomain} for company {CompanyId}", 
-                            company.Subdomain, company.Id);
+                        _logger.LogInformation("Starting background domain setup for subdomain: {Subdomain}, company: {CompanyId}", 
+                            subdomainToSetup, companyIdToSetup);
+                        
+                        // Use CreateSubdomainWithSslAsync to fully set up DNS, App Service binding, and SSL
+                        var dnsCreated = await _azureDnsService.CreateSubdomainWithSslAsync(subdomainToSetup);
+                        if (dnsCreated)
+                        {
+                            _logger.LogInformation("Azure DNS subdomain with SSL created: {Subdomain} for company {CompanyId}", 
+                                subdomainToSetup, companyIdToSetup);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Failed to create Azure DNS subdomain with SSL: {Subdomain} for company {CompanyId}. " +
+                                "Subdomain may already exist in Azure DNS.", subdomainToSetup, companyIdToSetup);
+                        }
                     }
-                    else
+                    catch (ArgumentException ex) when (ex.Message.Contains("not configured"))
                     {
-                        _logger.LogWarning("Failed to create Azure DNS subdomain: {Subdomain} for company {CompanyId}. " +
-                            "Subdomain may already exist in Azure DNS.", company.Subdomain, company.Id);
+                        // Azure DNS is not configured - log warning but don't fail company creation
+                        _logger.LogWarning("Azure DNS service is not configured. Cannot create subdomain '{Subdomain}' for company {CompanyId}. " +
+                            "Company was created successfully, but DNS/SSL setup was skipped. Error: {Error}", 
+                            subdomainToSetup, companyIdToSetup, ex.Message);
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error creating Azure DNS subdomain: {Subdomain} for company {CompanyId}. " +
-                        "Company was created successfully, but DNS record creation failed.", 
-                        company.Subdomain, company.Id);
-                    // Don't fail company creation if DNS creation fails
-                }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error creating Azure DNS subdomain with SSL: {Subdomain} for company {CompanyId}. " +
+                            "Company was created successfully, but DNS/SSL setup failed.", 
+                            subdomainToSetup, companyIdToSetup);
+                        // Don't fail company creation if DNS creation fails
+                    }
+                });
+                
+                _logger.LogInformation("Domain setup initiated in background for subdomain: {Subdomain}, company: {CompanyId}", 
+                    subdomainToSetup, companyIdToSetup);
             }
 
             var result = new
@@ -535,20 +557,47 @@ public class CompaniesController : ControllerBase
                                 }
                             }
                             
-                            // Create new DNS record if new subdomain is provided
+                            // Create new DNS record with SSL if new subdomain is provided
+                            // Run in background to avoid timeout - fire and forget
                             if (!string.IsNullOrWhiteSpace(newSubdomain))
                             {
-                                var dnsCreated = await _azureDnsService.CreateSubdomainAsync(newSubdomain);
-                                if (dnsCreated)
+                                var subdomain = newSubdomain;
+                                var companyId = id;
+                                
+                                // Fire and forget - run in background to avoid timeout
+                                _ = Task.Run(async () =>
                                 {
-                                    _logger.LogInformation("Created new Azure DNS subdomain: {NewSubdomain} for company {CompanyId}", 
-                                        newSubdomain, id);
-                                }
-                                else
-                                {
-                                    _logger.LogWarning("Failed to create Azure DNS subdomain: {NewSubdomain} for company {CompanyId}. " +
-                                        "Subdomain may already exist in Azure DNS.", newSubdomain, id);
-                                }
+                                    try
+                                    {
+                                        _logger.LogInformation("Starting background domain setup for new subdomain: {Subdomain}, company: {CompanyId}", 
+                                            subdomain, companyId);
+                                        
+                                        var dnsCreated = await _azureDnsService.CreateSubdomainWithSslAsync(subdomain);
+                                        if (dnsCreated)
+                                        {
+                                            _logger.LogInformation("Created new Azure DNS subdomain with SSL: {NewSubdomain} for company {CompanyId}", 
+                                                subdomain, companyId);
+                                        }
+                                        else
+                                        {
+                                            _logger.LogWarning("Failed to create Azure DNS subdomain with SSL: {NewSubdomain} for company {CompanyId}. " +
+                                                "Subdomain may already exist in Azure DNS.", subdomain, companyId);
+                                        }
+                                    }
+                                    catch (ArgumentException ex) when (ex.Message.Contains("not configured"))
+                                    {
+                                        _logger.LogWarning("Azure DNS service is not configured. Cannot create subdomain '{Subdomain}' for company {CompanyId}. Error: {Error}", 
+                                            subdomain, companyId, ex.Message);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogError(ex, "Error creating Azure DNS subdomain with SSL: {NewSubdomain} for company {CompanyId}", 
+                                            subdomain, companyId);
+                                    }
+                                });
+                                
+                                _logger.LogInformation("Domain setup initiated in background for new subdomain: {Subdomain}, company: {CompanyId}", 
+                                    subdomain, companyId);
                             }
                         }
                         catch (Exception ex)
@@ -728,6 +777,84 @@ public class CompaniesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating company {CompanyId}", id);
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+
+    /// <summary>
+    /// Manually set up domain (DNS + App Service binding + SSL) for an existing company
+    /// </summary>
+    [HttpPost("{id}/setup-domain")]
+    public async Task<ActionResult> SetupCompanyDomain(Guid id)
+    {
+        try
+        {
+            var company = await _context.Companies.FindAsync(id);
+            if (company == null)
+            {
+                return NotFound(new { error = "Company not found" });
+            }
+
+            if (string.IsNullOrWhiteSpace(company.Subdomain))
+            {
+                return BadRequest(new { error = "Company does not have a subdomain configured" });
+            }
+
+            if (_azureDnsService == null)
+            {
+                return StatusCode(503, new { error = "Azure DNS service is not configured" });
+            }
+
+            _logger.LogInformation("Manually setting up domain for company {CompanyId} with subdomain {Subdomain}", 
+                id, company.Subdomain);
+
+            try
+            {
+                var success = await _azureDnsService.CreateSubdomainWithSslAsync(company.Subdomain);
+                
+                if (success)
+                {
+                    var url = _azureDnsService.GetSubdomainUrl(company.Subdomain);
+                    return Ok(new
+                    {
+                        success = true,
+                        message = $"Domain setup completed successfully for {company.Subdomain}",
+                        url = url,
+                        subdomain = company.Subdomain
+                    });
+                }
+                else
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "Failed to set up domain. It may already exist or there was an error."
+                    });
+                }
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("not configured"))
+            {
+                _logger.LogWarning("Azure DNS service is not configured. Cannot set up domain for company {CompanyId}. Error: {Error}", 
+                    id, ex.Message);
+                return StatusCode(503, new
+                {
+                    success = false,
+                    message = "Azure DNS service is not configured. Cannot set up domain."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting up domain for company {CompanyId}", id);
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = $"Error setting up domain: {ex.Message}"
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in SetupCompanyDomain for company {CompanyId}", id);
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
@@ -1794,7 +1921,7 @@ public class CompaniesController : ControllerBase
             if (isTestCompany)
             {
                 var testSettings = await _context.StripeSettings
-                    .FirstOrDefaultAsync(s => s.Name.Equals("test", StringComparison.OrdinalIgnoreCase));
+                    .FirstOrDefaultAsync(s => s.Name.ToLower() == "test".ToLower());
                 
                 if (testSettings != null)
                 {
@@ -1810,7 +1937,7 @@ public class CompaniesController : ControllerBase
             if (!string.IsNullOrWhiteSpace(countryCode))
             {
                 var countrySettings = await _context.StripeSettings
-                    .FirstOrDefaultAsync(s => s.Name.Equals(countryCode, StringComparison.OrdinalIgnoreCase));
+                    .FirstOrDefaultAsync(s => s.Name.ToLower() == countryCode.ToLower());
                 
                 if (countrySettings != null)
                 {
@@ -1824,7 +1951,7 @@ public class CompaniesController : ControllerBase
 
             // Fallback to US settings
             var usSettings = await _context.StripeSettings
-                .FirstOrDefaultAsync(s => s.Name.Equals("US", StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefaultAsync(s => s.Name.ToLower() == "us".ToLower());
             
             if (usSettings != null)
             {
