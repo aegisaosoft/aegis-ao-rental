@@ -88,6 +88,10 @@ public class CarRentalDbContext : DbContext
             .HasDefaultValue(true)
             .IsRequired();
 
+        // Configure StripeAccountId - not mapped to database column (stored in stripe_company table)
+        modelBuilder.Entity<Company>()
+            .Ignore(e => e.StripeAccountId);
+
         // Configure StripeSettingsId (nullable foreign key)
         modelBuilder.Entity<Company>()
             .Property(e => e.StripeSettingsId)

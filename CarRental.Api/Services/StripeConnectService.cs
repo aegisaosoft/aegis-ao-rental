@@ -27,7 +27,7 @@ public interface IStripeConnectService
     Task<(bool Success, string AccountId, string? Error)> CreateConnectedAccountAsync(Guid companyId);
     Task<(bool Success, string OnboardingUrl, string? Error)> StartOnboardingAsync(Guid companyId, string returnUrl, string refreshUrl);
     Task<StripeAccountStatusDto> GetAccountStatusAsync(Guid companyId);
-    Task SyncAccountStatusAsync(string stripeAccountId);
+    Task SyncAccountStatusAsync(string stripeAccountId, Guid? companyId = null);
     Task<(bool Success, Guid? TransferId, string? Error)> TransferBookingFundsAsync(Guid bookingId);
     Task<(bool Success, string? PaymentIntentId, string? Error)> AuthorizeSecurityDepositAsync(
         Guid bookingId, 
@@ -65,6 +65,37 @@ public class StripeConnectService : IStripeConnectService
         _platformAccountId = configuration["Stripe:PlatformAccountId"] ?? "";
     }
 
+    /// <summary>
+    /// Gets or creates a StripeCompany record for the given company
+    /// </summary>
+    private async Task<StripeCompany> GetOrCreateStripeCompanyAsync(Company company)
+    {
+        if (company.StripeSettingsId == null)
+        {
+            throw new InvalidOperationException($"Company {company.Id} does not have a StripeSettingsId configured");
+        }
+
+        var stripeCompany = await _context.StripeCompanies
+            .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+        if (stripeCompany == null)
+        {
+            stripeCompany = new StripeCompany
+            {
+                CompanyId = company.Id,
+                SettingsId = company.StripeSettingsId.Value,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _context.StripeCompanies.Add(stripeCompany);
+            await _context.SaveChangesAsync();
+            _logger.LogInformation("Created new StripeCompany record for company {CompanyId} with settings {SettingsId}", 
+                company.Id, company.StripeSettingsId.Value);
+        }
+
+        return stripeCompany;
+    }
+
     public async Task<(bool Success, string AccountId, string? Error)> CreateConnectedAccountAsync(Guid companyId)
     {
         try
@@ -73,11 +104,33 @@ public class StripeConnectService : IStripeConnectService
             if (company == null)
                 return (false, "", "Company not found");
 
-            if (!string.IsNullOrEmpty(company.StripeAccountId))
+            // Auto-resolve StripeSettingsId if not configured
+            if (company.StripeSettingsId == null)
+            {
+                _logger.LogInformation("Company {CompanyId} does not have StripeSettingsId configured. Attempting to auto-resolve...", companyId);
+                company.StripeSettingsId = await ResolveStripeSettingsIdAsync(company.IsTestCompany, company.Country);
+                
+                if (company.StripeSettingsId == null)
+                {
+                    _logger.LogError("Cannot create Stripe account for company {CompanyId}: Could not resolve StripeSettingsId (IsTestCompany: {IsTestCompany}, Country: {Country})", 
+                        companyId, company.IsTestCompany, company.Country);
+                    return (false, "", "Company does not have Stripe settings configured and could not auto-resolve. Please configure Stripe settings first.");
+                }
+                
+                // Save the resolved StripeSettingsId
+                _context.Companies.Update(company);
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Auto-resolved StripeSettingsId: {StripeSettingsId} for company {CompanyId}", company.StripeSettingsId, companyId);
+            }
+
+            // Get or create StripeCompany record
+            var stripeCompany = await GetOrCreateStripeCompanyAsync(company);
+
+            if (!string.IsNullOrEmpty(stripeCompany.StripeAccountId))
             {
                 try
                 {
-                    var existingAccountId = _encryptionService.Decrypt(company.StripeAccountId);
+                    var existingAccountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
                     return (true, existingAccountId, null);
                 }
                 catch
@@ -86,18 +139,41 @@ public class StripeConnectService : IStripeConnectService
                 }
             }
 
+            // Validate subdomain is present (required for account identification)
+            if (string.IsNullOrWhiteSpace(company.Subdomain))
+            {
+                _logger.LogError("Cannot create Stripe account for company {CompanyId}: subdomain is missing", companyId);
+                return (false, "", "Company subdomain is required to create Stripe account");
+            }
+
+            // Construct full domain name from subdomain
+            // Try to get DNS zone name from configuration, fallback to default
+            string? fullDomainName = null;
+            if (!string.IsNullOrWhiteSpace(company.Subdomain))
+            {
+                // Construct domain: {subdomain}.{dnsZoneName}
+                // Default to aegis-rental.com if DNS zone not configured
+                fullDomainName = $"{company.Subdomain.ToLower().Trim()}.aegis-rental.com";
+                _logger.LogInformation("Constructed domain name for company {CompanyId}: {DomainName}", companyId, fullDomainName);
+            }
+
             // Create Stripe Connected Account (pass companyId to use company-specific Stripe settings)
+            // Use subdomain as identifier - email will be collected during onboarding
             var account = await _stripeService.CreateConnectedAccountAsync(
-                company.Email,
+                company.Subdomain,
                 company.StripeAccountType ?? "express",
                 company.Country ?? "US",
-                companyId
+                companyId,
+                fullDomainName
             );
 
-            // Encrypt and store account ID
+            // Encrypt and store account ID in StripeCompany
             var encryptedAccountId = _encryptionService.Encrypt(account.Id);
             
-            company.StripeAccountId = encryptedAccountId;
+            stripeCompany.StripeAccountId = encryptedAccountId;
+            stripeCompany.UpdatedAt = DateTime.UtcNow;
+            
+            // Update company Stripe status fields (these can stay on Company for quick access)
             company.StripeAccountType = account.Type;
             company.StripeChargesEnabled = account.ChargesEnabled;
             company.StripePayoutsEnabled = account.PayoutsEnabled;
@@ -133,9 +209,19 @@ public class StripeConnectService : IStripeConnectService
             if (company == null)
                 return (false, "", "Company not found");
 
+            // Check if company has StripeSettingsId configured
+            if (company.StripeSettingsId == null)
+            {
+                _logger.LogError("Cannot start onboarding for company {CompanyId}: StripeSettingsId is not configured", companyId);
+                return (false, "", "Company does not have Stripe settings configured. Please configure Stripe settings first.");
+            }
+
+            // Get or create StripeCompany record
+            var stripeCompany = await GetOrCreateStripeCompanyAsync(company);
+
             // Ensure we have a connected account
             string accountId;
-            if (string.IsNullOrEmpty(company.StripeAccountId))
+            if (string.IsNullOrEmpty(stripeCompany.StripeAccountId))
             {
                 var (success, newAccountId, error) = await CreateConnectedAccountAsync(companyId);
                 if (!success)
@@ -144,7 +230,76 @@ public class StripeConnectService : IStripeConnectService
             }
             else
             {
-                accountId = _encryptionService.Decrypt(company.StripeAccountId);
+                accountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
+            }
+
+            // Check account status before creating link
+            try
+            {
+                var account = await _stripeService.GetAccountAsync(accountId, companyId);
+                
+                // Check if account is rejected or has issues
+                if (account.Requirements?.DisabledReason != null)
+                {
+                    var disabledReason = account.Requirements.DisabledReason;
+                    _logger.LogWarning("Stripe account {AccountId} for company {CompanyId} is disabled. Reason: {Reason}", 
+                        accountId, companyId, disabledReason);
+                    
+                    // If account is rejected or has past due requirements, we should delete it and create a new one
+                    // This allows the user to start fresh with onboarding
+                    bool shouldRecreate = disabledReason.Contains("rejected", StringComparison.OrdinalIgnoreCase) || 
+                                         disabledReason.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
+                                         disabledReason.Contains("past_due", StringComparison.OrdinalIgnoreCase) ||
+                                         disabledReason.Contains("requirements.past_due", StringComparison.OrdinalIgnoreCase);
+                    
+                    if (shouldRecreate)
+                    {
+                        var reasonType = disabledReason.Contains("past_due", StringComparison.OrdinalIgnoreCase) 
+                            ? "has past due requirements" 
+                            : "was rejected";
+                        
+                        _logger.LogInformation("Account {AccountId} {ReasonType}. Deleting and recreating...", accountId, reasonType);
+                        
+                        try
+                        {
+                            // Delete the problematic account
+                            var accountService = new Stripe.AccountService();
+                            await accountService.DeleteAsync(accountId);
+                            
+                            // Clear the account ID from StripeCompany
+                            stripeCompany.StripeAccountId = null;
+                            stripeCompany.UpdatedAt = DateTime.UtcNow;
+                            await _context.SaveChangesAsync();
+                            
+                            _logger.LogInformation("Deleted account {AccountId}. Creating new account...", accountId);
+                            
+                            // Create a new account
+                            var (createSuccess, newAccountId, createError) = await CreateConnectedAccountAsync(companyId);
+                            if (!createSuccess)
+                                return (false, "", $"Failed to recreate account after deletion: {createError}");
+                            
+                            accountId = newAccountId;
+                            account = await _stripeService.GetAccountAsync(accountId, companyId);
+                            
+                            _logger.LogInformation("Successfully created new account {NewAccountId} to replace {OldAccountId}", 
+                                newAccountId, accountId);
+                        }
+                        catch (Exception deleteEx)
+                        {
+                            _logger.LogError(deleteEx, "Error deleting disabled account {AccountId}", accountId);
+                            return (false, "", $"Account is disabled ({disabledReason}) and could not be deleted: {deleteEx.Message}");
+                        }
+                    }
+                    else
+                    {
+                        // Account is disabled for other reasons - return error
+                        return (false, "", $"Account is disabled: {disabledReason}. Please check the account in Stripe dashboard.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not check account status for {AccountId}, proceeding with link creation", accountId);
             }
 
             // Create account link for onboarding (pass companyId to use company-specific Stripe settings)
@@ -191,8 +346,9 @@ public class StripeConnectService : IStripeConnectService
     {
         var company = await _context.Companies.FindAsync(companyId);
         
-        if (company == null || string.IsNullOrEmpty(company.StripeAccountId))
+        if (company == null)
         {
+            _logger.LogWarning("Company {CompanyId} not found when getting Stripe account status", companyId);
             return new StripeAccountStatusDto
             {
                 StripeAccountId = null,
@@ -200,7 +356,95 @@ public class StripeConnectService : IStripeConnectService
             };
         }
 
-        var stripeAccountId = _encryptionService.Decrypt(company.StripeAccountId);
+        if (company.StripeSettingsId == null)
+        {
+            _logger.LogWarning("Company {CompanyId} does not have StripeSettingsId configured", companyId);
+            return new StripeAccountStatusDto
+            {
+                StripeAccountId = null,
+                AccountStatus = "not_started"
+            };
+        }
+
+        // Try to find StripeCompany using the same join logic as the SQL query:
+        // FROM companies c 
+        // INNER JOIN stripe_company sc ON c.id = sc.company_id 
+        // INNER JOIN stripe_settings ss ON c.stripe_settings_id = ss.id AND ss.id = sc.settings_id
+        var stripeCompany = await _context.StripeCompanies
+            .Where(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value)
+            .FirstOrDefaultAsync();
+
+        if (stripeCompany == null)
+        {
+            // Log all StripeCompany records for this company to help debug
+            var allStripeCompanies = await _context.StripeCompanies
+                .Where(sc => sc.CompanyId == companyId)
+                .Select(sc => new { sc.SettingsId, HasAccountId = !string.IsNullOrEmpty(sc.StripeAccountId) })
+                .ToListAsync();
+            
+            _logger.LogWarning(
+                "No StripeCompany found for company {CompanyId} with SettingsId {SettingsId}. " +
+                "Found {Count} StripeCompany records for this company: {Records}",
+                companyId, 
+                company.StripeSettingsId.Value,
+                allStripeCompanies.Count,
+                string.Join(", ", allStripeCompanies.Select(sc => $"SettingsId={sc.SettingsId}, HasAccountId={sc.HasAccountId}"))
+            );
+            
+            // If no exact match, try to find any StripeCompany record for this company (fallback)
+            // This handles cases where the settings_id might not match exactly
+            if (allStripeCompanies.Count > 0)
+            {
+                var fallbackStripeCompany = await _context.StripeCompanies
+                    .Where(sc => sc.CompanyId == companyId && !string.IsNullOrEmpty(sc.StripeAccountId))
+                    .FirstOrDefaultAsync();
+                
+                if (fallbackStripeCompany != null)
+                {
+                    _logger.LogInformation(
+                        "Using fallback StripeCompany record for company {CompanyId} with SettingsId {SettingsId} (company's SettingsId is {CompanySettingsId})",
+                        companyId,
+                        fallbackStripeCompany.SettingsId,
+                        company.StripeSettingsId.Value
+                    );
+                    stripeCompany = fallbackStripeCompany;
+                }
+            }
+            
+            if (stripeCompany == null)
+            {
+                return new StripeAccountStatusDto
+                {
+                    StripeAccountId = null,
+                    AccountStatus = "not_started"
+                };
+            }
+        }
+
+        if (string.IsNullOrEmpty(stripeCompany.StripeAccountId))
+        {
+            _logger.LogWarning("StripeCompany found for company {CompanyId} but StripeAccountId is empty", companyId);
+            return new StripeAccountStatusDto
+            {
+                StripeAccountId = null,
+                AccountStatus = "not_started"
+            };
+        }
+
+        string stripeAccountId;
+        try
+        {
+            stripeAccountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to decrypt StripeAccountId for company {CompanyId}. The value might be stored in plain text.", companyId);
+            // If decryption fails, it might be stored in plain text (for backward compatibility)
+            stripeAccountId = stripeCompany.StripeAccountId;
+        }
+        
+        // Set StripeAccountId on company for DetermineAccountStatus to work correctly
+        company.StripeAccountId = stripeAccountId;
 
         return new StripeAccountStatusDto
         {
@@ -217,21 +461,58 @@ public class StripeConnectService : IStripeConnectService
         };
     }
 
-    public async Task SyncAccountStatusAsync(string stripeAccountId)
+    public async Task SyncAccountStatusAsync(string stripeAccountId, Guid? companyId = null)
     {
         try
         {
-            var account = await _stripeService.GetAccountAsync(stripeAccountId);
+            // Fetch StripeCompany records with non-null StripeAccountId
+            // If companyId is provided, filter by it for better performance
+            // We can't decrypt in LINQ queries, so we need to fetch and decrypt in memory
+            var query = _context.StripeCompanies
+                .Include(sc => sc.Company)
+                .Where(sc => sc.StripeAccountId != null);
             
-            var company = await _context.Companies
-                .FirstOrDefaultAsync(c => c.StripeAccountId != null && 
-                    _encryptionService.Decrypt(c.StripeAccountId) == stripeAccountId);
-
-            if (company == null)
+            if (companyId.HasValue)
             {
-                _logger.LogWarning("No company found for Stripe account {AccountId}", stripeAccountId);
+                query = query.Where(sc => sc.CompanyId == companyId.Value);
+            }
+            
+            var stripeCompanies = await query.ToListAsync();
+
+            // Find the matching StripeCompany by decrypting in memory
+            StripeCompany? stripeCompany = null;
+            foreach (var sc in stripeCompanies)
+            {
+                try
+                {
+                    var decryptedId = _encryptionService.Decrypt(sc.StripeAccountId!);
+                    if (decryptedId == stripeAccountId)
+                    {
+                        stripeCompany = sc;
+                        break;
+                    }
+                }
+                catch
+                {
+                    // If decryption fails, try comparing as plain text (for backward compatibility)
+                    if (sc.StripeAccountId == stripeAccountId)
+                    {
+                        stripeCompany = sc;
+                        break;
+                    }
+                }
+            }
+            
+            if (stripeCompany == null || stripeCompany.Company == null)
+            {
+                _logger.LogWarning("No StripeCompany record found for Stripe account {AccountId}", stripeAccountId);
                 return;
             }
+
+            var company = stripeCompany.Company;
+
+            // Get account using company-specific Stripe settings
+            var account = await _stripeService.GetAccountAsync(stripeAccountId, company.Id);
 
             company.StripeChargesEnabled = account.ChargesEnabled;
             company.StripePayoutsEnabled = account.PayoutsEnabled;
@@ -274,7 +555,14 @@ public class StripeConnectService : IStripeConnectService
             if (booking.Company == null)
                 return (false, null, "Company not found for booking");
 
-            if (string.IsNullOrEmpty(booking.Company.StripeAccountId))
+            if (booking.Company.StripeSettingsId == null)
+                return (false, null, "Company does not have Stripe settings configured");
+
+            var stripeCompany = await _context.StripeCompanies
+                .FirstOrDefaultAsync(sc => sc.CompanyId == booking.Company.Id && 
+                    sc.SettingsId == booking.Company.StripeSettingsId.Value);
+
+            if (stripeCompany == null || string.IsNullOrEmpty(stripeCompany.StripeAccountId))
                 return (false, null, "Company does not have a Stripe Connect account");
 
             if (!(booking.Company.StripeChargesEnabled ?? false) || !(booking.Company.StripePayoutsEnabled ?? false))
@@ -284,7 +572,7 @@ public class StripeConnectService : IStripeConnectService
                 return (false, null, "Funds already transferred for this booking");
 
             // Decrypt account ID
-            var destinationAccountId = _encryptionService.Decrypt(booking.Company.StripeAccountId);
+            var destinationAccountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
 
             // Calculate amounts
             var platformFee = booking.PlatformFeeAmount;
@@ -436,12 +724,14 @@ public class StripeConnectService : IStripeConnectService
             await service.UpdateAsync(stripeAccountId, options);
 
             // Обновить статус в базе данных
-            var company = await _context.Companies
-                .FirstOrDefaultAsync(c => c.StripeAccountId != null && 
-                    _encryptionService.Decrypt(c.StripeAccountId) == stripeAccountId);
+            var stripeCompany = await _context.StripeCompanies
+                .Include(sc => sc.Company)
+                .FirstOrDefaultAsync(sc => sc.StripeAccountId != null && 
+                    _encryptionService.Decrypt(sc.StripeAccountId) == stripeAccountId);
 
-            if (company != null)
+            if (stripeCompany?.Company != null)
             {
+                var company = stripeCompany.Company;
                 company.StripeChargesEnabled = false;
                 company.StripePayoutsEnabled = false;
                 company.UpdatedAt = DateTime.UtcNow;
@@ -490,12 +780,14 @@ public class StripeConnectService : IStripeConnectService
             var account = await service.UpdateAsync(stripeAccountId, options);
 
             // Обновить статус в базе данных
-            var company = await _context.Companies
-                .FirstOrDefaultAsync(c => c.StripeAccountId != null && 
-                    _encryptionService.Decrypt(c.StripeAccountId) == stripeAccountId);
+            var stripeCompany = await _context.StripeCompanies
+                .Include(sc => sc.Company)
+                .FirstOrDefaultAsync(sc => sc.StripeAccountId != null && 
+                    _encryptionService.Decrypt(sc.StripeAccountId) == stripeAccountId);
 
-            if (company != null)
+            if (stripeCompany?.Company != null)
             {
+                var company = stripeCompany.Company;
                 company.StripeChargesEnabled = account.ChargesEnabled;
                 company.StripePayoutsEnabled = account.PayoutsEnabled;
                 company.UpdatedAt = DateTime.UtcNow;
@@ -523,15 +815,18 @@ public class StripeConnectService : IStripeConnectService
         {
             _logger.LogInformation("Deleting Stripe account {AccountId}", stripeAccountId);
 
-            // Проверить, что нет активных платежей
-            var company = await _context.Companies
-                .FirstOrDefaultAsync(c => c.StripeAccountId != null && 
-                    _encryptionService.Decrypt(c.StripeAccountId) == stripeAccountId);
+            // Find StripeCompany record
+            var stripeCompany = await _context.StripeCompanies
+                .Include(sc => sc.Company)
+                .FirstOrDefaultAsync(sc => sc.StripeAccountId != null && 
+                    _encryptionService.Decrypt(sc.StripeAccountId) == stripeAccountId);
 
-            if (company == null)
+            if (stripeCompany == null || stripeCompany.Company == null)
             {
                 return (false, "Account not found in database");
             }
+
+            var company = stripeCompany.Company;
 
             // Проверить, есть ли bookings с платежами
             var hasPayments = await _context.Bookings
@@ -548,8 +843,9 @@ public class StripeConnectService : IStripeConnectService
             // Удалить account в Stripe
             await service.DeleteAsync(stripeAccountId);
 
-            // Очистить ссылку в Company
-            company.StripeAccountId = null;
+            // Очистить ссылку в StripeCompany
+            stripeCompany.StripeAccountId = null;
+            stripeCompany.UpdatedAt = DateTime.UtcNow;
             company.StripeAccountType = null;
             company.StripeChargesEnabled = false;
             company.StripePayoutsEnabled = false;
@@ -621,33 +917,77 @@ public class StripeConnectService : IStripeConnectService
 
             foreach (var account in accounts.Data)
             {
-                _logger.LogInformation("Processing account: ID={AccountId}, Email={Email}, Type={Type}", 
-                    account.Id, account.Email, account.Type);
+                _logger.LogInformation("Processing account: ID={AccountId}, Email={Email}, Type={Type}, Metadata={Metadata}", 
+                    account.Id, account.Email, account.Type,
+                    account.Metadata != null ? string.Join(", ", account.Metadata.Select(kvp => $"{kvp.Key}={kvp.Value}")) : "null");
 
-                // Find company by email
-                var company = await _context.Companies
-                    .FirstOrDefaultAsync(c => c.Email != null && 
-                        c.Email.Equals(account.Email, StringComparison.OrdinalIgnoreCase));
+                // Find company by subdomain from metadata (primary identifier)
+                Company? company = null;
+                
+                if (account.Metadata != null && account.Metadata.ContainsKey("subdomain"))
+                {
+                    var subdomain = account.Metadata["subdomain"];
+                    company = await _context.Companies
+                        .FirstOrDefaultAsync(c => c.Subdomain != null && 
+                            c.Subdomain.Equals(subdomain, StringComparison.OrdinalIgnoreCase));
+                    
+                    _logger.LogInformation("Looking for company with subdomain={Subdomain} from account metadata", subdomain);
+                }
+
+                // Fallback: Find company by email (for backward compatibility with existing accounts)
+                if (company == null && !string.IsNullOrEmpty(account.Email))
+                {
+                    company = await _context.Companies
+                        .FirstOrDefaultAsync(c => c.Email != null && 
+                            c.Email.Equals(account.Email, StringComparison.OrdinalIgnoreCase));
+                    
+                    _logger.LogInformation("Fallback: Looking for company with email={Email}", account.Email);
+                }
 
                 if (company == null)
                 {
-                    _logger.LogWarning("No company found for Stripe account {AccountId} with email {Email}", 
-                        account.Id, account.Email);
+                    var identifier = account.Metadata?.ContainsKey("subdomain") == true 
+                        ? $"subdomain={account.Metadata["subdomain"]}" 
+                        : $"email={account.Email}";
+                    _logger.LogWarning("No company found for Stripe account {AccountId} with {Identifier}", 
+                        account.Id, identifier);
                     continue;
+                }
+
+                // Get or create StripeCompany record
+                if (company.StripeSettingsId == null)
+                {
+                    _logger.LogWarning("Company {CompanyId} does not have StripeSettingsId, skipping", company.Id);
+                    continue;
+                }
+
+                var stripeCompany = await _context.StripeCompanies
+                    .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+                if (stripeCompany == null)
+                {
+                    stripeCompany = new StripeCompany
+                    {
+                        CompanyId = company.Id,
+                        SettingsId = company.StripeSettingsId.Value,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.StripeCompanies.Add(stripeCompany);
                 }
 
                 // Check if company already has this account linked
                 string? existingAccountId = null;
-                if (!string.IsNullOrEmpty(company.StripeAccountId))
+                if (!string.IsNullOrEmpty(stripeCompany.StripeAccountId))
                 {
                     try
                     {
-                        existingAccountId = _encryptionService.Decrypt(company.StripeAccountId);
+                        existingAccountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
                     }
                     catch
                     {
                         // Account ID might not be encrypted, use as-is
-                        existingAccountId = company.StripeAccountId;
+                        existingAccountId = stripeCompany.StripeAccountId;
                     }
                 }
 
@@ -661,9 +1001,10 @@ public class StripeConnectService : IStripeConnectService
                     continue;
                 }
 
-                // Link the account to the company
+                // Link the account to the StripeCompany
                 var encryptedAccountId = _encryptionService.Encrypt(account.Id);
-                company.StripeAccountId = encryptedAccountId;
+                stripeCompany.StripeAccountId = encryptedAccountId;
+                stripeCompany.UpdatedAt = DateTime.UtcNow;
                 company.StripeAccountType = account.Type;
                 company.StripeChargesEnabled = account.ChargesEnabled;
                 company.StripePayoutsEnabled = account.PayoutsEnabled;
@@ -794,6 +1135,67 @@ public class StripeConnectService : IStripeConnectService
             return "restricted";
 
         return "active";
+    }
+
+    /// <summary>
+    /// Helper method to resolve StripeSettingsId based on company test status and country
+    /// </summary>
+    private async Task<Guid?> ResolveStripeSettingsIdAsync(bool isTestCompany, string? countryCode)
+    {
+        try
+        {
+            // If test company, look for "test" settings
+            if (isTestCompany)
+            {
+                var testSettings = await _context.StripeSettings
+                    .FirstOrDefaultAsync(s => s.Name.ToLower() == "test".ToLower());
+                
+                if (testSettings != null)
+                {
+                    _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) for test company", 
+                        testSettings.Id, testSettings.Name);
+                    return testSettings.Id;
+                }
+                
+                _logger.LogWarning("Test Stripe settings not found. Falling back to country-based settings.");
+            }
+
+            // Look for country-specific settings
+            if (!string.IsNullOrWhiteSpace(countryCode))
+            {
+                var countrySettings = await _context.StripeSettings
+                    .FirstOrDefaultAsync(s => s.Name.ToLower() == countryCode.ToLower());
+                
+                if (countrySettings != null)
+                {
+                    _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) for country: {Country}", 
+                        countrySettings.Id, countrySettings.Name, countryCode);
+                    return countrySettings.Id;
+                }
+                
+                _logger.LogWarning("Stripe settings for country '{Country}' not found. Falling back to US settings.", countryCode);
+            }
+
+            // Fallback to US settings
+            var usSettings = await _context.StripeSettings
+                .FirstOrDefaultAsync(s => s.Name.ToLower() == "us".ToLower());
+            
+            if (usSettings != null)
+            {
+                _logger.LogInformation("Resolved StripeSettingsId: {Id} (Name: {Name}) as fallback US settings", 
+                    usSettings.Id, usSettings.Name);
+                return usSettings.Id;
+            }
+
+            _logger.LogWarning("US Stripe settings not found. No StripeSettingsId will be assigned.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resolving StripeSettingsId for IsTestCompany: {IsTestCompany}, Country: {Country}", 
+                isTestCompany, countryCode);
+            return null;
+        }
     }
 }
 

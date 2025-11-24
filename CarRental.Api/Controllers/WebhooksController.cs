@@ -1014,11 +1014,17 @@ public class WebhooksController : ControllerBase
 
             foreach (var company in companies)
             {
-                if (!string.IsNullOrEmpty(company.StripeAccountId))
+                if (company.StripeSettingsId == null)
+                    continue;
+
+                var stripeCompany = await _context.StripeCompanies
+                    .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+                if (stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId))
                 {
                     try
                     {
-                        var decryptedId = _encryptionService.Decrypt(company.StripeAccountId);
+                        var decryptedId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
                         if (decryptedId == account.Id)
                         {
                             targetCompany = company;

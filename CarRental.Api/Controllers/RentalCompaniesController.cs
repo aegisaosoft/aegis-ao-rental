@@ -56,20 +56,26 @@ public class RentalCompaniesController : ControllerBase
 
     private async Task<string?> ResolveStripeAccountIdAsync(Company company)
     {
-        if (string.IsNullOrWhiteSpace(company.StripeAccountId))
+        if (company.StripeSettingsId == null)
+            return null;
+
+        var stripeCompany = await _context.StripeCompanies
+            .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+        if (stripeCompany == null || string.IsNullOrWhiteSpace(stripeCompany.StripeAccountId))
             return null;
 
         try
         {
-            return _encryptionService.Decrypt(company.StripeAccountId);
+            return _encryptionService.Decrypt(stripeCompany.StripeAccountId);
         }
         catch (FormatException)
         {
-            return await ReEncryptPlainStripeAccountIdAsync(company, company.StripeAccountId!);
+            return await ReEncryptPlainStripeAccountIdAsync(stripeCompany, stripeCompany.StripeAccountId!);
         }
         catch (CryptographicException)
         {
-            return await ReEncryptPlainStripeAccountIdAsync(company, company.StripeAccountId!);
+            return await ReEncryptPlainStripeAccountIdAsync(stripeCompany, stripeCompany.StripeAccountId!);
         }
         catch (Exception ex)
         {
@@ -78,20 +84,21 @@ public class RentalCompaniesController : ControllerBase
         }
     }
 
-    private async Task<string?> ReEncryptPlainStripeAccountIdAsync(Company company, string plaintext)
+    private async Task<string?> ReEncryptPlainStripeAccountIdAsync(CarRental.Api.Models.StripeCompany stripeCompany, string plaintext)
     {
         if (string.IsNullOrWhiteSpace(plaintext))
             return null;
 
         try
         {
-            company.StripeAccountId = _encryptionService.Encrypt(plaintext);
-            _context.Companies.Update(company);
+            stripeCompany.StripeAccountId = _encryptionService.Encrypt(plaintext);
+            stripeCompany.UpdatedAt = DateTime.UtcNow;
+            _context.StripeCompanies.Update(stripeCompany);
             await _context.SaveChangesAsync();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to re-encrypt Stripe account ID for company {CompanyId}", company.Id);
+            _logger.LogError(ex, "Failed to re-encrypt Stripe account ID for StripeCompany {StripeCompanyId}", stripeCompany.Id);
         }
 
         return plaintext;
@@ -379,18 +386,58 @@ public class RentalCompaniesController : ControllerBase
             // Create Stripe Connect account
             try
             {
-                var stripeAccount = await _stripeService.CreateConnectedAccountAsync(
-                    company.Email, 
-                    "individual",
-                    createCompanyDto.Country ?? "US"); // Use country from DTO or default to US
-                
-                company.StripeAccountId = _encryptionService.Encrypt(stripeAccount.Id);
-                _context.Companies.Update(company);
-                await _context.SaveChangesAsync();
+                // Validate subdomain is present (required for Stripe account identification)
+                if (!string.IsNullOrWhiteSpace(company.Subdomain))
+                {
+                    // Construct full domain name from subdomain
+                    string? fullDomainName = $"{company.Subdomain.ToLower()}.aegis-rental.com";
+
+                    var stripeAccount = await _stripeService.CreateConnectedAccountAsync(
+                        company.Subdomain, 
+                        "express", // Use express account type (email collected during onboarding)
+                        createCompanyDto.Country ?? "US", // Use country from DTO or default to US
+                        company.Id, // companyId
+                        fullDomainName // domain name
+                    );
+                    
+                    // Get or create StripeCompany record
+                    if (company.StripeSettingsId == null)
+                    {
+                        _logger.LogWarning("Cannot create Stripe account for company {CompanyId}: StripeSettingsId is missing", company.Id);
+                    }
+                    else
+                    {
+                        var stripeCompany = await _context.StripeCompanies
+                            .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+                        if (stripeCompany == null)
+                        {
+                            stripeCompany = new CarRental.Api.Models.StripeCompany
+                            {
+                                CompanyId = company.Id,
+                                SettingsId = company.StripeSettingsId.Value,
+                                CreatedAt = DateTime.UtcNow,
+                                UpdatedAt = DateTime.UtcNow
+                            };
+                            _context.StripeCompanies.Add(stripeCompany);
+                        }
+
+                        stripeCompany.StripeAccountId = _encryptionService.Encrypt(stripeAccount.Id);
+                        stripeCompany.UpdatedAt = DateTime.UtcNow;
+                    }
+                    
+                    company.StripeAccountType = stripeAccount.Type;
+                    _context.Companies.Update(company);
+                    await _context.SaveChangesAsync();
+                }
+                else
+                {
+                    _logger.LogWarning("Cannot create Stripe account for company {CompanyId}: subdomain is missing", company.Id);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to create Stripe Connect account for company {Email}", company.Email);
+                _logger.LogWarning(ex, "Failed to create Stripe Connect account for company {CompanyId}", company.Id);
                 // Continue without Stripe account for now
             }
 
@@ -759,7 +806,7 @@ public class RentalCompaniesController : ControllerBase
                 {
                     try
                     {
-                        await _stripeService.GetAccountAsync(stripeAccountId);
+                        await _stripeService.GetAccountAsync(stripeAccountId, company.Id);
                         // Additional Stripe account updates can be added here
                     }
                     catch (Exception ex)

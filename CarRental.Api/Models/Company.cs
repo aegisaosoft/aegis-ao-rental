@@ -41,7 +41,7 @@ public class Company
     public string? Website { get; set; }
 
     [MaxLength(255)]
-    [Column("stripe_account_id")]
+    [NotMapped] // Not stored in company table, stored in stripe_company table
     public string? StripeAccountId { get; set; }
 
     [Column("stripe_settings_id")]

@@ -273,11 +273,28 @@ builder.Services.AddAuthentication(options =>
     // Add event handlers to log authentication failures
     options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
     {
+        OnMessageReceived = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+            // Extract token - handle both "Bearer {token}" and just "{token}" formats
+            if (!string.IsNullOrEmpty(authHeader) && !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                // Token sent without Bearer prefix - extract it manually
+                context.Token = authHeader.Trim();
+            }
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            return Task.CompletedTask;
+        },
         OnAuthenticationFailed = context =>
         {
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-            logger.LogWarning("JWT Authentication failed: {Error}", context.Exception.Message);
+            logger.LogWarning("JWT Authentication failed for path {Path}: {Error}", context.Request.Path, context.Exception.Message);
             logger.LogWarning("Exception type: {ExceptionType}", context.Exception.GetType().Name);
+            logger.LogWarning("Exception details: {Exception}", context.Exception.ToString());
             if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenExpiredException)
             {
                 logger.LogWarning("Token is expired");
@@ -288,18 +305,27 @@ builder.Services.AddAuthentication(options =>
             }
             else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidIssuerException)
             {
-                logger.LogWarning("Token issuer is invalid");
+                logger.LogWarning("Token issuer is invalid. Expected: {ExpectedIssuer}", issuer);
             }
             else if (context.Exception is Microsoft.IdentityModel.Tokens.SecurityTokenInvalidAudienceException)
             {
-                logger.LogWarning("Token audience is invalid");
+                logger.LogWarning("Token audience is invalid. Expected: {ExpectedAudience}", audience);
             }
             return Task.CompletedTask;
         },
         OnChallenge = context =>
         {
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-            logger.LogWarning("JWT Challenge triggered: {Error}, {ErrorDescription}", context.Error, context.ErrorDescription);
+            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+            logger.LogWarning("JWT Challenge triggered for path {Path}: Error={Error}, ErrorDescription={ErrorDescription}", 
+                context.Request.Path, context.Error, context.ErrorDescription);
+            logger.LogWarning("JWT Challenge: Authorization header present={HasHeader}, Value={HeaderValue}", 
+                !string.IsNullOrEmpty(authHeader), 
+                authHeader != null && authHeader.Length > 50 ? authHeader.Substring(0, 50) + "..." : authHeader);
+            if (context.AuthenticateFailure != null)
+            {
+                logger.LogWarning("JWT Challenge: AuthenticateFailure={Failure}", context.AuthenticateFailure.ToString());
+            }
             return Task.CompletedTask;
         }
     };

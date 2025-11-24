@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.Mvc;
 using Stripe;
 using Stripe.Terminal;
 using CarRental.Api.Data;
+using CarRental.Api.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace CarRental.Api.Controllers;
@@ -42,6 +43,20 @@ public class TerminalController : ControllerBase
     }
 
     /// <summary>
+    /// Gets the Stripe account ID for a company from StripeCompany table
+    /// </summary>
+    private async Task<string?> GetStripeAccountIdAsync(Company company)
+    {
+        if (company.StripeSettingsId == null)
+            return null;
+
+        var stripeCompany = await _context.StripeCompanies
+            .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+        return stripeCompany?.StripeAccountId;
+    }
+
+    /// <summary>
     /// Creates a connection token for Stripe Terminal
     /// </summary>
     [HttpPost("connection-token")]
@@ -58,14 +73,15 @@ public class TerminalController : ControllerBase
                 return NotFound(new { message = "Company not found" });
             }
 
-            if (string.IsNullOrEmpty(company.StripeAccountId))
+            var stripeAccountId = await GetStripeAccountIdAsync(company);
+            if (string.IsNullOrEmpty(stripeAccountId))
             {
                 return BadRequest(new { message = "Company does not have a Stripe account connected" });
             }
 
             var requestOptions = new RequestOptions
             {
-                StripeAccount = company.StripeAccountId
+                StripeAccount = stripeAccountId
             };
 
             var service = new ConnectionTokenService();
@@ -109,14 +125,15 @@ public class TerminalController : ControllerBase
                 return NotFound(new { message = "Company not found" });
             }
 
-            if (string.IsNullOrEmpty(company.StripeAccountId))
+            var stripeAccountId = await GetStripeAccountIdAsync(company);
+            if (string.IsNullOrEmpty(stripeAccountId))
             {
                 return BadRequest(new { message = "Company does not have a Stripe account connected" });
             }
 
             var requestOptions = new RequestOptions
             {
-                StripeAccount = company.StripeAccountId
+                StripeAccount = stripeAccountId
             };
 
             var options = new PaymentIntentCreateOptions
@@ -182,14 +199,15 @@ public class TerminalController : ControllerBase
                 return NotFound(new { message = "Company not found" });
             }
 
-            if (string.IsNullOrEmpty(company.StripeAccountId))
+            var stripeAccountId = await GetStripeAccountIdAsync(company);
+            if (string.IsNullOrEmpty(stripeAccountId))
             {
                 return BadRequest(new { message = "Company does not have a Stripe account connected" });
             }
 
             var requestOptions = new RequestOptions
             {
-                StripeAccount = company.StripeAccountId
+                StripeAccount = stripeAccountId
             };
 
             var service = new PaymentIntentService();
@@ -242,14 +260,15 @@ public class TerminalController : ControllerBase
                 return NotFound(new { message = "Company not found" });
             }
 
-            if (string.IsNullOrEmpty(company.StripeAccountId))
+            var stripeAccountId = await GetStripeAccountIdAsync(company);
+            if (string.IsNullOrEmpty(stripeAccountId))
             {
                 return BadRequest(new { message = "Company does not have a Stripe account connected" });
             }
 
             var requestOptions = new RequestOptions
             {
-                StripeAccount = company.StripeAccountId
+                StripeAccount = stripeAccountId
             };
 
             var service = new PaymentIntentService();

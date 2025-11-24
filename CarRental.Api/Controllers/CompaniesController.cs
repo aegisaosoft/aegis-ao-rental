@@ -69,6 +69,83 @@ public class CompaniesController : ControllerBase
     }
 
     /// <summary>
+    /// Loads StripeAccountId from StripeCompany table into Company.StripeAccountId (decrypted)
+    /// </summary>
+    private async Task LoadStripeAccountIdAsync(Company company)
+    {
+        if (company.StripeSettingsId == null)
+        {
+            company.StripeAccountId = null;
+            return;
+        }
+
+        // Use the same join logic as the SQL query:
+        // FROM companies c 
+        // INNER JOIN stripe_company sc ON c.id = sc.company_id 
+        // INNER JOIN stripe_settings ss ON c.stripe_settings_id = ss.id AND ss.id = sc.settings_id
+        var stripeCompany = await _context.StripeCompanies
+            .Where(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value)
+            .FirstOrDefaultAsync();
+
+        // If no exact match, try to find any StripeCompany record for this company (fallback)
+        if (stripeCompany == null)
+        {
+            stripeCompany = await _context.StripeCompanies
+                .Where(sc => sc.CompanyId == company.Id && !string.IsNullOrEmpty(sc.StripeAccountId))
+                .FirstOrDefaultAsync();
+        }
+
+        if (stripeCompany == null || string.IsNullOrEmpty(stripeCompany.StripeAccountId))
+        {
+            company.StripeAccountId = null;
+            return;
+        }
+
+        // Decrypt the account ID before storing it in the Company model
+        try
+        {
+            company.StripeAccountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to decrypt StripeAccountId for company {CompanyId}. The value might be stored in plain text.", company.Id);
+            // If decryption fails, it might be stored in plain text (for backward compatibility)
+            company.StripeAccountId = stripeCompany.StripeAccountId;
+        }
+    }
+
+    /// <summary>
+    /// Saves StripeAccountId from Company.StripeAccountId to StripeCompany table
+    /// </summary>
+    private async Task SaveStripeAccountIdAsync(Company company)
+    {
+        if (company.StripeSettingsId == null)
+        {
+            // If no StripeSettingsId, we can't save to StripeCompany
+            return;
+        }
+
+        var stripeCompany = await _context.StripeCompanies
+            .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+        if (stripeCompany == null)
+        {
+            // Create new StripeCompany record
+            stripeCompany = new CarRental.Api.Models.StripeCompany
+            {
+                CompanyId = company.Id,
+                SettingsId = company.StripeSettingsId.Value,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            _context.StripeCompanies.Add(stripeCompany);
+        }
+
+        stripeCompany.StripeAccountId = company.StripeAccountId;
+        stripeCompany.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
     /// Get all companies with optional filtering
     /// </summary>
     [HttpGet]
@@ -87,6 +164,23 @@ public class CompaniesController : ControllerBase
             var companies = await query
                 .OrderBy(c => c.CompanyName)
                 .ToListAsync();
+
+            // Load StripeAccountId for all companies
+            foreach (var company in companies)
+            {
+                await LoadStripeAccountIdAsync(company);
+            }
+
+            // Get all StripeCompany records for hasStripeAccount check
+            var companyIds = companies.Select(c => c.Id).ToList();
+            var stripeCompanies = await _context.StripeCompanies
+                .Where(sc => companyIds.Contains(sc.CompanyId))
+                .ToListAsync();
+
+            var stripeCompanyDict = stripeCompanies
+                .Where(sc => !string.IsNullOrEmpty(sc.StripeAccountId))
+                .GroupBy(sc => sc.CompanyId)
+                .ToDictionary(g => g.Key, g => g.First());
 
             var result = companies.Select(c => new
             {
@@ -115,7 +209,7 @@ public class CompaniesController : ControllerBase
                 bookingIntegrated = !string.IsNullOrEmpty(c.BookingIntegrated) && (c.BookingIntegrated.ToLower() == "true" || c.BookingIntegrated == "1"),
                 taxId = c.TaxId,
                 stripeAccountId = (string?)null,
-                hasStripeAccount = !string.IsNullOrEmpty(c.StripeAccountId),
+                hasStripeAccount = stripeCompanyDict.ContainsKey(c.Id),
                 blinkKey = c.BlinkKey,
                 isActive = c.IsActive,
                 createdAt = c.CreatedAt,
@@ -150,6 +244,9 @@ public class CompaniesController : ControllerBase
                 return NotFound(new { error = "Company not found" });
             }
 
+            // Load StripeAccountId from StripeCompany table
+            await LoadStripeAccountIdAsync(company);
+
             var result = new
             {
                 id = company.Id,
@@ -178,7 +275,9 @@ public class CompaniesController : ControllerBase
                 bookingIntegrated = !string.IsNullOrEmpty(company.BookingIntegrated) && (company.BookingIntegrated.ToLower() == "true" || company.BookingIntegrated == "1"),
                 taxId = company.TaxId,
                 hasStripeAccount = !string.IsNullOrEmpty(company.StripeAccountId),
+                stripeAccountId = company.StripeAccountId, // Include the actual ID
                 stripeSettingsId = company.StripeSettingsId,
+                stripeOnboardingLink = company.StripeOnboardingLink,
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
                 createdAt = company.CreatedAt,
@@ -305,9 +404,7 @@ public class CompaniesController : ControllerBase
                 BookingIntegrated = request.BookingIntegrated.HasValue && request.BookingIntegrated.Value ? "true" : null,
                 TaxId = request.TaxId,
                 StripeSettingsId = stripeSettingsId,
-                StripeAccountId = string.IsNullOrWhiteSpace(request.StripeAccountId)
-                    ? null
-                    : _encryptionService.Encrypt(request.StripeAccountId),
+                // StripeAccountId is now stored in StripeCompany table, not Company table
                 BlinkKey = request.BlinkKey,
                 AiIntegration = NormalizeAiIntegration(request.AiIntegration),
                 Currency = CurrencyHelper.ResolveCurrency(request.Currency, request.Country),
@@ -330,6 +427,14 @@ public class CompaniesController : ControllerBase
 
             _context.Companies.Add(company);
             await _context.SaveChangesAsync();
+
+            // Save StripeAccountId to StripeCompany table if provided
+            if (!string.IsNullOrWhiteSpace(request.StripeAccountId))
+            {
+                company.StripeAccountId = _encryptionService.Encrypt(request.StripeAccountId);
+                await SaveStripeAccountIdAsync(company);
+                await _context.SaveChangesAsync();
+            }
 
             _logger.LogInformation("Company created: {CompanyName} (ID: {CompanyId})", company.CompanyName, company.Id);
 
@@ -697,6 +802,7 @@ public class CompaniesController : ControllerBase
                 company.StripeSettingsId = null;
             }
 
+            // Save StripeAccountId to StripeCompany table if provided
             if (request.StripeAccountId != null)
             {
                 company.StripeAccountId = string.IsNullOrWhiteSpace(request.StripeAccountId)

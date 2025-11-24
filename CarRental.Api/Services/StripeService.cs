@@ -48,9 +48,9 @@ public interface IStripeService
     Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount);
     
     // Stripe Connect methods
-    Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country, Guid? companyId = null);
+    Task<Account> CreateConnectedAccountAsync(string subdomain, string accountType, string country, Guid? companyId = null, string? domainName = null);
     Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl, Guid? companyId = null);
-    Task<Account> GetAccountAsync(string accountId);
+    Task<Account> GetAccountAsync(string accountId, Guid? companyId = null);
     Task<Account> UpdateAccountAsync(string accountId);
     
     // Legacy methods (kept for backward compatibility)
@@ -318,8 +318,6 @@ public class StripeService : IStripeService
                 _globalInitialized = true;
             }
 
-            _logger.LogWarning("[Stripe] Publishable key: {Publishable}", publishableKey);
-            _logger.LogWarning("[Stripe] Webhook secret: {WebhookSecret}", webhookSecret);
         }
         finally
         {
@@ -664,20 +662,47 @@ public class StripeService : IStripeService
     }
 
     // Stripe Connect methods - new implementations
-    public async Task<Account> CreateConnectedAccountAsync(string email, string accountType, string country, Guid? companyId = null)
+    public async Task<Account> CreateConnectedAccountAsync(string subdomain, string accountType, string country, Guid? companyId = null, string? domainName = null)
     {
         await EnsureInitializedAsync(companyId);
-        _logger.LogWarning("[Stripe] CreateConnectedAccountAsync email={Email} accountType={AccountType} country={Country}, companyId={CompanyId}", email, accountType, country, companyId);
+        _logger.LogWarning("[Stripe] CreateConnectedAccountAsync subdomain={Subdomain} accountType={AccountType} country={Country}, companyId={CompanyId}, domainName={DomainName}", subdomain, accountType, country, companyId, domainName);
         try
         {
             // Convert country name to ISO 3166-1 alpha-2 code if needed
             var countryCode = CountryHelper.NormalizeToIsoCode(country);
             
+            // Construct full domain name if not provided
+            string fullDomainName;
+            if (!string.IsNullOrWhiteSpace(domainName))
+            {
+                fullDomainName = domainName;
+            }
+            else
+            {
+                // Try to get DNS zone name from settings
+                var dnsZoneName = await _settingsService.GetValueAsync("azure.dnsZoneName");
+                if (!string.IsNullOrWhiteSpace(dnsZoneName))
+                {
+                    fullDomainName = $"{subdomain.ToLower()}.{dnsZoneName}";
+                }
+                else
+                {
+                    // Fallback to default domain
+                    fullDomainName = $"{subdomain.ToLower()}.aegis-rental.com";
+                }
+            }
+            
+            // Create account without email (email will be collected during onboarding)
+            // Use subdomain in metadata as identifier
             var options = new AccountCreateOptions
             {
                 Type = accountType, // "express" or "standard"
                 Country = countryCode,
-                Email = email,
+                Metadata = new Dictionary<string, string>
+                {
+                    { "subdomain", subdomain },
+                    { "identifier", subdomain } // Use subdomain as the primary identifier
+                },
                 Capabilities = new AccountCapabilitiesOptions
                 {
                     CardPayments = new AccountCapabilitiesCardPaymentsOptions
@@ -691,12 +716,33 @@ public class StripeService : IStripeService
                 }
             };
 
+            // Add BusinessProfile only if domain name is valid
+            if (!string.IsNullOrWhiteSpace(fullDomainName))
+            {
+                // Validate URL format before adding
+                var url = $"https://{fullDomainName}";
+                if (Uri.TryCreate(url, UriKind.Absolute, out var validUri) && 
+                    (validUri.Scheme == Uri.UriSchemeHttp || validUri.Scheme == Uri.UriSchemeHttps))
+                {
+                    options.BusinessProfile = new AccountBusinessProfileOptions
+                    {
+                        Name = fullDomainName, // Use full domain as account name
+                        Url = url // Full URL
+                    };
+                    _logger.LogInformation("[Stripe] Adding BusinessProfile: Name={Name}, Url={Url}", fullDomainName, url);
+                }
+                else
+                {
+                    _logger.LogWarning("[Stripe] Invalid domain name format, skipping BusinessProfile: {DomainName}", fullDomainName);
+                }
+            }
+
             var service = new AccountService();
             return await service.CreateAsync(options);
         }
         catch (StripeException ex)
         {
-            _logger.LogError(ex, "Error creating connected account for {Email}", email);
+            _logger.LogError(ex, "Error creating connected account for subdomain {Subdomain}", subdomain);
             throw new InvalidOperationException($"Failed to create connected account: {ex.Message}", ex);
         }
     }
@@ -705,9 +751,52 @@ public class StripeService : IStripeService
     public async Task<AccountLink> CreateAccountLinkAsync(string accountId, string returnUrl, string refreshUrl, Guid? companyId = null)
     {
         await EnsureInitializedAsync(companyId);
-        _logger.LogWarning("[Stripe] CreateAccountLinkAsync accountId={AccountId}, companyId={CompanyId}", accountId, companyId);
         try
         {
+            // Check account status first (use companyId to get account with correct Stripe settings)
+            try
+            {
+                var account = await GetAccountAsync(accountId, companyId);
+                
+                // Check if account is rejected (but allow past_due accounts to create links so they can complete requirements)
+                if (account.Requirements?.DisabledReason != null)
+                {
+                    var disabledReason = account.Requirements.DisabledReason;
+                    
+                    // Allow creating links for past_due accounts - they can still complete onboarding
+                    if (disabledReason.Contains("past_due", StringComparison.OrdinalIgnoreCase) ||
+                        disabledReason.Contains("requirements.past_due", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogInformation("Account {AccountId} has past due requirements, but allowing link creation to complete onboarding", accountId);
+                        // Continue - allow link creation
+                    }
+                    else if (disabledReason.Contains("rejected", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogError("Cannot create account link for {AccountId}: Account is rejected. Reason: {Reason}", 
+                            accountId, disabledReason);
+                        throw new InvalidOperationException(
+                            $"Account {accountId} has been rejected by Stripe. " +
+                            $"The account must be deleted and recreated. " +
+                            $"Reason: {disabledReason}");
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Account {AccountId} is disabled. Reason: {Reason}. Attempting to create link anyway.", 
+                            accountId, disabledReason);
+                        // Continue - try to create link, let Stripe decide if it's allowed
+                    }
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Re-throw our custom exceptions
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not check account status before creating link, proceeding anyway");
+            }
+
             var options = new AccountLinkCreateOptions
             {
                 Account = accountId,
@@ -719,17 +808,24 @@ public class StripeService : IStripeService
             var service = new AccountLinkService();
             return await service.CreateAsync(options);
         }
+        catch (StripeException ex) when (ex.Message.Contains("rejected", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogError(ex, "Account {AccountId} was rejected by Stripe. Cannot create account link.", accountId);
+            throw new InvalidOperationException(
+                $"Account {accountId} has been rejected by Stripe and cannot create account links. " +
+                $"Please delete the rejected account in Stripe dashboard and try again. " +
+                $"Stripe error: {ex.Message}", ex);
+        }
         catch (StripeException ex)
         {
-            _logger.LogError(ex, "Error creating account link for {AccountId}", accountId);
+            _logger.LogError(ex, "Error creating account link for {AccountId}. Stripe error: {StripeError}", accountId, ex.Message);
             throw new InvalidOperationException($"Failed to create account link: {ex.Message}", ex);
         }
     }
 
-    public async Task<Account> GetAccountAsync(string accountId)
+    public async Task<Account> GetAccountAsync(string accountId, Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] GetAccountAsync accountId={AccountId}", accountId);
+        await EnsureInitializedAsync(companyId);
         try
         {
             var service = new AccountService();
@@ -848,10 +944,13 @@ public class StripeService : IStripeService
     }
 
     // Legacy methods (kept for backward compatibility)
-    [Obsolete("Use CreateConnectedAccountAsync(string email, string accountType, string country) instead.")]
+    [Obsolete("Use CreateConnectedAccountAsync(string subdomain, string accountType, string country) instead.")]
     public async Task<Account> CreateConnectedAccountLegacyAsync(string email, string country = "US")
     {
-        return await CreateConnectedAccountAsync(email, "express", country);
+        // Legacy method: extract subdomain from email or use email as subdomain
+        // This is for backward compatibility only
+        var subdomain = email.Contains("@") ? email.Split("@")[0] : email;
+        return await CreateConnectedAccountAsync(subdomain, "express", country);
     }
 
     [Obsolete("Use GetAccountAsync instead.")]

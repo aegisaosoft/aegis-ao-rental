@@ -436,50 +436,58 @@ public class PaymentsController : ControllerBase
 
             // Only set up Stripe Connect transfers in production when company has a valid Stripe account
             // In development, skip transfers to avoid "stripe_balance.stripe_transfers" capability errors
-            if (!string.IsNullOrWhiteSpace(company.StripeAccountId) && !_environment.IsDevelopment())
+            string? destination = null;
+            
+            if (company.StripeSettingsId != null && !_environment.IsDevelopment())
             {
-                string? destination = null;
+                var stripeCompany = await _context.StripeCompanies
+                    .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
 
-                try
+                if (stripeCompany != null && !string.IsNullOrWhiteSpace(stripeCompany.StripeAccountId))
                 {
-                    destination = _encryptionService.Decrypt(company.StripeAccountId);
-                }
-                catch (FormatException)
-                {
-                    destination = company.StripeAccountId;
-                }
-                catch (CryptographicException)
-                {
-                    destination = company.StripeAccountId;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to decrypt Stripe account ID for company {CompanyId}", company.Id);
-                }
-
-                if (!string.IsNullOrWhiteSpace(destination))
-                {
-                    if (destination == company.StripeAccountId)
+                    try
                     {
+                        destination = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
+                    }
+                    catch (FormatException)
+                    {
+                        destination = stripeCompany.StripeAccountId;
+                        // Re-encrypt if plaintext
                         try
                         {
-                            company.StripeAccountId = _encryptionService.Encrypt(destination);
-                            _context.Companies.Update(company);
+                            stripeCompany.StripeAccountId = _encryptionService.Encrypt(destination);
+                            stripeCompany.UpdatedAt = DateTime.UtcNow;
+                            _context.StripeCompanies.Update(stripeCompany);
                             await _context.SaveChangesAsync();
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Failed to re-encrypt Stripe account ID for company {CompanyId}", company.Id);
+                            _logger.LogError(ex, "Failed to encrypt Stripe account ID for StripeCompany {StripeCompanyId}", stripeCompany.Id);
                         }
                     }
-
-                    sessionOptions.PaymentIntentData.TransferData = new Stripe.Checkout.SessionPaymentIntentDataTransferDataOptions
+                    catch (CryptographicException)
                     {
-                        Destination = destination
-                    };
+                        destination = stripeCompany.StripeAccountId;
+                        // Re-encrypt if plaintext
+                        try
+                        {
+                            stripeCompany.StripeAccountId = _encryptionService.Encrypt(destination);
+                            stripeCompany.UpdatedAt = DateTime.UtcNow;
+                            _context.StripeCompanies.Update(stripeCompany);
+                            await _context.SaveChangesAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to encrypt Stripe account ID for StripeCompany {StripeCompanyId}", stripeCompany.Id);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to decrypt Stripe account ID for company {CompanyId}", company.Id);
+                    }
                 }
             }
-            else if (!string.IsNullOrWhiteSpace(company.StripeAccountId) && _environment.IsDevelopment())
+            else if (company.StripeSettingsId != null && _environment.IsDevelopment())
             {
                 _logger.LogWarning(
                     "[Stripe] Development mode: Skipping transfer setup for company {CompanyId} ({CompanyName}). " +
@@ -1448,11 +1456,17 @@ public class PaymentsController : ControllerBase
 
             foreach (var company in companies)
             {
-                if (!string.IsNullOrEmpty(company.StripeAccountId))
+                if (company.StripeSettingsId == null)
+                    continue;
+
+                var stripeCompany = await _context.StripeCompanies
+                    .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+                if (stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId))
                 {
                     try
                     {
-                        var decryptedId = _encryptionService.Decrypt(company.StripeAccountId);
+                        var decryptedId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
                         if (decryptedId == account.Id)
                         {
                             targetCompany = company;
@@ -1588,11 +1602,17 @@ public class PaymentsController : ControllerBase
 
         foreach (var company in companies)
         {
-            if (!string.IsNullOrEmpty(company.StripeAccountId))
+            if (company.StripeSettingsId == null)
+                continue;
+
+            var stripeCompany = await _context.StripeCompanies
+                .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
+
+            if (stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId))
             {
                 try
                 {
-                    var decryptedId = _encryptionService.Decrypt(company.StripeAccountId);
+                    var decryptedId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
                     // Payout event comes from connected account context
                     companyId = company.Id;
                     break;
