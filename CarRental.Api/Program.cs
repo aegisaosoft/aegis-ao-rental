@@ -35,6 +35,12 @@ using CarRental.Api.HostedServices;
 // Enable legacy timestamp behavior for Npgsql to handle DateTimes
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
+// Write to console immediately for Azure App Service debugging
+Console.WriteLine("[Program] Application starting...");
+Console.WriteLine($"[Program] Environment: {Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Not set"}");
+Console.WriteLine($"[Program] PORT: {Environment.GetEnvironmentVariable("PORT") ?? "Not set"}");
+Console.WriteLine($"[Program] Current Directory: {Directory.GetCurrentDirectory()}");
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -385,9 +391,14 @@ builder.Services.AddHttpClient();
 
 var app = builder.Build();
 
+// Write to console immediately (before logger is available)
+Console.WriteLine("[Program] Application built successfully");
+Console.WriteLine($"[Program] Environment: {app.Environment.EnvironmentName}");
+
 // Log environment information early
 var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
 startupLogger.LogInformation("=== Application Startup ===");
+Console.WriteLine("[Program] Logger initialized");
 startupLogger.LogInformation("Build timestamp: {Timestamp}", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC"));
 startupLogger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
 startupLogger.LogInformation("Content Root: {ContentRoot}", app.Environment.ContentRootPath);
