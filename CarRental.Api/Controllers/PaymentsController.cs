@@ -276,48 +276,90 @@ public class PaymentsController : ControllerBase
             if (customer == null)
                 return BadRequest("Customer not found");
 
-            if (string.IsNullOrEmpty(customer.StripeCustomerId))
+            if (string.IsNullOrEmpty(customer.Email))
             {
-                customer = await _stripeService.CreateCustomerAsync(customer);
-                _context.Customers.Update(customer);
-                await _context.SaveChangesAsync();
+                _logger.LogError("Customer email is missing for customer {CustomerId}", dto.CustomerId);
+                return StatusCode(500, new { error = "Customer email is missing" });
             }
 
             var company = await _context.Companies.FirstOrDefaultAsync(c => c.Id == dto.CompanyId);
             if (company == null)
                 return BadRequest("Company not found");
 
-            // Update customer's default country if not set, to help Stripe pre-fill the correct country
-            var countryCode = GetCountryCode(company.Country);
-            if (!string.IsNullOrEmpty(countryCode) && !string.IsNullOrEmpty(customer.StripeCustomerId))
+            // Get Stripe API key from stripe_settings table using company.StripeSettingsId
+            var stripeSecretKey = await GetStripeSecretKeyAsync(company.Id);
+            if (string.IsNullOrEmpty(stripeSecretKey))
             {
+                _logger.LogError("CreateCheckoutSession: Stripe secret key not configured for company {CompanyId}", company.Id);
+                return StatusCode(500, new { error = "Stripe not configured for this company" });
+            }
+
+            // Get Stripe connected account ID from stripe_company table (REQUIRED)
+            // Same logic as security deposit - payments must go to company account, not platform account
+            var stripeAccountId = await GetStripeAccountIdAsync(company.Id);
+            
+            // Determine valid customer ID (same logic as security deposit)
+            string? validCustomerId = null;
+            var countryCode = GetCountryCode(company.Country);
+            
+            if (!string.IsNullOrEmpty(customer.StripeCustomerId) && string.IsNullOrEmpty(stripeAccountId))
+            {
+                // Only try to use customer ID on platform account (not connected account)
+                // On connected accounts, customers are separate entities, so use email instead
                 try
                 {
                     var customerService = new Stripe.CustomerService();
-                    var stripeCustomer = await customerService.GetAsync(customer.StripeCustomerId);
+                    var customerRequestOptions = new Stripe.RequestOptions { ApiKey = stripeSecretKey };
                     
-                    // Only update if customer doesn't have an address set
-                    if (string.IsNullOrEmpty(stripeCustomer.Address?.Country))
+                    try
                     {
-                        await customerService.UpdateAsync(customer.StripeCustomerId, new Stripe.CustomerUpdateOptions
-                        {
-                            Address = new Stripe.AddressOptions
-                            {
-                                Country = countryCode
-                            }
-                        });
+                        // Verify customer exists on platform account
+                        var stripeCustomer = await customerService.GetAsync(customer.StripeCustomerId, null, customerRequestOptions);
+                        validCustomerId = customer.StripeCustomerId;
                         
-                        _logger.LogInformation(
-                            "[Stripe] Updated customer {CustomerId} address with country {CountryCode}",
-                            customer.StripeCustomerId,
-                            countryCode
+                        // Only update if customer doesn't have an address set
+                        if (!string.IsNullOrEmpty(countryCode) && string.IsNullOrEmpty(stripeCustomer.Address?.Country))
+                        {
+                            await customerService.UpdateAsync(customer.StripeCustomerId, new Stripe.CustomerUpdateOptions
+                            {
+                                Address = new Stripe.AddressOptions
+                                {
+                                    Country = countryCode
+                                }
+                            }, customerRequestOptions);
+                            
+                            _logger.LogInformation(
+                                "[Stripe] Updated customer {CustomerId} address with country {CountryCode}",
+                                customer.StripeCustomerId,
+                                countryCode
+                            );
+                        }
+                    }
+                    catch (Stripe.StripeException stripeEx) when (stripeEx.StripeError?.Code == "resource_missing")
+                    {
+                        // Customer doesn't exist on platform account - use email instead
+                        _logger.LogWarning(
+                            "[Stripe] Customer {CustomerId} not found on platform account. Will use email instead.",
+                            customer.StripeCustomerId
                         );
+                        validCustomerId = null;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to update customer address for {CustomerId}", customer.StripeCustomerId);
+                    _logger.LogWarning(ex, "[Stripe] Failed to verify customer {CustomerId}. Will use email instead.", customer.StripeCustomerId);
+                    validCustomerId = null;
                 }
+            }
+            else if (!string.IsNullOrEmpty(stripeAccountId))
+            {
+                // Using connected account - always use email to let Stripe handle customer creation/lookup
+                _logger.LogInformation(
+                    "[Stripe] Using connected account {StripeAccountId}. Will use customer email {Email} instead of customer ID to let Stripe handle customer on connected account.",
+                    stripeAccountId,
+                    customer.Email
+                );
+                validCustomerId = null;
             }
 
             var amountInCents = (long)Math.Round(dto.Amount * 100M, MidpointRounding.AwayFromZero);
@@ -374,7 +416,6 @@ public class PaymentsController : ControllerBase
             var sessionOptions = new Stripe.Checkout.SessionCreateOptions
             {
                 Mode = "payment",
-                Customer = customer.StripeCustomerId,
                 SuccessUrl = dto.SuccessUrl,
                 CancelUrl = dto.CancelUrl,
                 Locale = locale,
@@ -392,22 +433,37 @@ public class PaymentsController : ControllerBase
                 {
                     { "customer_id", customer.Id.ToString() },
                     { "company_id", dto.CompanyId.ToString() }
-                },
-                CustomerUpdate = new Stripe.Checkout.SessionCustomerUpdateOptions
-                {
-                    Address = "auto"
                 }
             };
             
-            // Set default billing address to company's country
-            if (!string.IsNullOrEmpty(countryCode))
+            // Update options to use valid customer ID or email (same as security deposit)
+            if (!string.IsNullOrEmpty(validCustomerId))
             {
+                // Platform account with valid customer ID
+                sessionOptions.Customer = validCustomerId;
+                sessionOptions.CustomerEmail = null;
                 sessionOptions.CustomerUpdate = new Stripe.Checkout.SessionCustomerUpdateOptions
                 {
                     Address = "auto",
                     Name = "auto"
                 };
-                
+                _logger.LogInformation("[Stripe] Using customer ID {CustomerId} for checkout session on platform account", validCustomerId);
+            }
+            else
+            {
+                // Use email (for connected accounts or when customer ID doesn't exist)
+                sessionOptions.Customer = null;
+                sessionOptions.CustomerEmail = customer.Email;
+                sessionOptions.CustomerUpdate = null; // CustomerUpdate can only be used with Customer, not CustomerEmail
+                _logger.LogInformation("[Stripe] Using customer email {Email} for checkout session", customer.Email);
+            }
+            
+            // Note: CustomerUpdate is already set above based on whether we have validCustomerId
+            // When using CustomerEmail (connected accounts), CustomerUpdate must be null
+            // When using Customer (platform account), CustomerUpdate is already set to "auto"
+            // Do NOT set CustomerUpdate again here - it will override the null we set for connected accounts
+            if (!string.IsNullOrEmpty(countryCode))
+            {
                 // Pre-fill customer's billing address if we have customer data
                 sessionOptions.BillingAddressCollection = "required";
                 
@@ -437,17 +493,6 @@ public class PaymentsController : ControllerBase
                 sessionOptions.Metadata!["booking_number"] = dto.BookingNumber;
             }
 
-            // Get Stripe API key from stripe_settings table using company.StripeSettingsId
-            var stripeSecretKey = await GetStripeSecretKeyAsync(company.Id);
-            if (string.IsNullOrEmpty(stripeSecretKey))
-            {
-                _logger.LogError("CreateCheckoutSession: Stripe secret key not configured for company {CompanyId}", company.Id);
-                return StatusCode(500, new { error = "Stripe not configured for this company" });
-            }
-
-            // Get Stripe connected account ID from stripe_company table (REQUIRED)
-            // Same logic as security deposit - payments must go to company account, not platform account
-            var stripeAccountId = await GetStripeAccountIdAsync(company.Id);
             if (string.IsNullOrEmpty(stripeAccountId))
             {
                 _logger.LogError(
