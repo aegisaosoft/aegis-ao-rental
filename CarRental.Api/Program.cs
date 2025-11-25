@@ -579,14 +579,26 @@ try
     // Log port information for Azure App Service debugging
     var port = Environment.GetEnvironmentVariable("PORT");
     var urls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+    
+    // Write to console immediately (before logger might fail)
+    Console.WriteLine("[Program] About to start Kestrel...");
+    Console.WriteLine($"[Program] PORT: {port ?? "Not set"}");
+    Console.WriteLine($"[Program] ASPNETCORE_URLS: {urls ?? "Not set"}");
+    
     startupLogger.LogInformation("Starting Kestrel web server...");
     startupLogger.LogInformation("PORT environment variable: {Port}", port ?? "Not set");
     startupLogger.LogInformation("ASPNETCORE_URLS environment variable: {Urls}", urls ?? "Not set");
     startupLogger.LogInformation("Application is ready to accept requests");
+    
+    Console.WriteLine("[Program] Calling app.Run()...");
     app.Run();
 }
 catch (Exception ex)
 {
+    // Write to console in case logger fails
+    Console.WriteLine($"[Program] CRITICAL ERROR: {ex.Message}");
+    Console.WriteLine($"[Program] Stack trace: {ex.StackTrace}");
+    
     startupLogger.LogCritical(ex, "Application failed to start. Error: {Message}", ex.Message);
     startupLogger.LogCritical(ex, "Stack trace: {StackTrace}", ex.StackTrace);
     throw;
