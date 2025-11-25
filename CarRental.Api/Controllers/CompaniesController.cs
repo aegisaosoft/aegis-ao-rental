@@ -29,6 +29,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
 using System.Text.Encodings.Web;
 using System.Linq;
+using BCrypt.Net;
 
 namespace CarRental.Api.Controllers;
 
@@ -437,6 +438,57 @@ public class CompaniesController : ControllerBase
             }
 
             _logger.LogInformation("Company created: {CompanyName} (ID: {CompanyId})", company.CompanyName, company.Id);
+
+            // Create admin customer with company email
+            try
+            {
+                // Check if customer with this email already exists
+                var existingCustomer = await _context.Customers
+                    .FirstOrDefaultAsync(c => EF.Functions.ILike(c.Email, company.Email));
+
+                if (existingCustomer == null)
+                {
+                    // Extract name from email (e.g., "john@example.com" -> "john")
+                    var emailParts = company.Email.Split('@');
+                    var firstName = emailParts[0];
+                    var lastName = "Admin";
+
+                    // Create dummy password: "TempPassword123!"
+                    var dummyPassword = "TempPassword123!";
+                    var passwordHash = BCrypt.Net.BCrypt.HashPassword(dummyPassword);
+
+                    var adminCustomer = new Customer
+                    {
+                        Email = company.Email,
+                        FirstName = firstName,
+                        LastName = lastName,
+                        PasswordHash = passwordHash,
+                        Role = "admin",
+                        CompanyId = company.Id,
+                        IsActive = true,
+                        IsVerified = true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+
+                    _context.Customers.Add(adminCustomer);
+                    await _context.SaveChangesAsync();
+
+                    _logger.LogInformation("Admin customer created for company {CompanyName}: {Email} (Customer ID: {CustomerId})", 
+                        company.CompanyName, company.Email, adminCustomer.Id);
+                }
+                else
+                {
+                    _logger.LogWarning("Customer with email {Email} already exists. Skipping admin customer creation for company {CompanyName}", 
+                        company.Email, company.CompanyName);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't fail company creation
+                _logger.LogError(ex, "Error creating admin customer for company {CompanyName} with email {Email}. Company was created successfully.", 
+                    company.CompanyName, company.Email);
+            }
 
             // Create Azure DNS subdomain with SSL if subdomain is provided
             // Run in background to avoid timeout - fire and forget
