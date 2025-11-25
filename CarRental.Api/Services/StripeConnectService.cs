@@ -724,10 +724,36 @@ public class StripeConnectService : IStripeConnectService
             await service.UpdateAsync(stripeAccountId, options);
 
             // Обновить статус в базе данных
-            var stripeCompany = await _context.StripeCompanies
+            // Fetch all StripeCompany records with non-null StripeAccountId
+            // We can't decrypt in LINQ queries, so we need to fetch and decrypt in memory
+            var stripeCompanies = await _context.StripeCompanies
                 .Include(sc => sc.Company)
-                .FirstOrDefaultAsync(sc => sc.StripeAccountId != null && 
-                    _encryptionService.Decrypt(sc.StripeAccountId) == stripeAccountId);
+                .Where(sc => sc.StripeAccountId != null)
+                .ToListAsync();
+
+            // Find the matching StripeCompany by decrypting in memory
+            StripeCompany? stripeCompany = null;
+            foreach (var sc in stripeCompanies)
+            {
+                try
+                {
+                    var decryptedId = _encryptionService.Decrypt(sc.StripeAccountId!);
+                    if (decryptedId == stripeAccountId)
+                    {
+                        stripeCompany = sc;
+                        break;
+                    }
+                }
+                catch
+                {
+                    // If decryption fails, try comparing as plain text (for backward compatibility)
+                    if (sc.StripeAccountId == stripeAccountId)
+                    {
+                        stripeCompany = sc;
+                        break;
+                    }
+                }
+            }
 
             if (stripeCompany?.Company != null)
             {
@@ -780,10 +806,36 @@ public class StripeConnectService : IStripeConnectService
             var account = await service.UpdateAsync(stripeAccountId, options);
 
             // Обновить статус в базе данных
-            var stripeCompany = await _context.StripeCompanies
+            // Fetch all StripeCompany records with non-null StripeAccountId
+            // We can't decrypt in LINQ queries, so we need to fetch and decrypt in memory
+            var stripeCompanies = await _context.StripeCompanies
                 .Include(sc => sc.Company)
-                .FirstOrDefaultAsync(sc => sc.StripeAccountId != null && 
-                    _encryptionService.Decrypt(sc.StripeAccountId) == stripeAccountId);
+                .Where(sc => sc.StripeAccountId != null)
+                .ToListAsync();
+
+            // Find the matching StripeCompany by decrypting in memory
+            StripeCompany? stripeCompany = null;
+            foreach (var sc in stripeCompanies)
+            {
+                try
+                {
+                    var decryptedId = _encryptionService.Decrypt(sc.StripeAccountId!);
+                    if (decryptedId == stripeAccountId)
+                    {
+                        stripeCompany = sc;
+                        break;
+                    }
+                }
+                catch
+                {
+                    // If decryption fails, try comparing as plain text (for backward compatibility)
+                    if (sc.StripeAccountId == stripeAccountId)
+                    {
+                        stripeCompany = sc;
+                        break;
+                    }
+                }
+            }
 
             if (stripeCompany?.Company != null)
             {
