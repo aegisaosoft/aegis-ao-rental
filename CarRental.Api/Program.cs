@@ -579,50 +579,11 @@ _ = Task.Run(async () =>
 try
 {
     // Log port information for Azure App Service debugging
+    // Note: ASP.NET Core automatically uses the PORT environment variable in Azure App Service
+    // We don't need to manually configure URLs - Kestrel handles this automatically
     var port = Environment.GetEnvironmentVariable("PORT");
     var urls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
     
-    // Configure Kestrel to use PORT environment variable if set (Azure App Service)
-    if (!string.IsNullOrEmpty(port) && int.TryParse(port, out var portNumber))
-    {
-        // Azure App Service sets PORT environment variable - use it
-        // Note: Azure App Service handles SSL termination at the load balancer,
-        // so the app listens on HTTP internally. Azure forwards HTTPS requests as HTTP.
-        // This is the correct configuration for Azure App Service.
-        app.Urls.Add($"http://0.0.0.0:{portNumber}");
-        startupLogger.LogInformation("Configured Kestrel to listen on HTTP port {Port} from PORT environment variable (Azure handles HTTPS termination)", portNumber);
-        Console.WriteLine($"[Program] Kestrel configured to listen on HTTP port {portNumber} (Azure handles HTTPS termination at load balancer)");
-    }
-    else if (!string.IsNullOrEmpty(urls))
-    {
-        // Use ASPNETCORE_URLS if PORT is not set (typically for local development)
-        // This allows both HTTP and HTTPS URLs to be specified
-        app.Urls.Clear();
-        foreach (var url in urls.Split(';'))
-        {
-            if (!string.IsNullOrWhiteSpace(url))
-            {
-                var trimmedUrl = url.Trim();
-                app.Urls.Add(trimmedUrl);
-                // Log whether HTTPS is configured
-                if (trimmedUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                {
-                    startupLogger.LogInformation("HTTPS URL configured: {Url}", trimmedUrl);
-                    Console.WriteLine($"[Program] HTTPS URL configured: {trimmedUrl}");
-                }
-            }
-        }
-        startupLogger.LogInformation("Configured Kestrel URLs from ASPNETCORE_URLS: {Urls}", urls);
-        Console.WriteLine($"[Program] Kestrel configured with URLs: {urls}");
-    }
-    else
-    {
-        // Default behavior - use default ports
-        startupLogger.LogInformation("Using default Kestrel configuration (no PORT or ASPNETCORE_URLS set)");
-        Console.WriteLine("[Program] Using default Kestrel configuration");
-    }
-    
-    // Write to console immediately (before logger might fail)
     Console.WriteLine("[Program] About to start Kestrel...");
     Console.WriteLine($"[Program] PORT: {port ?? "Not set"}");
     Console.WriteLine($"[Program] ASPNETCORE_URLS: {urls ?? "Not set"}");
