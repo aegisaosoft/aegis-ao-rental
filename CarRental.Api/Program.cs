@@ -565,12 +565,18 @@ _ = Task.Run(async () =>
 
 try
 {
+    // Log port information for Azure App Service debugging
+    var port = Environment.GetEnvironmentVariable("PORT");
+    var urls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
     startupLogger.LogInformation("Starting Kestrel web server...");
+    startupLogger.LogInformation("PORT environment variable: {Port}", port ?? "Not set");
+    startupLogger.LogInformation("ASPNETCORE_URLS environment variable: {Urls}", urls ?? "Not set");
     startupLogger.LogInformation("Application is ready to accept requests");
     app.Run();
 }
 catch (Exception ex)
 {
     startupLogger.LogCritical(ex, "Application failed to start. Error: {Message}", ex.Message);
+    startupLogger.LogCritical(ex, "Stack trace: {StackTrace}", ex.StackTrace);
     throw;
 }
