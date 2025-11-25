@@ -27,7 +27,7 @@ namespace CarRental.Api.Controllers;
 
 [ApiController]
 [Route("api/companies/{companyId}/stripe")]
-[Authorize] // Require authentication for all endpoints
+[Authorize] // Require authentication for most endpoints (status endpoint allows anonymous)
 [Tags("Company Stripe Management")]
 public class CompanyStripeManagementController : ControllerBase
 {
@@ -189,26 +189,197 @@ public class CompanyStripeManagementController : ControllerBase
     }
 
     /// <summary>
+    /// Validate that Stripe account ID comes from matching records across all three tables:
+    /// 1. company.StripeSettingsId must match a stripe_settings record
+    /// 2. stripe_company must exist with matching company_id and settings_id
+    /// 3. All three IDs must be consistent
+    /// </summary>
+    private async Task<(bool isValid, string? errorMessage, StripeCompany? stripeCompany, StripeSettings? stripeSettings)> ValidateStripeAccountConsistencyAsync(Guid companyId)
+    {
+        // 1. Get company and verify it has StripeSettingsId
+        var company = await _context.Companies
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == companyId);
+
+        if (company == null)
+        {
+            return (false, "Company not found", null, null);
+        }
+
+        if (!company.StripeSettingsId.HasValue)
+        {
+            return (false, "Company does not have Stripe settings configured", null, null);
+        }
+
+        var companyStripeSettingsId = company.StripeSettingsId.Value;
+
+        // 2. Verify stripe_settings exists and matches
+        var stripeSettings = await _context.StripeSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(ss => ss.Id == companyStripeSettingsId);
+
+        if (stripeSettings == null)
+        {
+            _logger.LogError("Validation failed: Company {CompanyId} has StripeSettingsId {StripeSettingsId} but stripe_settings record not found", 
+                companyId, companyStripeSettingsId);
+            return (false, $"Stripe settings record not found for StripeSettingsId {companyStripeSettingsId}", null, null);
+        }
+
+        // 3. Verify stripe_company exists with matching company_id and settings_id
+        var stripeCompany = await _context.StripeCompanies
+            .AsNoTracking()
+            .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == companyStripeSettingsId);
+
+        if (stripeCompany == null)
+        {
+            _logger.LogError("Validation failed: stripe_company record not found for CompanyId {CompanyId} and SettingsId {SettingsId}", 
+                companyId, companyStripeSettingsId);
+            return (false, $"Stripe company record not found for CompanyId {companyId} and SettingsId {companyStripeSettingsId}", null, stripeSettings);
+        }
+
+        // 4. Verify all three IDs match
+        if (stripeCompany.CompanyId != companyId)
+        {
+            _logger.LogError("Validation failed: stripe_company.CompanyId {StripeCompanyId} does not match company.Id {CompanyId}", 
+                stripeCompany.CompanyId, companyId);
+            return (false, $"Stripe company CompanyId mismatch: expected {companyId}, found {stripeCompany.CompanyId}", stripeCompany, stripeSettings);
+        }
+
+        if (stripeCompany.SettingsId != companyStripeSettingsId)
+        {
+            _logger.LogError("Validation failed: stripe_company.SettingsId {StripeCompanySettingsId} does not match company.StripeSettingsId {CompanyStripeSettingsId}", 
+                stripeCompany.SettingsId, companyStripeSettingsId);
+            return (false, $"Stripe company SettingsId mismatch: expected {companyStripeSettingsId}, found {stripeCompany.SettingsId}", stripeCompany, stripeSettings);
+        }
+
+        if (stripeSettings.Id != companyStripeSettingsId)
+        {
+            _logger.LogError("Validation failed: stripe_settings.Id {StripeSettingsId} does not match company.StripeSettingsId {CompanyStripeSettingsId}", 
+                stripeSettings.Id, companyStripeSettingsId);
+            return (false, $"Stripe settings Id mismatch: expected {companyStripeSettingsId}, found {stripeSettings.Id}", stripeCompany, stripeSettings);
+        }
+
+        // All validations passed
+        _logger.LogInformation("Validation passed: All three records match - CompanyId={CompanyId}, StripeSettingsId={StripeSettingsId}, StripeCompanyId={StripeCompanyId}", 
+            companyId, companyStripeSettingsId, stripeCompany.Id);
+        return (true, null, stripeCompany, stripeSettings);
+    }
+
+    /// <summary>
     /// Get the frontend URL for redirects (e.g., Stripe onboarding return URLs)
+    /// Detects whether request is from admin app or web app and returns appropriate URL
     /// </summary>
     private string GetFrontendUrl(Guid companyId)
     {
         var host = HttpContext.Request.Host.Host;
         var scheme = HttpContext.Request.Scheme;
-
-        // Development - use localhost:4000 for frontend
-        if (host.Contains("localhost") || host == "127.0.0.1")
+        
+        // Priority 1: Check query parameter for explicit source
+        var sourceParamValue = HttpContext.Request.Query["source"];
+        var sourceParam = sourceParamValue.ToString().ToLowerInvariant();
+        var hasSourceParam = !string.IsNullOrWhiteSpace(sourceParam);
+        _logger.LogInformation("GetFrontendUrl: Query parameter 'source' = '{SourceParam}' (raw: '{RawSource}', hasValue: {HasValue})", 
+            sourceParam, sourceParamValue.ToString(), hasSourceParam);
+        _logger.LogInformation("GetFrontendUrl: All query parameters: {QueryString}", HttpContext.Request.QueryString);
+        
+        if (hasSourceParam)
         {
-            return "http://localhost:4000"; // Frontend runs on port 4000
+            if (sourceParam == "admin")
+            {
+                // Admin app: port 4000 (local), admin.aegis-rental.com (production)
+                if (host.Contains("localhost") || host == "127.0.0.1")
+                {
+                    _logger.LogInformation("GetFrontendUrl: Query parameter indicates admin app. Using https://localhost:4000");
+                    return "https://localhost:4000";
+                }
+                else
+                {
+                    _logger.LogInformation("GetFrontendUrl: Query parameter indicates admin app. Using admin.aegis-rental.com");
+                    return "https://admin.aegis-rental.com";
+                }
+            }
+            else if (sourceParam == "web")
+            {
+                // Web app: port 3000 (local), <subdomain>.aegis-rental.com (production)
+                if (host.Contains("localhost") || host == "127.0.0.1")
+                {
+                    _logger.LogInformation("GetFrontendUrl: Query parameter indicates web app. Using https://localhost:3000");
+                    return "https://localhost:3000";
+                }
+                else
+                {
+                    // Try to get company subdomain for web app
+                    var company = _context.Companies.Find(companyId);
+                    if (company != null && !string.IsNullOrWhiteSpace(company.Subdomain))
+                    {
+                        var frontendUrl = $"https://{company.Subdomain.ToLower()}.aegis-rental.com";
+                        _logger.LogInformation("GetFrontendUrl: Query parameter indicates web app. Using company subdomain: {FrontendUrl} (company: {CompanyName})", frontendUrl, company.CompanyName);
+                        return frontendUrl;
+                    }
+                }
+            }
+        }
+        
+        // Priority 2: Check Origin or Referer header to determine if request is from admin or web app
+        var origin = HttpContext.Request.Headers["Origin"].ToString();
+        var referer = HttpContext.Request.Headers["Referer"].ToString();
+        var sourceUrl = !string.IsNullOrEmpty(origin) ? origin : referer;
+        
+        _logger.LogInformation("GetFrontendUrl: Origin: {Origin}, Referer: {Referer}, SourceUrl: {SourceUrl}", origin, referer, sourceUrl);
+        
+        var isAdminApp = false;
+        var isWebApp = false;
+        
+        if (!string.IsNullOrEmpty(sourceUrl))
+        {
+            // Admin app: port 4000 (local), admin.aegis-rental.com (production)
+            isAdminApp = sourceUrl.Contains("localhost:4000") || 
+                        sourceUrl.Contains("admin.aegis-rental.com");
+            
+            // Web app: port 3000 (local), <subdomain>.aegis-rental.com (production)
+            isWebApp = sourceUrl.Contains("localhost:3000") || 
+                      (sourceUrl.Contains(".aegis-rental.com") && !sourceUrl.Contains("admin.aegis-rental.com"));
         }
 
-        // Production - try to get company subdomain
-        var company = _context.Companies.Find(companyId);
-        if (company != null && !string.IsNullOrWhiteSpace(company.Subdomain))
+        // Development - detect which app called
+        if (host.Contains("localhost") || host == "127.0.0.1")
         {
-            var frontendUrl = $"https://{company.Subdomain.ToLower()}.aegis-rental.com";
-            _logger.LogInformation("Using company subdomain for frontend URL: {FrontendUrl} (company: {CompanyName})", frontendUrl, company.CompanyName);
-            return frontendUrl;
+            if (isAdminApp)
+            {
+                // Admin app: port 4000
+                _logger.LogInformation("GetFrontendUrl: Header detection indicates admin app. Using https://localhost:4000");
+                return "https://localhost:4000";
+            }
+            else if (isWebApp)
+            {
+                // Web app: port 3000
+                _logger.LogInformation("GetFrontendUrl: Header detection indicates web app. Using https://localhost:3000");
+                return "https://localhost:3000";
+            }
+            else
+            {
+                // Default to web app for localhost if we can't determine
+                _logger.LogWarning("GetFrontendUrl: Could not determine source from headers. Defaulting to web app (https://localhost:3000)");
+                return "https://localhost:3000";
+            }
+        }
+
+        // Production - detect which app called
+        if (isAdminApp)
+        {
+            _logger.LogInformation("GetFrontendUrl: Header detection indicates admin app. Using admin.aegis-rental.com");
+            return "https://admin.aegis-rental.com";
+        }
+        else if (isWebApp)
+        {
+            // Try to get company subdomain for web app
+            var company = _context.Companies.Find(companyId);
+            if (company != null && !string.IsNullOrWhiteSpace(company.Subdomain))
+            {
+                var frontendUrl = $"https://{company.Subdomain.ToLower()}.aegis-rental.com";
+                _logger.LogInformation("GetFrontendUrl: Header detection indicates web app. Using company subdomain: {FrontendUrl} (company: {CompanyName})", frontendUrl, company.CompanyName);
+                return frontendUrl;
+            }
         }
 
         // Fallback: Check configuration
@@ -219,12 +390,12 @@ public class CompanyStripeManagementController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(configuredFrontendUrl))
         {
-            _logger.LogInformation("Using configured frontend URL: {FrontendUrl}", configuredFrontendUrl);
+            _logger.LogInformation("GetFrontendUrl: Using configured frontend URL: {FrontendUrl}", configuredFrontendUrl);
             return configuredFrontendUrl.TrimEnd('/');
         }
 
         // Last resort: Use request host (but log warning)
-        _logger.LogWarning("No frontend URL configured. Using request host: {Host}. This may be incorrect for Stripe redirects.", host);
+        _logger.LogWarning("GetFrontendUrl: No frontend URL configured. Using request host: {Host}. This may be incorrect for Stripe redirects.", host);
         return $"{scheme}://{HttpContext.Request.Host}";
     }
 
@@ -265,7 +436,11 @@ public class CompanyStripeManagementController : ControllerBase
 
             // 2. Generate onboarding link - use frontend URL, not backend URL
             var frontendUrl = GetFrontendUrl(companyId);
-            var returnUrl = $"{frontendUrl}/companies/{companyId}/stripe/complete";
+            // Check if this is from admin app - if so, use admin app's complete route, otherwise use web app's complete page
+            var sourceParam = HttpContext.Request.Query["source"].ToString().ToLowerInvariant();
+            var returnUrl = (!string.IsNullOrWhiteSpace(sourceParam) && sourceParam == "admin")
+                ? $"{frontendUrl}/companies/{companyId}/stripe/complete"
+                : $"{frontendUrl}/companies/{companyId}/stripe/complete";
             var refreshUrl = $"{frontendUrl}/companies/{companyId}/stripe/reauth";
 
             _logger.LogInformation("Creating onboarding link for company {CompanyId}. ReturnUrl: {ReturnUrl}, RefreshUrl: {RefreshUrl}", 
@@ -301,23 +476,85 @@ public class CompanyStripeManagementController : ControllerBase
     }
 
     /// <summary>
+    /// Check if Stripe account exists for a company (public endpoint for booking availability)
+    /// Allows anonymous access - only returns whether Stripe account exists
+    /// Route: GET /api/companies/{companyId}/stripe/check-account
+    /// </summary>
+    [HttpGet("check-account")]
+    [AllowAnonymous]
+    public async Task<ActionResult> CheckStripeAccount(Guid companyId)
+    {
+        _logger.LogInformation("CheckStripeAccount: Method called for company {CompanyId}. Route: /api/companies/{{CompanyId}}/stripe/check-account", companyId);
+        
+        try
+        {
+            // Check if company exists and is active
+            var company = await _context.Companies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == companyId && c.IsActive);
+            
+            if (company == null)
+            {
+                _logger.LogWarning("CheckStripeAccount: Company {CompanyId} not found or inactive", companyId);
+                return Ok(new { hasStripeAccount = false, message = "Company not found or inactive" });
+            }
+            
+            // Check if Stripe account exists in stripe_company table
+            if (!company.StripeSettingsId.HasValue)
+            {
+                _logger.LogInformation("CheckStripeAccount: Company {CompanyId} does not have StripeSettingsId", companyId);
+                return Ok(new { hasStripeAccount = false });
+            }
+            
+            var stripeCompany = await _context.StripeCompanies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value);
+            
+            var hasStripeAccount = stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId);
+            
+            _logger.LogInformation("CheckStripeAccount: Company {CompanyId} - HasStripeAccount: {HasStripeAccount}", companyId, hasStripeAccount);
+            
+            return Ok(new { hasStripeAccount });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking Stripe account for company {CompanyId}", companyId);
+            return Ok(new { hasStripeAccount = false, error = "Error checking Stripe account" });
+        }
+    }
+
+    /// <summary>
     /// Get Stripe account status for a company (from database cache)
-    /// Read access: Aegis users OR Customers with admin/mainadmin role OR customers (for their own company)
+    /// Read access: Aegis users OR Customers with admin/mainadmin role OR authenticated customers (for booking)
     /// Route: GET /api/companies/{companyId}/stripe/status
     /// </summary>
     [HttpGet("status")]
     public async Task<ActionResult> GetStatus(Guid companyId)
     {
-        _logger.LogInformation("GetStatus: Method called for company {CompanyId}. Route: /api/companies/{{CompanyId}}/stripe/status", companyId);
+        _logger.LogInformation("GetStatus: Method called for company {CompanyId}. Route: /api/companies/{{CompanyId}}/stripe/status. IsAuthenticated: {IsAuthenticated}", 
+            companyId, User.Identity?.IsAuthenticated ?? false);
         
-        // Double authorization check:
-        // 1. User must be authenticated (handled by [Authorize] attribute)
-        // 2. User must be either:
-        //    - Aegis user with admin/mainadmin role, OR
-        //    - Customer accessing their own company
+        // Check if company exists and is active (required for all access)
+        var company = await _context.Companies
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == companyId && c.IsActive);
         
+        if (company == null)
+        {
+            _logger.LogWarning("GetStatus: Company {CompanyId} not found or inactive", companyId);
+            return NotFound(new { error = "Company not found or inactive" });
+        }
+        
+        // Check authorization - user must be authenticated
         bool hasAccess = false;
         
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("GetStatus: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
+        // Authenticated users - check authorization
         if (HasAdminPrivileges())
         {
             // Aegis admin/mainadmin can access any company
@@ -326,27 +563,27 @@ public class CompanyStripeManagementController : ControllerBase
         }
         else if (IsCustomer())
         {
-            // Customer can only access their own company
-            hasAccess = await CanCustomerAccessCompany(companyId);
-            if (hasAccess)
-            {
-                _logger.LogInformation("GetStatus: Customer accessing their own company {CompanyId}", companyId);
-            }
-            else
-            {
-                _logger.LogWarning("GetStatus: Customer attempted to access company {CompanyId} without permission", companyId);
-            }
+            // Authenticated customers can check Stripe status for booking (any company they're booking from)
+            hasAccess = true;
+            _logger.LogInformation("GetStatus: Authenticated customer accessing company {CompanyId} for booking", companyId);
         }
         
         if (!hasAccess)
         {
             _logger.LogWarning("GetStatus: Access denied for company {CompanyId}. User is not authorized.", companyId);
-            return Forbid("Access denied. Admin privileges required or customer must own the company.");
+            return Forbid("Access denied. Admin privileges required or customer must be authenticated.");
         }
         
         try
         {
+            _logger.LogInformation("GetStatus: Fetching Stripe account status for company {CompanyId}", companyId);
             var status = await _stripeConnectService.GetAccountStatusAsync(companyId);
+            
+            _logger.LogInformation("GetStatus: Successfully retrieved Stripe status for company {CompanyId}. HasAccount: {HasAccount}, AccountId: {AccountId}", 
+                companyId, 
+                !string.IsNullOrEmpty(status?.StripeAccountId), 
+                status?.StripeAccountId ?? "none");
+            
             return Ok(status);
         }
         catch (Exception ex)
@@ -386,19 +623,18 @@ public class CompanyStripeManagementController : ControllerBase
 
         try
         {
-            var company = await _context.Companies.FindAsync(companyId);
-            if (company == null)
+            // Validate that all three records match: company, stripe_settings, and stripe_company
+            var (isValid, errorMessage, stripeCompany, stripeSettings) = await ValidateStripeAccountConsistencyAsync(companyId);
+            
+            if (!isValid)
             {
-                return NotFound(new { error = "Company not found" });
+                if (errorMessage?.Contains("not found") == true || errorMessage?.Contains("not have Stripe settings") == true)
+                {
+                    return Ok(new { status = "not_created" });
+                }
+                _logger.LogError("GetAccountStatus: Validation failed - {ErrorMessage}", errorMessage);
+                return StatusCode(500, new { error = $"Stripe account validation failed: {errorMessage}" });
             }
-
-            if (company.StripeSettingsId == null)
-            {
-                return Ok(new { status = "not_created" });
-            }
-
-            var stripeCompany = await _context.StripeCompanies
-                .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value);
 
             if (stripeCompany == null || string.IsNullOrEmpty(stripeCompany.StripeAccountId))
             {
@@ -666,23 +902,26 @@ public class CompanyStripeManagementController : ControllerBase
 
         try
         {
-            var company = await _context.Companies.FindAsync(companyId);
-            if (company == null)
+            // Validate that all three records match: company, stripe_settings, and stripe_company
+            var (isValid, errorMessage, stripeCompany, stripeSettings) = await ValidateStripeAccountConsistencyAsync(companyId);
+            
+            if (!isValid)
             {
-                return NotFound(new { error = "Company not found" });
+                _logger.LogError("RefreshOnboarding: Validation failed - {ErrorMessage}", errorMessage);
+                return BadRequest(new { error = $"Stripe account validation failed: {errorMessage}" });
             }
-
-            if (company.StripeSettingsId == null)
-            {
-                return BadRequest(new { error = "Company does not have Stripe settings configured" });
-            }
-
-            var stripeCompany = await _context.StripeCompanies
-                .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value);
 
             if (stripeCompany == null || string.IsNullOrEmpty(stripeCompany.StripeAccountId))
             {
                 return BadRequest(new { error = "No Stripe account found" });
+            }
+
+            // Fetch the company entity to update it
+            var company = await _context.Companies.FindAsync(companyId);
+            if (company == null)
+            {
+                _logger.LogError("RefreshOnboarding: Company {CompanyId} not found", companyId);
+                return NotFound(new { error = $"Company {companyId} not found" });
             }
 
             // Decrypt the Stripe account ID
@@ -699,6 +938,7 @@ public class CompanyStripeManagementController : ControllerBase
 
             // Create new onboarding link with same URLs - use frontend URL, not backend URL
             var frontendUrl = GetFrontendUrl(companyId);
+            // Both admin and web apps use the same complete route: /companies/{companyId}/stripe/complete
             var returnUrl = $"{frontendUrl}/companies/{companyId}/stripe/complete";
             var refreshUrl = $"{frontendUrl}/companies/{companyId}/stripe/reauth";
 
@@ -716,13 +956,13 @@ public class CompanyStripeManagementController : ControllerBase
             catch (InvalidOperationException invalidOpEx)
             {
                 // Account is disabled - return error with helpful message
-                var errorMessage = invalidOpEx.Message;
+                var invalidOpErrorMessage = invalidOpEx.Message;
                 _logger.LogWarning("Cannot create account link for company {CompanyId}, account {AccountId}. Account is disabled: {Message}", 
-                    companyId, stripeAccountId, errorMessage);
+                    companyId, stripeAccountId, invalidOpErrorMessage);
                 
                 return BadRequest(new { 
                     error = "Cannot create onboarding link", 
-                    message = errorMessage,
+                    message = invalidOpErrorMessage,
                     accountStatus = "disabled",
                     suggestion = "The Stripe account is disabled. Please resolve the issues in the Stripe dashboard, or use 'Setup Stripe Account' to create a new account."
                 });

@@ -198,9 +198,10 @@ public class SecurityDepositCollectionService : BackgroundService
                 payment.StripePaymentMethodId,
                 metadata,
                 captureImmediately: false,
-                requestExtendedAuthorization: true);
+                requestExtendedAuthorization: true,
+                companyId: payment.CompanyId);
 
-            var confirmedIntent = await stripeService.ConfirmPaymentIntentAsync(intent.Id);
+            var confirmedIntent = await stripeService.ConfirmPaymentIntentAsync(intent.Id, payment.CompanyId);
 
             if (confirmedIntent.Status is "requires_capture" or "succeeded")
             {

@@ -38,6 +38,7 @@ public class BookingController : ControllerBase
     private readonly ILogger<BookingController> _logger;
     private readonly IConfiguration _configuration;
     private readonly ISettingsService _settingsService;
+    private readonly IEncryptionService _encryptionService;
 
     public BookingController(
         CarRentalDbContext context,
@@ -45,7 +46,8 @@ public class BookingController : ControllerBase
         IStripeService stripeService,
         ILogger<BookingController> logger,
         IConfiguration configuration,
-        ISettingsService settingsService)
+        ISettingsService settingsService,
+        IEncryptionService encryptionService)
     {
         _context = context;
         _emailService = emailService;
@@ -53,62 +55,190 @@ public class BookingController : ControllerBase
         _logger = logger;
         _configuration = configuration;
         _settingsService = settingsService;
+        _encryptionService = encryptionService;
     }
 
     /// <summary>
-    /// Get Stripe secret key for a company from new stripe_settings table, falling back to settings table
+    /// Decrypt Stripe key (handles both encrypted and plaintext keys for backward compatibility)
+    /// </summary>
+    private string? DecryptStripeKey(string? encryptedKey)
+    {
+        if (string.IsNullOrWhiteSpace(encryptedKey))
+            return null;
+        
+        try
+        {
+            return _encryptionService.Decrypt(encryptedKey);
+        }
+        catch (Exception ex) when (ex is FormatException || ex is System.Security.Cryptography.CryptographicException)
+        {
+            // Key might be stored in plaintext (backward compatibility)
+            _logger.LogDebug("Stripe key appears to be stored in plaintext, using as-is");
+            return encryptedKey;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error decrypting Stripe key, using as-is");
+            return encryptedKey;
+        }
+    }
+
+    /// <summary>
+    /// Get Stripe secret key for a company from stripe_settings table using company.StripeSettingsId
+    /// This ensures we use the correct Stripe keys from the stripe_settings table
     /// </summary>
     private async Task<string?> GetStripeSecretKeyAsync(Guid? companyId)
     {
-        if (companyId.HasValue)
+        if (!companyId.HasValue)
         {
+            _logger.LogWarning("GetStripeSecretKeyAsync: No companyId provided, falling back to global settings");
+            return await _settingsService.GetValueAsync("stripe.secretKey");
+        }
+
+        try
+        {
+            // Get company and its StripeSettingsId
+            var company = await _context.Companies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == companyId.Value);
+
+            if (company == null)
+            {
+                _logger.LogWarning("GetStripeSecretKeyAsync: Company {CompanyId} not found, falling back to global settings", companyId);
+                return await _settingsService.GetValueAsync("stripe.secretKey");
+            }
+
+            // Must use stripe_settings table via company.StripeSettingsId
+            if (!company.StripeSettingsId.HasValue)
+            {
+                _logger.LogWarning(
+                    "GetStripeSecretKeyAsync: Company {CompanyId} does not have StripeSettingsId configured. Cannot use stripe_settings table.", 
+                    companyId
+                );
+                return await _settingsService.GetValueAsync("stripe.secretKey");
+            }
+
+            var settingsId = company.StripeSettingsId.Value;
+
+            // Get secret key from stripe_settings table
+            var stripeSettings = await _context.StripeSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(ss => ss.Id == settingsId);
+
+            if (stripeSettings == null)
+            {
+                _logger.LogError(
+                    "GetStripeSecretKeyAsync: stripe_settings record not found for StripeSettingsId {StripeSettingsId} (Company: {CompanyId})", 
+                    settingsId, 
+                    companyId
+                );
+                return await _settingsService.GetValueAsync("stripe.secretKey");
+            }
+
+            if (string.IsNullOrWhiteSpace(stripeSettings.SecretKey))
+            {
+                _logger.LogError(
+                    "GetStripeSecretKeyAsync: stripe_settings.SecretKey is empty for StripeSettingsId {StripeSettingsId} (Company: {CompanyId})", 
+                    settingsId, 
+                    companyId
+                );
+                return await _settingsService.GetValueAsync("stripe.secretKey");
+            }
+
+            _logger.LogInformation(
+                "[Stripe] Using secret key from stripe_settings table (Id: {SettingsId}, Name: {SettingsName}) for company {CompanyId}", 
+                settingsId, 
+                stripeSettings.Name ?? "unnamed",
+                companyId
+            );
+            
+            // Decrypt the key using the same pattern as StripeService (handles both encrypted and plaintext)
+            return DecryptStripeKey(stripeSettings.SecretKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Stripe] Error loading company-specific settings from stripe_settings table for company {CompanyId}, falling back to global settings", companyId);
+            return await _settingsService.GetValueAsync("stripe.secretKey");
+        }
+    }
+
+    /// <summary>
+    /// Get Stripe connected account ID for a company from stripe_company table
+    /// REQUIRES: stripe_company record must exist with matching company_id and settings_id
+    /// Returns null only if record doesn't exist - this will prohibit Stripe operations
+    /// </summary>
+    private async Task<string?> GetStripeAccountIdAsync(Guid companyId)
+    {
+        try
+        {
+            // Get company and its StripeSettingsId
+            var company = await _context.Companies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == companyId);
+
+            if (company == null)
+            {
+                _logger.LogError("GetStripeAccountIdAsync: Company {CompanyId} not found", companyId);
+                return null;
+            }
+
+            if (!company.StripeSettingsId.HasValue)
+            {
+                _logger.LogError("GetStripeAccountIdAsync: Company {CompanyId} does not have StripeSettingsId configured. Stripe operations are prohibited.", companyId);
+                return null;
+            }
+
+            var companyStripeSettingsId = company.StripeSettingsId.Value;
+
+            // Verify stripe_settings exists with matching ID
+            var stripeSettings = await _context.StripeSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(ss => ss.Id == companyStripeSettingsId);
+
+            if (stripeSettings == null)
+            {
+                _logger.LogError("GetStripeAccountIdAsync: stripe_settings record not found for StripeSettingsId {StripeSettingsId} (from company {CompanyId}). Stripe operations are prohibited.", 
+                    companyStripeSettingsId, companyId);
+                return null;
+            }
+
+            // STRICT REQUIREMENT: stripe_company record MUST exist with matching company_id and settings_id
+            var stripeCompany = await _context.StripeCompanies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == companyStripeSettingsId);
+
+            if (stripeCompany == null)
+            {
+                _logger.LogError("GetStripeAccountIdAsync: stripe_company record not found for CompanyId {CompanyId} and SettingsId {SettingsId}. Stripe operations are PROHIBITED until stripe_company record is created.", 
+                    companyId, companyStripeSettingsId);
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(stripeCompany.StripeAccountId))
+            {
+                _logger.LogError("GetStripeAccountIdAsync: stripe_company.StripeAccountId is empty for CompanyId {CompanyId}. Stripe operations are PROHIBITED until Stripe account is created.", companyId);
+                return null;
+            }
+
+            // Decrypt the account ID
             try
             {
-                // Try to get from companies.stripe_settings_id
-                var company = await _context.Companies
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(c => c.Id == companyId.Value);
-
-                Guid? settingsId = null;
-                if (company?.StripeSettingsId.HasValue == true)
-                {
-                    settingsId = company.StripeSettingsId;
-                }
-                else
-                {
-                    // Fallback: try stripe_company table
-                    var stripeCompany = await _context.StripeCompanies
-                        .AsNoTracking()
-                        .Include(sc => sc.Settings)
-                        .FirstOrDefaultAsync(sc => sc.CompanyId == companyId.Value);
-
-                    if (stripeCompany?.Settings != null)
-                    {
-                        settingsId = stripeCompany.Settings.Id;
-                    }
-                }
-
-                if (settingsId.HasValue)
-                {
-                    var stripeSettings = await _context.StripeSettings
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(ss => ss.Id == settingsId.Value);
-
-                    if (!string.IsNullOrWhiteSpace(stripeSettings?.SecretKey))
-                    {
-                        _logger.LogInformation("[Stripe] Using company-specific secret key from stripe_settings table for company {CompanyId}", companyId);
-                        return stripeSettings.SecretKey;
-                    }
-                }
+                var accountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
+                _logger.LogInformation("GetStripeAccountIdAsync: Found Stripe account {AccountId} for company {CompanyId} from stripe_company table", accountId, companyId);
+                return accountId;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[Stripe] Error loading company-specific settings, falling back to global settings");
+                _logger.LogWarning(ex, "GetStripeAccountIdAsync: Failed to decrypt StripeAccountId for company {CompanyId}. The value might be stored in plain text.", companyId);
+                // If decryption fails, it might be stored in plain text (for backward compatibility)
+                return stripeCompany.StripeAccountId;
             }
         }
-
-        // Fallback to settings table
-        return await _settingsService.GetValueAsync("stripe.secretKey");
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetStripeAccountIdAsync: Error getting Stripe account ID for company {CompanyId}. Stripe operations are prohibited.", companyId);
+            return null;
+        }
     }
 
     /// <summary>
@@ -507,6 +637,36 @@ public class BookingController : ControllerBase
                 bookingToken.CompanyId
             );
             
+            // Get Stripe API key from stripe_settings table using company.StripeSettingsId
+            var stripeSecretKey = await GetStripeSecretKeyAsync(bookingToken.CompanyId);
+            if (string.IsNullOrEmpty(stripeSecretKey))
+            {
+                _logger.LogError("ProcessBooking: Stripe secret key not configured for company {CompanyId}", bookingToken.CompanyId);
+                return StatusCode(500, new { error = "Stripe not configured for this company" });
+            }
+
+            // Get Stripe connected account ID from stripe_company table (REQUIRED)
+            var stripeAccountId = await GetStripeAccountIdAsync(bookingToken.CompanyId);
+            if (string.IsNullOrEmpty(stripeAccountId))
+            {
+                _logger.LogError(
+                    "ProcessBooking: stripe_company record not found or StripeAccountId is missing for company {CompanyId}. " +
+                    "Stripe operations are PROHIBITED. Please ensure stripe_company record exists with matching CompanyId and SettingsId.", 
+                    bookingToken.CompanyId
+                );
+                return StatusCode(500, new { 
+                    error = "Stripe account not configured for this company",
+                    message = "Stripe account ID must exist in stripe_company table. Please configure Stripe account first."
+                });
+            }
+
+            _logger.LogInformation(
+                "[Booking] Creating payment intent for connected account {StripeAccountId} using Stripe keys from stripe_settings (CompanyId: {CompanyId})", 
+                stripeAccountId, 
+                bookingToken.CompanyId
+            );
+            
+            // Create payment intent using connected account (same as security deposit)
             var paymentIntent = await _stripeService.CreatePaymentIntentAsync(
                 bookingData.TotalAmount,
                 currency,
@@ -514,8 +674,8 @@ public class BookingController : ControllerBase
                 processDto.PaymentMethodId,
                 companyId: bookingToken.CompanyId);
 
-            // Confirm payment
-            var confirmedPayment = await _stripeService.ConfirmPaymentIntentAsync(paymentIntent.Id);
+            // Confirm payment (pass companyId to use connected account)
+            var confirmedPayment = await _stripeService.ConfirmPaymentIntentAsync(paymentIntent.Id, bookingToken.CompanyId);
 
             if (confirmedPayment.Status != "succeeded")
                 return BadRequest("Payment failed");
@@ -1788,8 +1948,8 @@ public class BookingController : ControllerBase
                                     captureImmediately: true,
                                     companyId: reservation.CompanyId);
 
-                                // Confirm the payment intent
-                                var confirmedIntent = await _stripeService.ConfirmPaymentIntentAsync(securityDepositIntent.Id);
+                                // Confirm the payment intent (pass companyId to use connected account)
+                                var confirmedIntent = await _stripeService.ConfirmPaymentIntentAsync(securityDepositIntent.Id, reservation.CompanyId);
 
                                 if (confirmedIntent.Status == "succeeded")
                                 {
@@ -2162,22 +2322,47 @@ public class BookingController : ControllerBase
                 return BadRequest($"Refund amount ({refundRequest.Amount:F2}) cannot exceed the payment amount ({payment.Amount:F2})");
             }
 
+            // Get Stripe API key from stripe_settings table using company.StripeSettingsId
+            var stripeSecretKey = await GetStripeSecretKeyAsync(booking.CompanyId);
+            if (string.IsNullOrEmpty(stripeSecretKey))
+            {
+                _logger.LogError("RefundPayment: Stripe secret key not configured for company {CompanyId}", booking.CompanyId);
+                return StatusCode(500, new { error = "Stripe not configured for this company" });
+            }
+
+            // Get Stripe connected account ID from stripe_company table (REQUIRED)
+            var stripeAccountId = await GetStripeAccountIdAsync(booking.CompanyId);
+            if (string.IsNullOrEmpty(stripeAccountId))
+            {
+                _logger.LogError(
+                    "RefundPayment: stripe_company record not found or StripeAccountId is missing for company {CompanyId}. " +
+                    "Stripe operations are PROHIBITED.", 
+                    booking.CompanyId
+                );
+                return StatusCode(500, new { 
+                    error = "Stripe account not configured for this company",
+                    message = "Stripe account ID must exist in stripe_company table. Please configure Stripe account first."
+                });
+            }
+
             // Process refund through Stripe
             try
             {
                 var refundAmount = refundRequest.Amount;
 
                 _logger.LogInformation(
-                    "[Refund] Processing refund for booking {BookingId}: RequestedAmount={RequestedAmount}, PaymentAmount={PaymentAmount}, BookingTotal={BookingTotal}",
+                    "[Refund] Processing refund for booking {BookingId}: RequestedAmount={RequestedAmount}, PaymentAmount={PaymentAmount}, BookingTotal={BookingTotal}, ConnectedAccount={StripeAccountId}",
                     id,
                     refundAmount,
                     payment.Amount,
-                    booking.TotalAmount
+                    booking.TotalAmount,
+                    stripeAccountId
                 );
 
                 var refund = await _stripeService.CreateRefundAsync(
                     payment.StripePaymentIntentId,
-                    refundAmount
+                    refundAmount,
+                    booking.CompanyId
                 );
 
                 if (refund != null && refund.Status == "succeeded")
@@ -2785,15 +2970,35 @@ public class BookingController : ControllerBase
             if (booking == null)
                 return NotFound(new { error = "Booking not found" });
 
-            // Get Stripe API key from new tables or settings fallback
+            // Get Stripe API key from stripe_settings table using company.StripeSettingsId
             var stripeSecretKey = await GetStripeSecretKeyAsync(booking.CompanyId);
             if (string.IsNullOrEmpty(stripeSecretKey))
             {
-                _logger.LogError("Stripe secret key not configured");
-                return StatusCode(500, new { error = "Stripe not configured" });
+                _logger.LogError("Stripe secret key not configured for company {CompanyId}", booking.CompanyId);
+                return StatusCode(500, new { error = "Stripe not configured for this company" });
             }
 
-            Stripe.StripeConfiguration.ApiKey = stripeSecretKey;
+            // Get Stripe connected account ID from stripe_company table (REQUIRED)
+            var stripeAccountId = await GetStripeAccountIdAsync(booking.CompanyId);
+            if (string.IsNullOrEmpty(stripeAccountId))
+            {
+                _logger.LogError(
+                    "CreateSecurityDepositPaymentIntent: stripe_company record not found or StripeAccountId is missing for company {CompanyId}. " +
+                    "Stripe operations are PROHIBITED.", 
+                    booking.CompanyId
+                );
+                return StatusCode(500, new { 
+                    error = "Stripe account not configured for this company",
+                    message = "Stripe account ID must exist in stripe_company table. Please configure Stripe account first."
+                });
+            }
+
+            // Create RequestOptions with API key from stripe_settings and connected account ID
+            var requestOptions = new Stripe.RequestOptions
+            {
+                ApiKey = stripeSecretKey,
+                StripeAccount = stripeAccountId
+            };
 
             // Determine security deposit amount
             decimal depositAmount = booking.SecurityDeposit > 0 
@@ -2809,9 +3014,10 @@ public class BookingController : ControllerBase
             var amountInCents = (long)(depositAmount * 100);
 
             _logger.LogInformation(
-                "Creating security deposit payment intent for booking {BookingId}, amount: ${Amount}", 
+                "Creating security deposit payment intent for booking {BookingId}, amount: ${Amount}, connected account: {StripeAccountId}", 
                 booking.Id, 
-                depositAmount
+                depositAmount,
+                stripeAccountId
             );
 
             // Create payment intent with manual capture
@@ -2819,7 +3025,7 @@ public class BookingController : ControllerBase
             var options = new Stripe.PaymentIntentCreateOptions
             {
                 Amount = amountInCents,
-                Currency = "usd",
+                Currency = (booking.Company.Currency ?? "USD").ToLower(),
                 CaptureMethod = "manual", // Important: manual capture for security deposit
                 Description = $"Security Deposit for Booking {booking.BookingNumber}",
                 Metadata = new Dictionary<string, string>
@@ -2832,7 +3038,16 @@ public class BookingController : ControllerBase
                 }
             };
 
-            var paymentIntent = await paymentIntentService.CreateAsync(options);
+            // For connected accounts, don't use customer ID (customers are separate)
+            // Stripe will handle customer creation/lookup automatically
+            // For platform accounts, we could use customer ID, but to be safe, use email
+            if (!string.IsNullOrEmpty(booking.Customer.Email))
+            {
+                // Note: PaymentIntent doesn't have CustomerEmail property, but we can use metadata
+                // The customer will be created/linked during payment method attachment
+            }
+
+            var paymentIntent = await paymentIntentService.CreateAsync(options, requestOptions);
 
             // Store the payment intent ID with the booking
             booking.SecurityDepositPaymentIntentId = paymentIntent.Id;
@@ -2882,6 +3097,18 @@ public class BookingController : ControllerBase
             if (booking == null)
                 return NotFound(new { error = "Booking not found" });
 
+            if (booking.Customer == null)
+            {
+                _logger.LogError("Customer not found for booking {BookingId}", id);
+                return StatusCode(500, new { error = "Customer not found for this booking" });
+            }
+
+            if (string.IsNullOrEmpty(booking.Customer.Email))
+            {
+                _logger.LogError("Customer email is missing for booking {BookingId}, customer {CustomerId}", id, booking.Customer.Id);
+                return StatusCode(500, new { error = "Customer email is missing" });
+            }
+
             // Get Stripe API key from new tables or settings fallback
             var stripeSecretKey = await GetStripeSecretKeyAsync(booking.CompanyId);
             if (string.IsNullOrEmpty(stripeSecretKey))
@@ -2922,6 +3149,38 @@ public class BookingController : ControllerBase
                 language ?? "null",
                 booking.Company.Language ?? "null",
                 countryCode
+            );
+
+            // Get Stripe connected account ID for this company
+            // REQUIRED: Must come from stripe_company table matching company.StripeSettingsId
+            // If stripe_company record doesn't exist, Stripe operations are PROHIBITED
+            var stripeAccountId = await GetStripeAccountIdAsync(booking.CompanyId);
+            
+            if (string.IsNullOrEmpty(stripeAccountId))
+            {
+                _logger.LogError(
+                    "CreateSecurityDepositCheckout: stripe_company record not found or StripeAccountId is missing for company {CompanyId}. " +
+                    "Stripe operations are PROHIBITED. Please ensure stripe_company record exists with matching CompanyId and SettingsId.", 
+                    booking.CompanyId
+                );
+                return StatusCode(500, new { 
+                    error = "Stripe account not configured for this company",
+                    message = "Stripe account ID must exist in stripe_company table. Please configure Stripe account first."
+                });
+            }
+            
+            // Create RequestOptions with API key from stripe_settings table (via company.StripeSettingsId)
+            // and connected account ID from stripe_company table (REQUIRED)
+            var requestOptions = new Stripe.RequestOptions
+            {
+                ApiKey = stripeSecretKey, // Key from stripe_settings table using company.StripeSettingsId
+                StripeAccount = stripeAccountId // Account ID from stripe_company table (REQUIRED)
+            };
+            
+            _logger.LogInformation(
+                "Creating security deposit checkout session for connected account {StripeAccountId} using Stripe keys from stripe_settings (CompanyId: {CompanyId})", 
+                stripeAccountId, 
+                booking.CompanyId
             );
 
             // Create Checkout Session
@@ -2981,39 +3240,95 @@ public class BookingController : ControllerBase
                     : null
             };
             
-            // Pre-fill customer address with company's country if available
-            if (!string.IsNullOrEmpty(countryCode) && !string.IsNullOrEmpty(booking.Customer.StripeCustomerId))
+            // When using a connected account, customers are separate from platform customers
+            // The customer ID stored in our database might be from the platform account
+            // For connected accounts, we should use email to let Stripe create/find the customer on the connected account
+            // For platform accounts, we can try to use the customer ID if it exists
+            
+            string? validCustomerId = null;
+            if (!string.IsNullOrEmpty(booking.Customer.StripeCustomerId) && string.IsNullOrEmpty(stripeAccountId))
             {
+                // Only try to use customer ID on platform account (not connected account)
+                // On connected accounts, customers are separate entities, so use email instead
                 try
                 {
                     var customerService = new Stripe.CustomerService();
-                    var stripeCustomer = await customerService.GetAsync(booking.Customer.StripeCustomerId);
+                    var customerRequestOptions = new Stripe.RequestOptions { ApiKey = stripeSecretKey };
                     
-                    // Only update if customer doesn't have an address set
-                    if (string.IsNullOrEmpty(stripeCustomer.Address?.Country))
+                    try
                     {
-                        await customerService.UpdateAsync(booking.Customer.StripeCustomerId, new Stripe.CustomerUpdateOptions
-                        {
-                            Address = new Stripe.AddressOptions
-                            {
-                                Country = countryCode
-                            }
-                        });
+                        // Verify customer exists on platform account
+                        var stripeCustomer = await customerService.GetAsync(booking.Customer.StripeCustomerId);
+                        validCustomerId = booking.Customer.StripeCustomerId;
                         
-                        _logger.LogInformation(
-                            "Updated customer {CustomerId} address with country {CountryCode}",
-                            booking.Customer.StripeCustomerId,
-                            countryCode
+                        // Only update if customer doesn't have an address set
+                        if (!string.IsNullOrEmpty(countryCode) && string.IsNullOrEmpty(stripeCustomer.Address?.Country))
+                        {
+                            await customerService.UpdateAsync(booking.Customer.StripeCustomerId, new Stripe.CustomerUpdateOptions
+                            {
+                                Address = new Stripe.AddressOptions
+                                {
+                                    Country = countryCode
+                                }
+                            }, customerRequestOptions);
+                            
+                            _logger.LogInformation(
+                                "Updated customer {CustomerId} address with country {CountryCode}",
+                                booking.Customer.StripeCustomerId,
+                                countryCode
+                            );
+                        }
+                    }
+                    catch (Stripe.StripeException stripeEx) when (stripeEx.StripeError?.Code == "resource_missing")
+                    {
+                        // Customer doesn't exist on platform account - use email instead
+                        _logger.LogWarning(
+                            "Customer {CustomerId} not found on platform account. Will use email instead.",
+                            booking.Customer.StripeCustomerId
                         );
+                        validCustomerId = null;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to update customer address for {CustomerId}", booking.Customer.StripeCustomerId);
+                    _logger.LogWarning(ex, "Failed to verify customer {CustomerId}. Will use email instead.", booking.Customer.StripeCustomerId);
+                    validCustomerId = null;
                 }
             }
+            else if (!string.IsNullOrEmpty(stripeAccountId))
+            {
+                // Using connected account - always use email to let Stripe handle customer creation/lookup
+                _logger.LogInformation(
+                    "Using connected account {StripeAccountId}. Will use customer email {Email} instead of customer ID to let Stripe handle customer on connected account.",
+                    stripeAccountId,
+                    booking.Customer.Email
+                );
+                validCustomerId = null;
+            }
 
-            var session = await sessionService.CreateAsync(options);
+            // Update options to use valid customer ID or email
+            if (!string.IsNullOrEmpty(validCustomerId))
+            {
+                // Platform account with valid customer ID
+                options.Customer = validCustomerId;
+                options.CustomerEmail = null;
+                options.CustomerUpdate = new Stripe.Checkout.SessionCustomerUpdateOptions
+                {
+                    Address = "auto",
+                    Name = "auto"
+                };
+                _logger.LogInformation("Using customer ID {CustomerId} for checkout session on platform account", validCustomerId);
+            }
+            else
+            {
+                // Use email (for connected accounts or when customer ID doesn't exist)
+                options.Customer = null;
+                options.CustomerEmail = booking.Customer.Email;
+                options.CustomerUpdate = null;
+                _logger.LogInformation("Using customer email {Email} for checkout session", booking.Customer.Email);
+            }
+
+            var session = await sessionService.CreateAsync(options, requestOptions);
 
             _logger.LogInformation(
                 "Created security deposit checkout session {SessionId} for booking {BookingId}", 
@@ -3032,13 +3347,15 @@ public class BookingController : ControllerBase
         }
         catch (Stripe.StripeException ex)
         {
-            _logger.LogError(ex, "Stripe error creating security deposit checkout for booking {BookingId}", id);
-            return StatusCode(500, new { error = "Stripe error: " + ex.Message });
+            _logger.LogError(ex, "Stripe error creating security deposit checkout for booking {BookingId}. Stripe Error Code: {Code}, Message: {Message}, StackTrace: {StackTrace}", 
+                id, ex.StripeError?.Code, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { error = "Stripe error: " + ex.Message, stripeErrorCode = ex.StripeError?.Code });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error creating security deposit checkout for booking {BookingId}", id);
-            return StatusCode(500, new { error = "Internal server error" });
+            _logger.LogError(ex, "Error creating security deposit checkout for booking {BookingId}. Exception Type: {Type}, Message: {Message}, StackTrace: {StackTrace}", 
+                id, ex.GetType().Name, ex.Message, ex.StackTrace);
+            return StatusCode(500, new { error = "Internal server error: " + ex.Message, exceptionType = ex.GetType().Name });
         }
     }
 

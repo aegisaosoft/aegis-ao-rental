@@ -67,6 +67,8 @@ public class StripeConnectService : IStripeConnectService
 
     /// <summary>
     /// Gets or creates a StripeCompany record for the given company
+    /// Creates the record ONLY if it doesn't exist
+    /// Ensures the record has matching CompanyId and SettingsId
     /// </summary>
     private async Task<StripeCompany> GetOrCreateStripeCompanyAsync(Company company)
     {
@@ -75,21 +77,53 @@ public class StripeConnectService : IStripeConnectService
             throw new InvalidOperationException($"Company {company.Id} does not have a StripeSettingsId configured");
         }
 
+        // First, verify that stripe_settings exists
+        var stripeSettings = await _context.StripeSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(ss => ss.Id == company.StripeSettingsId.Value);
+
+        if (stripeSettings == null)
+        {
+            throw new InvalidOperationException($"Stripe settings record not found for StripeSettingsId {company.StripeSettingsId.Value} (Company: {company.Id})");
+        }
+
+        // Look for existing StripeCompany record with matching CompanyId and SettingsId
         var stripeCompany = await _context.StripeCompanies
             .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
 
         if (stripeCompany == null)
         {
+            // Record doesn't exist - create it with correct matching IDs
+            // - CompanyId matches company.Id
+            // - SettingsId matches company.StripeSettingsId (which also matches stripe_settings.Id)
             stripeCompany = new StripeCompany
             {
                 CompanyId = company.Id,
-                SettingsId = company.StripeSettingsId.Value,
+                SettingsId = company.StripeSettingsId.Value, // Must match company.StripeSettingsId and stripe_settings.Id
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
             _context.StripeCompanies.Add(stripeCompany);
             await _context.SaveChangesAsync();
-            _logger.LogInformation("Created new StripeCompany record for company {CompanyId} with settings {SettingsId}", 
+            _logger.LogInformation("Created new StripeCompany record for company {CompanyId} with settings {SettingsId} (validated: stripe_settings.Id={StripeSettingsId})", 
+                company.Id, company.StripeSettingsId.Value, stripeSettings.Id);
+        }
+        else
+        {
+            // Record exists - verify it matches (log warning if mismatch, but don't throw to avoid breaking existing data)
+            if (stripeCompany.CompanyId != company.Id)
+            {
+                _logger.LogWarning("StripeCompany record has mismatched CompanyId: expected {Expected}, found {Found}. Using existing record.", 
+                    company.Id, stripeCompany.CompanyId);
+            }
+
+            if (stripeCompany.SettingsId != company.StripeSettingsId.Value)
+            {
+                _logger.LogWarning("StripeCompany record has mismatched SettingsId: expected {Expected}, found {Found}. Using existing record.", 
+                    company.StripeSettingsId.Value, stripeCompany.SettingsId);
+            }
+
+            _logger.LogDebug("Using existing StripeCompany record for company {CompanyId} with settings {SettingsId}", 
                 company.Id, company.StripeSettingsId.Value);
         }
 
@@ -366,47 +400,79 @@ public class StripeConnectService : IStripeConnectService
             };
         }
 
-        // Try to find StripeCompany using the same join logic as the SQL query:
-        // FROM companies c 
-        // INNER JOIN stripe_company sc ON c.id = sc.company_id 
-        // INNER JOIN stripe_settings ss ON c.stripe_settings_id = ss.id AND ss.id = sc.settings_id
+        // Validate that all three records match: company, stripe_settings, and stripe_company
+        // 1. Verify stripe_settings exists and matches company.StripeSettingsId
+        var stripeSettings = await _context.StripeSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(ss => ss.Id == company.StripeSettingsId.Value);
+
+        if (stripeSettings == null)
+        {
+            _logger.LogError("GetAccountStatusAsync: Company {CompanyId} has StripeSettingsId {StripeSettingsId} but stripe_settings record not found", 
+                companyId, company.StripeSettingsId.Value);
+            return new StripeAccountStatusDto
+            {
+                StripeAccountId = null,
+                AccountStatus = "not_started"
+            };
+        }
+
+        // 2. Verify stripe_company exists with matching company_id and settings_id
         var stripeCompany = await _context.StripeCompanies
-            .Where(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value)
-            .FirstOrDefaultAsync();
+            .AsNoTracking()
+            .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value);
 
         if (stripeCompany == null)
         {
-            // Try to find any StripeCompany record for this company (fallback)
-            // This handles cases where the settings_id might not match exactly
-            // Use a single optimized query instead of fetching all records
-            stripeCompany = await _context.StripeCompanies
-                .Where(sc => sc.CompanyId == companyId && !string.IsNullOrEmpty(sc.StripeAccountId))
-                .FirstOrDefaultAsync();
+            _logger.LogWarning(
+                "GetAccountStatusAsync: No StripeCompany found for company {CompanyId} with SettingsId {SettingsId}",
+                companyId, 
+                company.StripeSettingsId.Value
+            );
             
-            if (stripeCompany != null)
+            return new StripeAccountStatusDto
             {
-                _logger.LogInformation(
-                    "Using fallback StripeCompany record for company {CompanyId} with SettingsId {SettingsId} (company's SettingsId is {CompanySettingsId})",
-                    companyId,
-                    stripeCompany.SettingsId,
-                    company.StripeSettingsId.Value
-                );
-            }
-            else
-            {
-                _logger.LogWarning(
-                    "No StripeCompany found for company {CompanyId} with SettingsId {SettingsId}",
-                    companyId, 
-                    company.StripeSettingsId.Value
-                );
-                
-                return new StripeAccountStatusDto
-                {
-                    StripeAccountId = null,
-                    AccountStatus = "not_started"
-                };
-            }
+                StripeAccountId = null,
+                AccountStatus = "not_started"
+            };
         }
+
+        // 3. Verify all three IDs match
+        if (stripeCompany.CompanyId != companyId)
+        {
+            _logger.LogError("GetAccountStatusAsync: Validation failed - stripe_company.CompanyId {StripeCompanyId} does not match company.Id {CompanyId}", 
+                stripeCompany.CompanyId, companyId);
+            return new StripeAccountStatusDto
+            {
+                StripeAccountId = null,
+                AccountStatus = "not_started"
+            };
+        }
+
+        if (stripeCompany.SettingsId != company.StripeSettingsId.Value)
+        {
+            _logger.LogError("GetAccountStatusAsync: Validation failed - stripe_company.SettingsId {StripeCompanySettingsId} does not match company.StripeSettingsId {CompanyStripeSettingsId}", 
+                stripeCompany.SettingsId, company.StripeSettingsId.Value);
+            return new StripeAccountStatusDto
+            {
+                StripeAccountId = null,
+                AccountStatus = "not_started"
+            };
+        }
+
+        if (stripeSettings.Id != company.StripeSettingsId.Value)
+        {
+            _logger.LogError("GetAccountStatusAsync: Validation failed - stripe_settings.Id {StripeSettingsId} does not match company.StripeSettingsId {CompanyStripeSettingsId}", 
+                stripeSettings.Id, company.StripeSettingsId.Value);
+            return new StripeAccountStatusDto
+            {
+                StripeAccountId = null,
+                AccountStatus = "not_started"
+            };
+        }
+
+        _logger.LogInformation("GetAccountStatusAsync: Validation passed - All three records match for CompanyId={CompanyId}, StripeSettingsId={StripeSettingsId}", 
+            companyId, company.StripeSettingsId.Value);
 
         if (string.IsNullOrEmpty(stripeCompany.StripeAccountId))
         {
@@ -1000,20 +1066,8 @@ public class StripeConnectService : IStripeConnectService
                     continue;
                 }
 
-                var stripeCompany = await _context.StripeCompanies
-                    .FirstOrDefaultAsync(sc => sc.CompanyId == company.Id && sc.SettingsId == company.StripeSettingsId.Value);
-
-                if (stripeCompany == null)
-                {
-                    stripeCompany = new StripeCompany
-                    {
-                        CompanyId = company.Id,
-                        SettingsId = company.StripeSettingsId.Value,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    _context.StripeCompanies.Add(stripeCompany);
-                }
+                // Use GetOrCreateStripeCompanyAsync to ensure proper validation and creation
+                var stripeCompany = await GetOrCreateStripeCompanyAsync(company);
 
                 // Check if company already has this account linked
                 string? existingAccountId = null;

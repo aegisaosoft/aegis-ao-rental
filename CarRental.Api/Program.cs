@@ -453,22 +453,29 @@ app.UseAuthorization();
 startupLogger.LogInformation("Adding company middleware...");
 app.UseCompanyMiddleware();
 
-// 7. Swagger (enabled in all environments for API documentation)
-try
+// 7. Swagger (enabled only in Development environment for security)
+if (app.Environment.IsDevelopment())
 {
-    startupLogger.LogInformation("Configuring Swagger...");
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
+    try
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
-        c.RoutePrefix = "swagger"; // Access at /swagger
-        c.DocumentTitle = "Car Rental API Documentation";
-    });
-    startupLogger.LogInformation("Swagger configured successfully");
+        startupLogger.LogInformation("Configuring Swagger (Development only)...");
+        app.UseSwagger();
+        app.UseSwaggerUI(c =>
+        {
+            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
+            c.RoutePrefix = "swagger"; // Access at /swagger
+            c.DocumentTitle = "Car Rental API Documentation";
+        });
+        startupLogger.LogInformation("Swagger configured successfully");
+    }
+    catch (Exception ex)
+    {
+        startupLogger.LogWarning(ex, "Swagger failed to initialize");
+    }
 }
-catch (Exception ex)
+else
 {
-    startupLogger.LogWarning(ex, "Swagger failed to initialize");
+    startupLogger.LogInformation("Swagger is disabled in {Environment} environment", app.Environment.EnvironmentName);
 }
 
 // 8. Health Checks (before controllers, for Azure probes)
