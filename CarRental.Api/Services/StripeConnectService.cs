@@ -376,43 +376,30 @@ public class StripeConnectService : IStripeConnectService
 
         if (stripeCompany == null)
         {
-            // Log all StripeCompany records for this company to help debug
-            var allStripeCompanies = await _context.StripeCompanies
-                .Where(sc => sc.CompanyId == companyId)
-                .Select(sc => new { sc.SettingsId, HasAccountId = !string.IsNullOrEmpty(sc.StripeAccountId) })
-                .ToListAsync();
-            
-            _logger.LogWarning(
-                "No StripeCompany found for company {CompanyId} with SettingsId {SettingsId}. " +
-                "Found {Count} StripeCompany records for this company: {Records}",
-                companyId, 
-                company.StripeSettingsId.Value,
-                allStripeCompanies.Count,
-                string.Join(", ", allStripeCompanies.Select(sc => $"SettingsId={sc.SettingsId}, HasAccountId={sc.HasAccountId}"))
-            );
-            
-            // If no exact match, try to find any StripeCompany record for this company (fallback)
+            // Try to find any StripeCompany record for this company (fallback)
             // This handles cases where the settings_id might not match exactly
-            if (allStripeCompanies.Count > 0)
-            {
-                var fallbackStripeCompany = await _context.StripeCompanies
-                    .Where(sc => sc.CompanyId == companyId && !string.IsNullOrEmpty(sc.StripeAccountId))
-                    .FirstOrDefaultAsync();
-                
-                if (fallbackStripeCompany != null)
-                {
-                    _logger.LogInformation(
-                        "Using fallback StripeCompany record for company {CompanyId} with SettingsId {SettingsId} (company's SettingsId is {CompanySettingsId})",
-                        companyId,
-                        fallbackStripeCompany.SettingsId,
-                        company.StripeSettingsId.Value
-                    );
-                    stripeCompany = fallbackStripeCompany;
-                }
-            }
+            // Use a single optimized query instead of fetching all records
+            stripeCompany = await _context.StripeCompanies
+                .Where(sc => sc.CompanyId == companyId && !string.IsNullOrEmpty(sc.StripeAccountId))
+                .FirstOrDefaultAsync();
             
-            if (stripeCompany == null)
+            if (stripeCompany != null)
             {
+                _logger.LogInformation(
+                    "Using fallback StripeCompany record for company {CompanyId} with SettingsId {SettingsId} (company's SettingsId is {CompanySettingsId})",
+                    companyId,
+                    stripeCompany.SettingsId,
+                    company.StripeSettingsId.Value
+                );
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "No StripeCompany found for company {CompanyId} with SettingsId {SettingsId}",
+                    companyId, 
+                    company.StripeSettingsId.Value
+                );
+                
                 return new StripeAccountStatusDto
                 {
                     StripeAccountId = null,

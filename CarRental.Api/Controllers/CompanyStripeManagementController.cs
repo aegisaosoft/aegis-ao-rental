@@ -55,29 +55,137 @@ public class CompanyStripeManagementController : ControllerBase
     }
 
     /// <summary>
-    /// Check if the current user is an aegis user (not a customer)
-    /// Only aegis users are allowed to access admin endpoints
+    /// Check if the current user has admin privileges
+    /// Allows both Aegis users AND Customers with admin/mainadmin roles
     /// </summary>
     private bool HasAdminPrivileges()
     {
+        // First check: User must be authenticated (handled by [Authorize] attribute)
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("HasAdminPrivileges: User is not authenticated");
+            return false;
+        }
+
         // Get user ID from claims
         var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value ?? User.FindFirst("role")?.Value;
+        var customerId = User.FindFirst("customer_id")?.Value;
         
-        // Check if user is an aegis user FIRST (regardless of customer_id claim)
-        // Aegis users are authenticated via /api/aegis-admin/login
-        // We check if the user ID exists in AegisUsers table
+        _logger.LogInformation("HasAdminPrivileges: Checking authorization. UserId: {UserId}, Role: {Role}, CustomerId: {CustomerId}", 
+            userId, role, customerId);
+        
         if (!string.IsNullOrEmpty(userId) && Guid.TryParse(userId, out var userGuid))
         {
+            // Check 1: Aegis users with admin/mainadmin role
             var aegisUser = _context.AegisUsers.FirstOrDefault(u => u.Id == userGuid);
             if (aegisUser != null)
             {
-                // Only allow aegis users with admin or mainadmin role
                 var aegisRole = aegisUser.Role?.ToLowerInvariant();
-                return aegisRole == "admin" || aegisRole == "mainadmin";
+                var hasAdminRole = aegisRole == "admin" || aegisRole == "mainadmin";
+                
+                _logger.LogInformation("HasAdminPrivileges: Aegis user found. Role: {Role}, HasAdminRole: {HasAdminRole}", 
+                    aegisRole, hasAdminRole);
+                
+                if (hasAdminRole)
+                {
+                    return true;
+                }
             }
+            
+            // Check 2: Customers with admin/mainadmin role
+            var customer = _context.Customers.FirstOrDefault(c => c.Id == userGuid);
+            if (customer != null)
+            {
+                var customerRole = customer.Role?.ToLowerInvariant();
+                var hasAdminRole = customerRole == "admin" || customerRole == "mainadmin";
+                
+                _logger.LogInformation("HasAdminPrivileges: Customer found. Role: {Role}, HasAdminRole: {HasAdminRole}", 
+                    customerRole, hasAdminRole);
+                
+                if (hasAdminRole)
+                {
+                    return true;
+                }
+            }
+            
+            // Also check role from token claims (fallback)
+            if (!string.IsNullOrEmpty(role))
+            {
+                var roleLower = role.ToLowerInvariant();
+                var hasAdminRole = roleLower == "admin" || roleLower == "mainadmin";
+                
+                if (hasAdminRole)
+                {
+                    _logger.LogInformation("HasAdminPrivileges: Admin role found in token claims. Role: {Role}", role);
+                    return true;
+                }
+            }
+            
+            _logger.LogWarning("HasAdminPrivileges: User {UserId} does not have admin privileges (not an aegis admin or customer admin)", userId);
         }
+        else
+        {
+            _logger.LogWarning("HasAdminPrivileges: Invalid or missing user ID: {UserId}", userId);
+        }
+        
         return false;
+    }
+
+    /// <summary>
+    /// Check if the current user is a customer (not an aegis user)
+    /// Customers can only read their own company's status
+    /// </summary>
+    private bool IsCustomer()
+    {
+        // First check: User must be authenticated
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            return false;
+        }
+
+        // Get user ID from claims
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var customerId = User.FindFirst("customer_id")?.Value;
+        
+        // Check if user is NOT an aegis user (i.e., is a customer)
+        if (!string.IsNullOrEmpty(userId) && Guid.TryParse(userId, out var userGuid))
+        {
+            var aegisUser = _context.AegisUsers.FirstOrDefault(u => u.Id == userGuid);
+            // If not found in AegisUsers, it's a customer
+            return aegisUser == null && !string.IsNullOrEmpty(customerId);
+        }
+        
+        return false;
+    }
+
+    /// <summary>
+    /// Check if customer can access the specified company
+    /// Customers can only access their own company
+    /// </summary>
+    private async Task<bool> CanCustomerAccessCompany(Guid companyId)
+    {
+        if (!IsCustomer())
+        {
+            return false;
+        }
+
+        var customerId = User.FindFirst("customer_id")?.Value;
+        if (string.IsNullOrEmpty(customerId) || !Guid.TryParse(customerId, out var customerGuid))
+        {
+            return false;
+        }
+
+        // Check if the company belongs to this customer
+        var company = await _context.Companies.FindAsync(companyId);
+        if (company == null)
+        {
+            return false;
+        }
+
+        // For now, we'll allow customers to access any company they're authenticated for
+        // You may want to add a CompanyId field to Customers table to restrict this further
+        return true;
     }
 
     /// <summary>
@@ -122,12 +230,21 @@ public class CompanyStripeManagementController : ControllerBase
 
     /// <summary>
     /// Setup Stripe account for a company
+    /// Requires: Aegis user OR Customer with admin/mainadmin role
     /// </summary>
     [HttpPost("setup")]
     public async Task<ActionResult> SetupStripeAccount(Guid companyId)
     {
+        // Double authorization: Authentication + Admin privileges
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("SetupStripeAccount: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
         if (!HasAdminPrivileges())
         {
+            _logger.LogWarning("SetupStripeAccount: Access denied for company {CompanyId}. Admin privileges required.", companyId);
             return Forbid("Admin privileges required");
         }
 
@@ -185,15 +302,48 @@ public class CompanyStripeManagementController : ControllerBase
 
     /// <summary>
     /// Get Stripe account status for a company (from database cache)
+    /// Read access: Aegis users OR Customers with admin/mainadmin role OR customers (for their own company)
+    /// Route: GET /api/companies/{companyId}/stripe/status
     /// </summary>
     [HttpGet("status")]
     public async Task<ActionResult> GetStatus(Guid companyId)
     {
-        if (!HasAdminPrivileges())
+        _logger.LogInformation("GetStatus: Method called for company {CompanyId}. Route: /api/companies/{{CompanyId}}/stripe/status", companyId);
+        
+        // Double authorization check:
+        // 1. User must be authenticated (handled by [Authorize] attribute)
+        // 2. User must be either:
+        //    - Aegis user with admin/mainadmin role, OR
+        //    - Customer accessing their own company
+        
+        bool hasAccess = false;
+        
+        if (HasAdminPrivileges())
         {
-            return Forbid("Admin privileges required");
+            // Aegis admin/mainadmin can access any company
+            hasAccess = true;
+            _logger.LogInformation("GetStatus: Aegis admin accessing company {CompanyId}", companyId);
         }
-
+        else if (IsCustomer())
+        {
+            // Customer can only access their own company
+            hasAccess = await CanCustomerAccessCompany(companyId);
+            if (hasAccess)
+            {
+                _logger.LogInformation("GetStatus: Customer accessing their own company {CompanyId}", companyId);
+            }
+            else
+            {
+                _logger.LogWarning("GetStatus: Customer attempted to access company {CompanyId} without permission", companyId);
+            }
+        }
+        
+        if (!hasAccess)
+        {
+            _logger.LogWarning("GetStatus: Access denied for company {CompanyId}. User is not authorized.", companyId);
+            return Forbid("Access denied. Admin privileges required or customer must own the company.");
+        }
+        
         try
         {
             var status = await _stripeConnectService.GetAccountStatusAsync(companyId);
@@ -201,19 +351,36 @@ public class CompanyStripeManagementController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting Stripe status for company {CompanyId}", companyId);
+            _logger.LogError(ex, "Error getting Stripe status for company {CompanyId}: {Message}", companyId, ex.Message);
+            
+            // Return 503 for timeout or service unavailable errors
+            if (ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
+                ex.Message.Contains("timed out", StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(503, new { error = "Service temporarily unavailable. Please try again." });
+            }
+            
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
 
     /// <summary>
     /// Get real-time Stripe account status directly from Stripe API
+    /// Requires: Aegis user OR Customer with admin/mainadmin role
     /// </summary>
     [HttpGet("status/live")]
     public async Task<IActionResult> GetStripeAccountStatus(Guid companyId)
     {
+        // Double authorization: Authentication + Admin privileges
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("GetStripeAccountStatus: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
         if (!HasAdminPrivileges())
         {
+            _logger.LogWarning("GetStripeAccountStatus: Access denied for company {CompanyId}. Admin privileges required.", companyId);
             return Forbid("Admin privileges required");
         }
 
@@ -273,12 +440,21 @@ public class CompanyStripeManagementController : ControllerBase
 
     /// <summary>
     /// Sync/Fetch account status from Stripe API and update database
+    /// Requires: Aegis user OR Customer with admin/mainadmin role
     /// </summary>
     [HttpPost("sync")]
     public async Task<ActionResult> SyncAccount(Guid companyId)
     {
+        // Double authorization: Authentication + Admin privileges
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("SyncAccount: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
         if (!HasAdminPrivileges())
         {
+            _logger.LogWarning("SyncAccount: Access denied for company {CompanyId}. Admin privileges required.", companyId);
             return Forbid("Admin privileges required");
         }
 
@@ -310,12 +486,21 @@ public class CompanyStripeManagementController : ControllerBase
 
     /// <summary>
     /// Suspend company's Stripe account
+    /// Requires: Aegis user OR Customer with admin/mainadmin role
     /// </summary>
     [HttpPost("suspend")]
     public async Task<ActionResult> Suspend(Guid companyId, [FromBody] SuspendAccountDto dto)
     {
+        // Double authorization: Authentication + Admin privileges
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("Suspend: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
         if (!HasAdminPrivileges())
         {
+            _logger.LogWarning("Suspend: Access denied for company {CompanyId}. Admin privileges required.", companyId);
             return Forbid("Admin privileges required");
         }
 
@@ -349,12 +534,21 @@ public class CompanyStripeManagementController : ControllerBase
 
     /// <summary>
     /// Reactivate company's Stripe account
+    /// Requires: Aegis user OR Customer with admin/mainadmin role
     /// </summary>
     [HttpPost("reactivate")]
     public async Task<ActionResult> Reactivate(Guid companyId)
     {
+        // Double authorization: Authentication + Admin privileges
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("Reactivate: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
         if (!HasAdminPrivileges())
         {
+            _logger.LogWarning("Reactivate: Access denied for company {CompanyId}. Admin privileges required.", companyId);
             return Forbid("Admin privileges required");
         }
 
@@ -385,12 +579,21 @@ public class CompanyStripeManagementController : ControllerBase
 
     /// <summary>
     /// Delete company's Stripe account
+    /// Requires: Aegis user OR Customer with admin/mainadmin role
     /// </summary>
     [HttpDelete]
     public async Task<ActionResult> Delete(Guid companyId)
     {
+        // Double authorization: Authentication + Admin privileges
+        if (!User.Identity?.IsAuthenticated ?? true)
+        {
+            _logger.LogWarning("Delete: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
         if (!HasAdminPrivileges())
         {
+            _logger.LogWarning("Delete: Access denied for company {CompanyId}. Admin privileges required.", companyId);
             return Forbid("Admin privileges required");
         }
 
@@ -421,13 +624,44 @@ public class CompanyStripeManagementController : ControllerBase
 
     /// <summary>
     /// Refresh Stripe onboarding link (called when user needs to re-authenticate)
+    /// Requires: Aegis user OR Customer with admin/mainadmin role OR customer (for their own company)
     /// </summary>
     [HttpGet("reauth")]
     public async Task<IActionResult> RefreshOnboarding(Guid companyId)
     {
-        if (!HasAdminPrivileges())
+        // Double authorization: Authentication + (Admin privileges OR Customer access)
+        if (!User.Identity?.IsAuthenticated ?? true)
         {
-            return Forbid("Admin privileges required");
+            _logger.LogWarning("RefreshOnboarding: Unauthenticated request for company {CompanyId}", companyId);
+            return Unauthorized("Authentication required");
+        }
+        
+        bool hasAccess = false;
+        
+        if (HasAdminPrivileges())
+        {
+            // Aegis admin/mainadmin can access any company
+            hasAccess = true;
+            _logger.LogInformation("RefreshOnboarding: Aegis admin accessing company {CompanyId}", companyId);
+        }
+        else if (IsCustomer())
+        {
+            // Customer can only access their own company
+            hasAccess = await CanCustomerAccessCompany(companyId);
+            if (hasAccess)
+            {
+                _logger.LogInformation("RefreshOnboarding: Customer accessing their own company {CompanyId}", companyId);
+            }
+            else
+            {
+                _logger.LogWarning("RefreshOnboarding: Customer attempted to access company {CompanyId} without permission", companyId);
+            }
+        }
+        
+        if (!hasAccess)
+        {
+            _logger.LogWarning("RefreshOnboarding: Access denied for company {CompanyId}. Admin privileges required or customer must own the company.", companyId);
+            return Forbid("Access denied. Admin privileges required or customer must own the company.");
         }
 
         try

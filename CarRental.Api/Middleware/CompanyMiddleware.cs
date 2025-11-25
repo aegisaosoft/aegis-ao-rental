@@ -20,6 +20,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
 
 namespace CarRental.Api.Middleware
 {
@@ -28,12 +29,14 @@ namespace CarRental.Api.Middleware
         private readonly RequestDelegate _next;
         private readonly ILogger<CompanyMiddleware> _logger;
         private readonly IWebHostEnvironment _environment;
+        private readonly IConfiguration _configuration;
 
-        public CompanyMiddleware(RequestDelegate next, ILogger<CompanyMiddleware> logger, IWebHostEnvironment environment)
+        public CompanyMiddleware(RequestDelegate next, ILogger<CompanyMiddleware> logger, IWebHostEnvironment environment, IConfiguration configuration)
         {
             _next = next;
             _logger = logger;
             _environment = environment;
+            _configuration = configuration;
         }
 
         public async Task InvokeAsync(HttpContext context, ICompanyService companyService)
@@ -111,27 +114,32 @@ namespace CarRental.Api.Middleware
                         hostname
                     );
                     
-                    // Development fallback: Use spjoannarental as default company in development on localhost
+                    // Use default company from configuration if no company was resolved and we're on localhost
                     if (string.IsNullOrEmpty(companyId) && 
-                        (hostname == "localhost" || hostname == "127.0.0.1") &&
-                        _environment.IsDevelopment())
+                        (hostname == "localhost" || hostname == "127.0.0.1"))
                     {
-                        var defaultCompany = await companyService.GetCompanyBySubdomainAsync("spjoannarental");
-                        if (defaultCompany != null)
+                        var defaultCompanyIdString = _configuration["DefaultCompanyId"];
+                        if (!string.IsNullOrWhiteSpace(defaultCompanyIdString) && 
+                            Guid.TryParse(defaultCompanyIdString, out var defaultCompanyId))
                         {
-                            companyId = defaultCompany.Id.ToString();
-                            source = "dev-default";
-                            _logger.LogInformation(
-                                "Development mode: Using default company {CompanyId} ({CompanyName}) for localhost",
-                                companyId,
-                                defaultCompany.CompanyName
-                            );
-                        }
-                        else
-                        {
-                            _logger.LogWarning(
-                                "Development mode: Default company with subdomain 'spjoannarental' not found. Please ensure this company exists in the database."
-                            );
+                            var defaultCompany = await companyService.GetCompanyByIdAsync(defaultCompanyId);
+                            if (defaultCompany != null)
+                            {
+                                companyId = defaultCompany.Id.ToString();
+                                source = "config-default";
+                                _logger.LogInformation(
+                                    "Using default company {CompanyId} ({CompanyName}) from configuration for localhost",
+                                    companyId,
+                                    defaultCompany.CompanyName
+                                );
+                            }
+                            else
+                            {
+                                _logger.LogWarning(
+                                    "Default company with ID '{DefaultCompanyId}' from configuration not found. Please ensure this company exists in the database.",
+                                    defaultCompanyIdString
+                                );
+                            }
                         }
                     }
                     // Try to resolve from hostname for non-localhost
