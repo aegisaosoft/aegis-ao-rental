@@ -1093,12 +1093,24 @@ public class VehiclesController : ControllerBase
     [ProducesResponseType(400)]
     [ProducesResponseType(401)]
     [ProducesResponseType(403)]
-    public async Task<IActionResult> ImportVehicles(IFormFile file, [FromForm] string? companyId = null)
+    public async Task<IActionResult> ImportVehicles(IFormFile file, [FromForm] string? companyId = null, [FromForm] string? fieldMapping = null)
     {
         _logger.LogInformation("=== VEHICLE IMPORT STARTED ===");
         _logger.LogInformation("File name: {FileName}, Size: {Size} bytes, ContentType: {ContentType}", 
             file?.FileName, file?.Length, file?.ContentType);
         _logger.LogInformation("CompanyId from form: {CompanyId}", companyId);
+        _logger.LogInformation("FieldMapping from form parameter: {FieldMapping}", fieldMapping ?? "null");
+        
+        // Also try to get from Request.Form directly in case FromForm binding didn't work
+        var fieldMappingFromForm = Request.Form["fieldMapping"].FirstOrDefault();
+        _logger.LogInformation("FieldMapping from Request.Form: {FieldMapping}", fieldMappingFromForm ?? "null");
+        
+        // Use Request.Form value if parameter is null
+        if (string.IsNullOrEmpty(fieldMapping) && !string.IsNullOrEmpty(fieldMappingFromForm))
+        {
+            fieldMapping = fieldMappingFromForm;
+            _logger.LogInformation("Using fieldMapping from Request.Form");
+        }
         
         try
         {
@@ -1172,6 +1184,8 @@ public class VehiclesController : ControllerBase
             // Read CSV file
             var vehicles = new List<object>();
             var importedCount = 0;
+            var loadedCount = 0; // New vehicles created
+            var updatedCount = 0; // Existing vehicles updated
             var errors = new List<string>();
 
             _logger.LogInformation("[Import] Starting CSV file reading...");
@@ -1187,44 +1201,143 @@ public class VehiclesController : ControllerBase
 
                 _logger.LogInformation("[Import] Header line: {HeaderLine}", headerLine);
                 var headerValues = ParseCsvLine(headerLine);
-                var headers = headerValues.Select(h => h.Trim().ToLowerInvariant()).ToArray();
+                var headers = headerValues.Select(h => h.Trim()).ToArray(); // Keep original case for display
+                var headersLower = headers.Select(h => h.ToLowerInvariant()).ToArray();
                 _logger.LogInformation("[Import] Parsed {Count} headers: {Headers}", headers.Length, string.Join(", ", headers));
 
-                // Find required column indices
-                _logger.LogInformation("[Import] Finding column indices...");
-                var makeIndex = Array.IndexOf(headers, "make");
-                var modelIndex = Array.IndexOf(headers, "model");
-                var yearIndex = Array.IndexOf(headers, "year");
-                var licensePlateIndex = Array.IndexOf(headers, "licenseplate") != -1 
-                    ? Array.IndexOf(headers, "licenseplate") 
-                    : Array.IndexOf(headers, "license_plate");
-
-                _logger.LogInformation("[Import] Required columns - Make: {MakeIndex}, Model: {ModelIndex}, Year: {YearIndex}, LicensePlate: {LicensePlateIndex}",
-                    makeIndex, modelIndex, yearIndex, licensePlateIndex);
-
-                if (makeIndex == -1 || modelIndex == -1 || yearIndex == -1 || licensePlateIndex == -1)
+                // Parse field mapping if provided
+                Dictionary<string, int>? columnMapping = null;
+                if (!string.IsNullOrEmpty(fieldMapping))
                 {
-                    _logger.LogError("[Import] Missing required columns. Make: {MakeIndex}, Model: {ModelIndex}, Year: {YearIndex}, LicensePlate: {LicensePlateIndex}",
-                        makeIndex, modelIndex, yearIndex, licensePlateIndex);
-                    return BadRequest("CSV must contain columns: make, model, year, licenseplate (or license_plate)");
+                    try
+                    {
+                        _logger.LogInformation("[Import] Received field mapping string: {Mapping}", fieldMapping);
+                        columnMapping = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, int>>(fieldMapping);
+                        if (columnMapping != null)
+                        {
+                            _logger.LogInformation("[Import] Successfully parsed field mapping with {Count} fields", columnMapping.Count);
+                            foreach (var kvp in columnMapping)
+                            {
+                                _logger.LogInformation("[Import] Mapping: {Field} -> Column {Index}", kvp.Key, kvp.Value);
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("[Import] Field mapping deserialized to null");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "[Import] Failed to parse field mapping: {Error}", ex.Message);
+                        _logger.LogError("[Import] Field mapping string was: {Mapping}", fieldMapping);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("[Import] No field mapping provided");
                 }
 
-                // Optional columns
-                var idIndex = Array.IndexOf(headers, "id");
-                var colorIndex = Array.IndexOf(headers, "color");
-                var vinIndex = Array.IndexOf(headers, "vin");
-                var mileageIndex = Array.IndexOf(headers, "mileage");
-                var transmissionIndex = Array.IndexOf(headers, "transmission");
-                var seatsIndex = Array.IndexOf(headers, "seats");
-                var fuelTypeIndex = Array.IndexOf(headers, "fueltype") != -1 
-                    ? Array.IndexOf(headers, "fueltype") 
-                    : Array.IndexOf(headers, "fuel_type");
-                var stateIndex = Array.IndexOf(headers, "state");
-                var locationIndex = Array.IndexOf(headers, "location");
-                var categoryIndex = Array.IndexOf(headers, "category");
-                var dailyRateIndex = Array.IndexOf(headers, "dailyrate") != -1 
-                    ? Array.IndexOf(headers, "dailyrate") 
-                    : Array.IndexOf(headers, "daily_rate");
+                // Find required column indices - use mapping if provided, otherwise try to find by name
+                _logger.LogInformation("[Import] Finding column indices...");
+                int makeIndex, modelIndex, yearIndex, licensePlateIndex, stateIndex, categoryIndex;
+                
+                if (columnMapping != null)
+                {
+                    // Use provided mapping
+                    makeIndex = columnMapping.GetValueOrDefault("make", -1);
+                    modelIndex = columnMapping.GetValueOrDefault("model", -1);
+                    yearIndex = columnMapping.GetValueOrDefault("year", -1);
+                    licensePlateIndex = columnMapping.GetValueOrDefault("license_plate", -1);
+                    stateIndex = columnMapping.GetValueOrDefault("state", -1);
+                    categoryIndex = columnMapping.GetValueOrDefault("category", -1);
+                }
+                else
+                {
+                    // Try to find by name (case-insensitive)
+                    makeIndex = Array.IndexOf(headersLower, "make");
+                    modelIndex = Array.IndexOf(headersLower, "model");
+                    yearIndex = Array.IndexOf(headersLower, "year");
+                    licensePlateIndex = Array.IndexOf(headersLower, "licenseplate") != -1 
+                        ? Array.IndexOf(headersLower, "licenseplate") 
+                        : Array.IndexOf(headersLower, "license_plate");
+                    stateIndex = Array.IndexOf(headersLower, "state");
+                    categoryIndex = Array.IndexOf(headersLower, "category");
+                }
+
+                _logger.LogInformation("[Import] Required columns - Make: {MakeIndex}, Model: {ModelIndex}, Year: {YearIndex}, LicensePlate: {LicensePlateIndex}, State: {StateIndex}, Category: {CategoryIndex}",
+                    makeIndex, modelIndex, yearIndex, licensePlateIndex, stateIndex, categoryIndex);
+
+                // Check if mandatory fields are missing
+                bool missingMandatory = makeIndex == -1 || modelIndex == -1 || yearIndex == -1 || licensePlateIndex == -1 || stateIndex == -1 || categoryIndex == -1;
+                
+                // Mandatory fields: make, model, year, license_plate, state, category
+                int mandatoryFieldCount = 6;
+                
+                if (missingMandatory && headers.Length >= mandatoryFieldCount)
+                {
+                    // Enough columns but wrong names - return headers for mapping
+                    _logger.LogInformation("[Import] Missing mandatory fields but enough columns ({ColumnCount} >= {RequiredCount}). Returning headers for mapping.",
+                        headers.Length, mandatoryFieldCount);
+                    
+                    return Ok(new
+                    {
+                        requiresMapping = true,
+                        headers = headers,
+                        availableFields = new[]
+                        {
+                            new { field = "make", label = "Make", mandatory = true, defaultValue = (string?)null },
+                            new { field = "model", label = "Model", mandatory = true, defaultValue = (string?)null },
+                            new { field = "year", label = "Year", mandatory = true, defaultValue = (string?)null },
+                            new { field = "license_plate", label = "License Plate", mandatory = true, defaultValue = (string?)null },
+                            new { field = "state", label = "State", mandatory = true, defaultValue = (string?)null },
+                            new { field = "category", label = "Category", mandatory = true, defaultValue = (string?)null },
+                            new { field = "color", label = "Color", mandatory = false, defaultValue = (string?)"Silver" },
+                            new { field = "number_of_seats", label = "Number of Seats", mandatory = false, defaultValue = (string?)null },
+                            new { field = "fuel_type", label = "Fuel Type", mandatory = false, defaultValue = (string?)"Gasoline" }
+                        }
+                    });
+                }
+                
+                if (missingMandatory)
+                {
+                    _logger.LogError("[Import] Missing required columns. Make: {MakeIndex}, Model: {ModelIndex}, Year: {YearIndex}, LicensePlate: {LicensePlateIndex}, State: {StateIndex}, Category: {CategoryIndex}",
+                        makeIndex, modelIndex, yearIndex, licensePlateIndex, stateIndex, categoryIndex);
+                    return BadRequest("CSV must contain columns: make, model, year, license_plate, state, category");
+                }
+
+                // Optional columns - use mapping if provided
+                int idIndex, colorIndex, vinIndex, mileageIndex, transmissionIndex, seatsIndex, fuelTypeIndex, locationIndex, dailyRateIndex;
+                
+                if (columnMapping != null)
+                {
+                    idIndex = columnMapping.GetValueOrDefault("id", -1);
+                    colorIndex = columnMapping.GetValueOrDefault("color", -1);
+                    vinIndex = columnMapping.GetValueOrDefault("vin", -1);
+                    mileageIndex = columnMapping.GetValueOrDefault("mileage", -1);
+                    transmissionIndex = columnMapping.GetValueOrDefault("transmission", -1);
+                    seatsIndex = columnMapping.GetValueOrDefault("number_of_seats", columnMapping.GetValueOrDefault("seats", -1));
+                    fuelTypeIndex = columnMapping.GetValueOrDefault("fuel_type", columnMapping.GetValueOrDefault("fueltype", -1));
+                    locationIndex = columnMapping.GetValueOrDefault("location", -1);
+                    dailyRateIndex = columnMapping.GetValueOrDefault("daily_rate", columnMapping.GetValueOrDefault("dailyrate", -1));
+                }
+                else
+                {
+                    idIndex = Array.IndexOf(headersLower, "id");
+                    colorIndex = Array.IndexOf(headersLower, "color");
+                    vinIndex = Array.IndexOf(headersLower, "vin");
+                    mileageIndex = Array.IndexOf(headersLower, "mileage");
+                    transmissionIndex = Array.IndexOf(headersLower, "transmission");
+                    seatsIndex = Array.IndexOf(headersLower, "number_of_seats") != -1 
+                        ? Array.IndexOf(headersLower, "number_of_seats") 
+                        : Array.IndexOf(headersLower, "seats");
+                    fuelTypeIndex = Array.IndexOf(headersLower, "fueltype") != -1 
+                        ? Array.IndexOf(headersLower, "fueltype") 
+                        : Array.IndexOf(headersLower, "fuel_type");
+                    locationIndex = Array.IndexOf(headersLower, "location");
+                    dailyRateIndex = Array.IndexOf(headersLower, "dailyrate") != -1 
+                        ? Array.IndexOf(headersLower, "dailyrate") 
+                        : Array.IndexOf(headersLower, "daily_rate");
+                }
 
                 _logger.LogInformation("[Import] Optional columns - ID: {IdIndex}, Color: {ColorIndex}, VIN: {VinIndex}, Mileage: {MileageIndex}, Transmission: {TransmissionIndex}, Seats: {SeatsIndex}, FuelType: {FuelTypeIndex}, State: {StateIndex}, Location: {LocationIndex}, Category: {CategoryIndex}, DailyRate: {DailyRateIndex}",
                     idIndex, colorIndex, vinIndex, mileageIndex, transmissionIndex, seatsIndex, fuelTypeIndex, stateIndex, locationIndex, categoryIndex, dailyRateIndex);
@@ -1247,6 +1360,9 @@ public class VehiclesController : ControllerBase
                     totalLines++;
                     _logger.LogInformation("[Import] Processing line {LineNumber}: {Line}", lineNumber, line);
 
+                    // Declare licensePlate outside try block so it's accessible in catch
+                    string? licensePlate = null;
+                    
                     try
                     {
                         // Parse CSV line handling quoted fields
@@ -1263,7 +1379,7 @@ public class VehiclesController : ControllerBase
                         var make = values[makeIndex]?.ToUpperInvariant().Trim();
                         var modelName = values[modelIndex]?.ToUpperInvariant().Trim();
                         var yearStr = values[yearIndex]?.Trim();
-                        var licensePlate = values[licensePlateIndex]?.Trim();
+                        licensePlate = values[licensePlateIndex]?.Trim();
 
                         _logger.LogDebug("[Import] Line {LineNumber}: Extracted - Make: {Make}, Model: {Model}, Year: {Year}, LicensePlate: {LicensePlate}",
                             lineNumber, make, modelName, yearStr, licensePlate);
@@ -1322,12 +1438,18 @@ public class VehiclesController : ControllerBase
                             _logger.LogDebug("[Import] Line {LineNumber}: Parsed seats: {Seats}", lineNumber, seats);
                         }
 
-                        // Parse fuel type
+                        // Parse fuel type - default to "Gasoline" if not provided
                         string? fuelType = null;
                         if (fuelTypeIndex != -1 && values.Length > fuelTypeIndex && !string.IsNullOrWhiteSpace(values[fuelTypeIndex]))
                         {
                             fuelType = values[fuelTypeIndex].Trim();
                             _logger.LogDebug("[Import] Line {LineNumber}: Parsed fuel type: {FuelType}", lineNumber, fuelType);
+                        }
+                        else
+                        {
+                            // Default to Gasoline if not provided
+                            fuelType = "Gasoline";
+                            _logger.LogDebug("[Import] Line {LineNumber}: Using default fuel type: Gasoline", lineNumber);
                         }
 
                         // Parse and translate category (needed for model creation/update)
@@ -1546,10 +1668,17 @@ public class VehiclesController : ControllerBase
                         }
 
                         // Parse other optional fields - ignore if column doesn't exist or value is null/empty
+                        // Color defaults to "Silver" if not provided
                         string? color = null;
                         if (colorIndex != -1 && values.Length > colorIndex && !string.IsNullOrWhiteSpace(values[colorIndex]))
                         {
                             color = values[colorIndex].Trim();
+                        }
+                        else
+                        {
+                            // Default to Silver if not provided
+                            color = "Silver";
+                            _logger.LogDebug("[Import] Line {LineNumber}: Using default color: Silver", lineNumber);
                         }
                         
                         int mileage = 0;
@@ -1603,6 +1732,7 @@ public class VehiclesController : ControllerBase
                             
                             vehicle = existingVehicle;
                             importedCount++;
+                            updatedCount++;
                             _logger.LogInformation("[Import] Line {LineNumber}: Vehicle updated successfully - VehicleId: {VehicleId}, LicensePlate: {LicensePlate}, VehicleModelId: {VehicleModelId}",
                                 lineNumber, vehicle.Id, licensePlate, vehicleModel!.Id);
                         }
@@ -1630,20 +1760,24 @@ public class VehiclesController : ControllerBase
 
                             _context.Vehicles.Add(vehicle);
                             importedCount++;
+                            loadedCount++;
                             _logger.LogInformation("[Import] Line {LineNumber}: Vehicle created successfully - LicensePlate: {LicensePlate}, VehicleId: {VehicleId}, VehicleModelId: {VehicleModelId}",
                                 lineNumber, licensePlate, vehicle.Id, vehicleModel!.Id);
                         }
                     }
                     catch (Exception ex)
                     {
-                        var errorMsg = $"Line {lineNumber}: Error processing - {ex.Message}";
+                        // Include license plate in error message if available
+                        var errorMsg = string.IsNullOrEmpty(licensePlate)
+                            ? $"Line {lineNumber}: Error processing - {ex.Message}"
+                            : $"Line {lineNumber}: Error processing {licensePlate} - {ex.Message}";
                         _logger.LogError(ex, "[Import] {Error}", errorMsg);
                         errors.Add(errorMsg);
                     }
                 }
 
-                _logger.LogInformation("[Import] Finished processing {TotalLines} lines. Imported: {ImportedCount}, Errors: {ErrorCount}", 
-                    totalLines, importedCount, errors.Count);
+                _logger.LogInformation("[Import] Finished processing {TotalLines} lines. Loaded: {LoadedCount}, Updated: {UpdatedCount}, Total: {ImportedCount}, Errors: {ErrorCount}", 
+                    totalLines, loadedCount, updatedCount, importedCount, errors.Count);
 
                 // Save all vehicles
                 _logger.LogInformation("[Import] Saving all vehicles to database...");
@@ -1652,8 +1786,10 @@ public class VehiclesController : ControllerBase
 
                 _logger.LogInformation("=== VEHICLE IMPORT COMPLETED ===");
                 _logger.LogInformation("Total lines processed: {TotalLines}", totalLines);
-                _logger.LogInformation("Successfully imported: {ImportedCount} vehicles", importedCount);
-                _logger.LogInformation("Errors encountered: {ErrorCount}", errors.Count);
+                _logger.LogInformation("Loaded (new): {LoadedCount} vehicles", loadedCount);
+                _logger.LogInformation("Updated (existing): {UpdatedCount} vehicles", updatedCount);
+                _logger.LogInformation("Total imported: {ImportedCount} vehicles", importedCount);
+                _logger.LogInformation("Ignored (errors): {ErrorCount} lines", errors.Count);
                 if (errors.Count > 0)
                 {
                     _logger.LogWarning("[Import] Error details: {Errors}", string.Join("; ", errors));
@@ -1662,6 +1798,9 @@ public class VehiclesController : ControllerBase
                 return Ok(new
                 {
                     count = importedCount,
+                    loadedCount = loadedCount,
+                    updatedCount = updatedCount,
+                    ignoredCount = errors.Count,
                     errors = errors,
                     totalLines = totalLines,
                     message = $"Successfully imported {importedCount} vehicle(s)" + (errors.Count > 0 ? $" with {errors.Count} error(s)" : "")
