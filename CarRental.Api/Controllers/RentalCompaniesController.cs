@@ -15,8 +15,10 @@
 
 using System;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Hosting;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.DTOs.Stripe;
@@ -37,6 +39,7 @@ public class RentalCompaniesController : ControllerBase
     private readonly IEncryptionService _encryptionService;
     private readonly IStripeConnectService _stripeConnectService;
     private readonly IAzureDnsService? _azureDnsService;
+    private readonly IWebHostEnvironment _environment;
 
     public RentalCompaniesController(
         CarRentalDbContext context, 
@@ -44,6 +47,7 @@ public class RentalCompaniesController : ControllerBase
         ILogger<RentalCompaniesController> logger,
         IEncryptionService encryptionService,
         IStripeConnectService stripeConnectService,
+        IWebHostEnvironment environment,
         IAzureDnsService? azureDnsService = null)
     {
         _context = context;
@@ -51,6 +55,7 @@ public class RentalCompaniesController : ControllerBase
         _logger = logger;
         _encryptionService = encryptionService;
         _stripeConnectService = stripeConnectService;
+        _environment = environment;
         _azureDnsService = azureDnsService;
     }
 
@@ -582,11 +587,13 @@ public class RentalCompaniesController : ControllerBase
             company.StripeSettingsId = null;
         }
 
+        var publicBaseUrl = GetPublicBaseUrl();
+
         if (updateCompanyDto.VideoLink != null)
-            company.VideoLink = updateCompanyDto.VideoLink;
+            company.VideoLink = await NormalizeAndSaveAssetAsync(company.Id, "video", updateCompanyDto.VideoLink, publicBaseUrl);
 
         if (updateCompanyDto.BannerLink != null)
-            company.BannerLink = updateCompanyDto.BannerLink;
+            company.BannerLink = await NormalizeAndSaveAssetAsync(company.Id, "banner", updateCompanyDto.BannerLink, publicBaseUrl);
 
         if (updateCompanyDto.LogoLink != null)
             company.LogoLink = updateCompanyDto.LogoLink;
@@ -604,7 +611,7 @@ public class RentalCompaniesController : ControllerBase
             company.Texts = updateCompanyDto.Texts;
 
         if (updateCompanyDto.BackgroundLink != null)
-            company.BackgroundLink = updateCompanyDto.BackgroundLink;
+            company.BackgroundLink = await NormalizeAndSaveAssetAsync(company.Id, "background", updateCompanyDto.BackgroundLink, publicBaseUrl);
 
         if (updateCompanyDto.About != null)
             company.About = updateCompanyDto.About;
@@ -734,10 +741,10 @@ public class RentalCompaniesController : ControllerBase
             company.SecondaryColor = updateCompanyDto.SecondaryColor;
 
         if (updateCompanyDto.LogoUrl != null)
-            company.LogoUrl = updateCompanyDto.LogoUrl;
+            company.LogoUrl = await NormalizeAndSaveAssetAsync(company.Id, "logo", updateCompanyDto.LogoUrl, publicBaseUrl);
 
         if (updateCompanyDto.FaviconUrl != null)
-            company.FaviconUrl = updateCompanyDto.FaviconUrl;
+            company.FaviconUrl = await NormalizeAndSaveAssetAsync(company.Id, "favicon", updateCompanyDto.FaviconUrl, publicBaseUrl);
 
         if (updateCompanyDto.CustomCss != null)
             company.CustomCss = updateCompanyDto.CustomCss;
@@ -1577,5 +1584,145 @@ public class RentalCompaniesController : ControllerBase
                 isTestCompany, countryCode);
             return null;
         }
+    }
+
+    private async Task<string?> NormalizeAndSaveAssetAsync(Guid companyId, string assetName, string? rawValue, string publicBaseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return null;
+        }
+
+        try
+        {
+            if (rawValue.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                var match = Regex.Match(rawValue, @"^data:(?<mime>[\w/\-\.]+);base64,(?<data>.+)$");
+                if (!match.Success)
+                {
+                    _logger.LogWarning("Invalid data URL format for {AssetName} on company {CompanyId}", assetName, companyId);
+                    return null;
+                }
+
+                var mimeType = match.Groups["mime"].Value;
+                var base64Data = match.Groups["data"].Value;
+
+                byte[] fileBytes;
+                try
+                {
+                    fileBytes = Convert.FromBase64String(base64Data);
+                }
+                catch (FormatException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to decode base64 payload for {AssetName} on company {CompanyId}", assetName, companyId);
+                    return null;
+                }
+
+                var extension = GetExtensionFromMime(mimeType, assetName);
+                if (extension == null)
+                {
+                    _logger.LogWarning("Unsupported mime type {Mime} for {AssetName} on company {CompanyId}", mimeType, assetName, companyId);
+                    return null;
+                }
+
+                var targetDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString());
+                Directory.CreateDirectory(targetDirectory);
+
+                foreach (var existing in Directory.EnumerateFiles(targetDirectory, $"{assetName}.*"))
+                {
+                    try
+                    {
+                        System.IO.File.Delete(existing);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete existing {AssetName} file {File} for company {CompanyId}", assetName, existing, companyId);
+                    }
+                }
+
+                var fileName = $"{assetName}.{extension}";
+                var filePath = Path.Combine(targetDirectory, fileName);
+
+                await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+
+                var relativePath = $"/public/{companyId}/{fileName}".Replace("\\", "/");
+                return CombineWithBase(publicBaseUrl, relativePath);
+            }
+
+            if (rawValue.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
+            {
+                return CombineWithBase(publicBaseUrl, rawValue.Replace("\\", "/"));
+            }
+
+            if (rawValue.StartsWith("/"))
+            {
+                return CombineWithBase(publicBaseUrl, rawValue.Replace("\\", "/"));
+            }
+
+            return rawValue;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process {AssetName} for company {CompanyId}", assetName, companyId);
+            return null;
+        }
+    }
+
+    private static string? GetExtensionFromMime(string mimeType, string assetName)
+    {
+        if (string.IsNullOrWhiteSpace(mimeType))
+        {
+            return null;
+        }
+
+        return mimeType.ToLowerInvariant() switch
+        {
+            "image/jpeg" or "image/jpg" => "jpg",
+            "image/png" => "png",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            "image/svg+xml" => "svg",
+            "image/x-icon" => "ico",
+            "image/vnd.microsoft.icon" => "ico",
+            "video/mp4" => "mp4",
+            "video/webm" => "webm",
+            "video/ogg" => "ogv",
+            "video/quicktime" => "mov",
+            _ when mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) => "png",
+            _ when mimeType.StartsWith("video/", StringComparison.OrdinalIgnoreCase) => "mp4",
+            _ => null
+        };
+    }
+
+    private string GetPublicBaseUrl()
+    {
+        var request = HttpContext?.Request;
+        if (request == null)
+        {
+            return string.Empty;
+        }
+
+        var baseUrl = $"{request.Scheme}://{request.Host}".TrimEnd('/');
+        return string.IsNullOrWhiteSpace(baseUrl) ? string.Empty : baseUrl;
+    }
+
+    private static string CombineWithBase(string baseUrl, string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return relativePath;
+        }
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return relativePath;
+        }
+
+        if (!relativePath.StartsWith('/'))
+        {
+            relativePath = "/" + relativePath;
+        }
+
+        return $"{baseUrl.TrimEnd('/')}{relativePath}";
     }
 }
