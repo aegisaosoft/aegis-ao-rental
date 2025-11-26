@@ -44,7 +44,8 @@ public class RentalCompanyDto
     [MaxLength(500)]
     public string? VideoLink { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? BannerLink { get; set; }
     
     [MaxLength(500)]
@@ -60,7 +61,8 @@ public class RentalCompanyDto
     
     public string? Texts { get; set; } // JSONB field
     
-    [MaxLength(255)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? BackgroundLink { get; set; }
     
     public string? About { get; set; }
@@ -87,10 +89,12 @@ public class RentalCompanyDto
     [MaxLength(7)]
     public string? SecondaryColor { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? LogoUrl { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? FaviconUrl { get; set; }
     
     public string? CustomCss { get; set; }
@@ -126,7 +130,8 @@ public class CreateRentalCompanyDto
     [MaxLength(500)]
     public string? VideoLink { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? BannerLink { get; set; }
     
     [MaxLength(500)]
@@ -142,7 +147,8 @@ public class CreateRentalCompanyDto
     
     public string? Texts { get; set; } // JSONB field
     
-    [MaxLength(255)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? BackgroundLink { get; set; }
     
     public string? About { get; set; }
@@ -162,10 +168,12 @@ public class CreateRentalCompanyDto
     [MaxLength(7)]
     public string? SecondaryColor { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? LogoUrl { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? FaviconUrl { get; set; }
     
     public string? CustomCss { get; set; }
@@ -205,7 +213,8 @@ public class UpdateRentalCompanyDto
     [MaxLength(500)]
     public string? VideoLink { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? BannerLink { get; set; }
     
     [MaxLength(500)]
@@ -221,7 +230,8 @@ public class UpdateRentalCompanyDto
     
     public string? Texts { get; set; } // JSONB field
     
-    [MaxLength(255)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? BackgroundLink { get; set; }
     
     public string? About { get; set; }
@@ -242,10 +252,12 @@ public class UpdateRentalCompanyDto
     [MaxLength(7)]
     public string? SecondaryColor { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? LogoUrl { get; set; }
     
-    [MaxLength(500)]
+    // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
+    [MaxLength(10000)]
     public string? FaviconUrl { get; set; }
     
     public string? CustomCss { get; set; }
