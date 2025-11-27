@@ -522,10 +522,20 @@ public class RentalCompaniesController : ControllerBase
     /// Update a rental company
     /// </summary>
     [HttpPut("{id}")]
+    [RequestSizeLimit(10_000_000)] // 10MB limit to handle large base64 images (2MB image = ~2.67MB base64)
     public async Task<IActionResult> UpdateRentalCompany(Guid id, UpdateRentalCompanyDto updateCompanyDto)
     {
-        _logger.LogInformation("UpdateRentalCompany called with SecurityDeposit={SecurityDeposit}, IsSecurityDepositMandatory={IsSecurityDepositMandatory}", 
+        _logger.LogInformation("UpdateRentalCompany called for company ID: {CompanyId}", id);
+        _logger.LogInformation("UpdateRentalCompany - SecurityDeposit={SecurityDeposit}, IsSecurityDepositMandatory={IsSecurityDepositMandatory}", 
             updateCompanyDto.SecurityDeposit, updateCompanyDto.IsSecurityDepositMandatory);
+        _logger.LogInformation("UpdateRentalCompany - BannerLink length: {BannerLength}, BackgroundLink length: {BackgroundLength}, LogoUrl length: {LogoLength}, FaviconUrl length: {FaviconLength}",
+            updateCompanyDto.BannerLink?.Length ?? 0,
+            updateCompanyDto.BackgroundLink?.Length ?? 0,
+            updateCompanyDto.LogoUrl?.Length ?? 0,
+            updateCompanyDto.FaviconUrl?.Length ?? 0);
+        _logger.LogInformation("UpdateRentalCompany - BannerLink starts with data: {IsDataUrl}, BackgroundLink starts with data: {IsBackgroundDataUrl}",
+            updateCompanyDto.BannerLink?.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?? false,
+            updateCompanyDto.BackgroundLink?.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?? false);
         
         var company = await _context.Companies.FindAsync(id);
 

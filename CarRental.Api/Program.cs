@@ -66,6 +66,13 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
     options.ValueLengthLimit = 524_288_000;
     options.MultipartHeadersLengthLimit = 524_288_000;
 });
+
+// Configure JSON request body size limit for large base64 image uploads
+// A 2MB image becomes ~2.67MB in base64, so we need at least 10MB to handle multiple images
+builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(options =>
+{
+    options.Limits.MaxRequestBodySize = 10_000_000; // 10MB
+});
 // Register Swagger services for all environments
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>

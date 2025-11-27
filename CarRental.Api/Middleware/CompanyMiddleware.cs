@@ -46,6 +46,17 @@ namespace CarRental.Api.Middleware
 
             try
             {
+                // Skip company resolution for admin endpoints that already have company ID in the path
+                // These endpoints don't need company context resolution
+                var path = context.Request.Path.Value ?? "";
+                if (path.StartsWith("/api/RentalCompanies/", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/api/companies/", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Company ID is in the URL path, skip middleware resolution
+                    await _next(context);
+                    return;
+                }
+
                 // Check if EF Core is available (database might not be initialized yet)
                 // This prevents errors during app startup when EF Core is still initializing
                 if (companyService == null)

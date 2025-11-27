@@ -45,7 +45,9 @@ public class RentalCompanyDto
     public string? VideoLink { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? BannerLink { get; set; }
     
     [MaxLength(500)]
@@ -62,7 +64,9 @@ public class RentalCompanyDto
     public string? Texts { get; set; } // JSONB field
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? BackgroundLink { get; set; }
     
     public string? About { get; set; }
@@ -90,11 +94,15 @@ public class RentalCompanyDto
     public string? SecondaryColor { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? LogoUrl { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? FaviconUrl { get; set; }
     
     public string? CustomCss { get; set; }
@@ -131,7 +139,9 @@ public class CreateRentalCompanyDto
     public string? VideoLink { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? BannerLink { get; set; }
     
     [MaxLength(500)]
@@ -148,7 +158,9 @@ public class CreateRentalCompanyDto
     public string? Texts { get; set; } // JSONB field
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? BackgroundLink { get; set; }
     
     public string? About { get; set; }
@@ -169,11 +181,15 @@ public class CreateRentalCompanyDto
     public string? SecondaryColor { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? LogoUrl { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? FaviconUrl { get; set; }
     
     public string? CustomCss { get; set; }
@@ -214,7 +230,9 @@ public class UpdateRentalCompanyDto
     public string? VideoLink { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? BannerLink { get; set; }
     
     [MaxLength(500)]
@@ -231,7 +249,9 @@ public class UpdateRentalCompanyDto
     public string? Texts { get; set; } // JSONB field
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? BackgroundLink { get; set; }
     
     public string? About { get; set; }
@@ -253,11 +273,15 @@ public class UpdateRentalCompanyDto
     public string? SecondaryColor { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? LogoUrl { get; set; }
     
     // Allow base64 data URLs (can be very long) - backend will convert to file URLs before saving
-    [MaxLength(10000)]
+    // Base64 encoding increases size by ~33%, so a 2MB image becomes ~2.67MB = ~2,670,000 chars
+    // Setting to 3000000 (3M chars) to handle images up to ~2.25MB original size
+    [MaxLength(3000000)]
     public string? FaviconUrl { get; set; }
     
     public string? CustomCss { get; set; }
