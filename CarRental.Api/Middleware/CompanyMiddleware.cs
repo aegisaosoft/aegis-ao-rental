@@ -46,13 +46,19 @@ namespace CarRental.Api.Middleware
 
             try
             {
-                // Skip company resolution for admin endpoints that already have company ID in the path
-                // These endpoints don't need company context resolution
+                // Skip company resolution only for specific admin endpoints that have company ID in the path
+                // Don't skip /api/companies/config as it needs company resolution
                 var path = context.Request.Path.Value ?? "";
-                if (path.StartsWith("/api/RentalCompanies/", StringComparison.OrdinalIgnoreCase) ||
-                    path.StartsWith("/api/companies/", StringComparison.OrdinalIgnoreCase))
+                var method = context.Request.Method;
+                
+                // Only skip for PUT/PATCH/DELETE operations on endpoints with ID in path
+                // GET /api/companies/config and other endpoints still need company resolution
+                if ((method == "PUT" || method == "PATCH" || method == "DELETE") &&
+                    (path.StartsWith("/api/RentalCompanies/", StringComparison.OrdinalIgnoreCase) ||
+                     (path.StartsWith("/api/companies/", StringComparison.OrdinalIgnoreCase) && 
+                      !path.Equals("/api/companies/config", StringComparison.OrdinalIgnoreCase))))
                 {
-                    // Company ID is in the URL path, skip middleware resolution
+                    // Company ID is in the URL path for update/delete operations, skip middleware resolution
                     await _next(context);
                     return;
                 }
@@ -125,7 +131,8 @@ namespace CarRental.Api.Middleware
                         hostname
                     );
                     
-                    // Use default company from configuration if no company was resolved and we're on localhost
+                    // Use default company from configuration ONLY for localhost (development)
+                    // In production, only use companies resolved from actual domain/subdomain
                     if (string.IsNullOrEmpty(companyId) && 
                         (hostname == "localhost" || hostname == "127.0.0.1"))
                     {
@@ -139,7 +146,7 @@ namespace CarRental.Api.Middleware
                                 companyId = defaultCompany.Id.ToString();
                                 source = "config-default";
                                 _logger.LogInformation(
-                                    "Using default company {CompanyId} ({CompanyName}) from configuration for localhost",
+                                    "Using default company {CompanyId} ({CompanyName}) from configuration for localhost (development only)",
                                     companyId,
                                     defaultCompany.CompanyName
                                 );
