@@ -49,10 +49,64 @@ public class WebhooksController : ControllerBase
         _encryptionService = encryptionService;
     }
 
+    /// <summary>
+    /// Legacy webhook endpoint - uses default webhook secret from configuration
+    /// </summary>
     [HttpPost("stripe")]
     public async Task<IActionResult> StripeWebhook()
     {
+        return await HandleStripeWebhookAsync(null);
+    }
+
+    /// <summary>
+    /// Webhook endpoint for specific StripeSettings by name
+    /// Route: /api/webhook/{stripeSettingsName}
+    /// Example: /api/webhook/us-sandbox, /api/webhook/us-production, /api/webhook/br-production
+    /// </summary>
+    [HttpPost("{stripeSettingsName}")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+    public async Task<IActionResult> StripeWebhookByName(string stripeSettingsName)
+    {
+        _logger.LogInformation("Webhook received for StripeSettings name: {Name}", stripeSettingsName);
+        
+        var stripeSettings = await _context.StripeSettings
+            .FirstOrDefaultAsync(s => s.Name.ToLower() == stripeSettingsName.ToLower());
+
+        if (stripeSettings == null)
+        {
+            _logger.LogWarning("StripeSettings not found for name: {Name}", stripeSettingsName);
+            return NotFound(new { error = $"StripeSettings with name '{stripeSettingsName}' not found" });
+        }
+
+        return await HandleStripeWebhookAsync(stripeSettings);
+    }
+
+    /// <summary>
+    /// Webhook endpoint for specific StripeSettings by ID
+    /// Route: /api/webhook/settings/{id}
+    /// </summary>
+    [HttpPost("settings/{id}")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+    public async Task<IActionResult> StripeWebhookById(Guid id)
+    {
+        _logger.LogInformation("Webhook received for StripeSettings ID: {Id}", id);
+        
+        var stripeSettings = await _context.StripeSettings.FindAsync(id);
+
+        if (stripeSettings == null)
+        {
+            _logger.LogWarning("StripeSettings not found for ID: {Id}", id);
+            return NotFound(new { error = $"StripeSettings with ID '{id}' not found" });
+        }
+
+        return await HandleStripeWebhookAsync(stripeSettings);
+    }
+
+    private async Task<IActionResult> HandleStripeWebhookAsync(StripeSettings? stripeSettings)
+    {
+        var settingsName = stripeSettings?.Name ?? "default";
         _logger.LogInformation("==================== WEBHOOK ENDPOINT HIT ====================");
+        _logger.LogInformation("StripeSettings: {SettingsName} (ID: {SettingsId})", settingsName, stripeSettings?.Id);
         _logger.LogInformation("Request Method: {Method}, Path: {Path}", HttpContext.Request.Method, HttpContext.Request.Path);
         _logger.LogInformation("Headers: {Headers}", string.Join(", ", HttpContext.Request.Headers.Select(h => $"{h.Key}={h.Value}")));
         
@@ -66,8 +120,19 @@ public class WebhooksController : ControllerBase
                 var stripeEvent = EventUtility.ParseEvent(json);
                 var signatureHeader = Request.Headers["Stripe-Signature"];
 
-                // Verify webhook signature if webhook secret is configured
-                var webhookSecret = _configuration["Stripe:WebhookSecret"];
+                // Get webhook secret from StripeSettings if provided, otherwise from configuration
+                string? webhookSecret = null;
+                if (stripeSettings != null && !string.IsNullOrWhiteSpace(stripeSettings.WebhookSecret))
+                {
+                    webhookSecret = stripeSettings.WebhookSecret;
+                    _logger.LogInformation("Using webhook secret from StripeSettings: {SettingsName}", settingsName);
+                }
+                else
+                {
+                    webhookSecret = _configuration["Stripe:WebhookSecret"];
+                    _logger.LogInformation("Using webhook secret from configuration (StripeSettings not provided or has no secret)");
+                }
+
                 if (!string.IsNullOrEmpty(webhookSecret))
                 {
                     try
@@ -89,36 +154,36 @@ public class WebhooksController : ControllerBase
                 _logger.LogInformation("Stripe webhook received: {EventType} [{EventId}]", 
                     stripeEvent.Type, stripeEvent.Id);
 
-            // Handle the event
+            // Handle the event (pass StripeSettings context if available)
             switch (stripeEvent.Type)
             {
                 case "payment_intent.succeeded":
-                    await HandlePaymentIntentSucceeded(stripeEvent);
+                    await HandlePaymentIntentSucceeded(stripeEvent, stripeSettings);
                     break;
 
                 case "payment_intent.payment_failed":
-                    await HandlePaymentIntentFailed(stripeEvent);
+                    await HandlePaymentIntentFailed(stripeEvent, stripeSettings);
                     break;
 
                 case "charge.succeeded":
-                    await HandleChargeSucceeded(stripeEvent);
+                    await HandleChargeSucceeded(stripeEvent, stripeSettings);
                     break;
                 
                 case "payment.created":
                     // Stripe Connect payment created - check if it's for a booking
-                    await HandlePaymentCreated(stripeEvent);
+                    await HandlePaymentCreated(stripeEvent, stripeSettings);
                     break;
 
                 case "charge.failed":
-                    await HandleChargeFailed(stripeEvent);
+                    await HandleChargeFailed(stripeEvent, stripeSettings);
                     break;
 
                 case "charge.refunded":
-                    await HandleChargeRefunded(stripeEvent);
+                    await HandleChargeRefunded(stripeEvent, stripeSettings);
                     break;
 
                 case "checkout.session.completed":
-                    await HandleCheckoutSessionCompleted(stripeEvent);
+                    await HandleCheckoutSessionCompleted(stripeEvent, stripeSettings);
                     break;
 
                 // Stripe Connect events
@@ -131,7 +196,7 @@ public class WebhooksController : ControllerBase
                     break;
                 
                 case "account.updated":
-                    await HandleAccountUpdated(stripeEvent);
+                    await HandleAccountUpdated(stripeEvent, stripeSettings);
                     break;
 
                 // Additional payment intent events
@@ -145,7 +210,7 @@ public class WebhooksController : ControllerBase
                 // Additional charge events
                 case "charge.updated":
                     // Handle charge.updated - it might be a succeeded charge
-                    await HandleChargeUpdated(stripeEvent);
+                    await HandleChargeUpdated(stripeEvent, stripeSettings);
                     break;
                     
                 case "charge.pending":
@@ -189,7 +254,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandlePaymentIntentSucceeded(Event stripeEvent)
+    private async Task HandlePaymentIntentSucceeded(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -289,7 +354,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandlePaymentIntentFailed(Event stripeEvent)
+    private async Task HandlePaymentIntentFailed(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -319,7 +384,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandleChargeSucceeded(Event stripeEvent)
+    private async Task HandleChargeSucceeded(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -420,7 +485,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandleChargeFailed(Event stripeEvent)
+    private async Task HandleChargeFailed(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -448,7 +513,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandleChargeUpdated(Event stripeEvent)
+    private async Task HandleChargeUpdated(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -556,7 +621,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandleChargeRefunded(Event stripeEvent)
+    private async Task HandleChargeRefunded(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -589,7 +654,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandleCheckoutSessionCompleted(Event stripeEvent)
+    private async Task HandleCheckoutSessionCompleted(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -775,7 +840,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandlePaymentCreated(Event stripeEvent)
+    private async Task HandlePaymentCreated(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         try
         {
@@ -991,7 +1056,7 @@ public class WebhooksController : ControllerBase
         }
     }
 
-    private async Task HandleAccountUpdated(Event stripeEvent)
+    private async Task HandleAccountUpdated(Event stripeEvent, StripeSettings? stripeSettings = null)
     {
         var account = stripeEvent.Data.Object as Stripe.Account;
         if (account == null)
