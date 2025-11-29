@@ -1067,10 +1067,341 @@ public class CompaniesController : ControllerBase
                 return NotFound(new { error = "Company not found" });
             }
 
+            // Store subdomain before deletion for Azure cleanup
+            var subdomain = company.Subdomain;
+            var companyName = company.CompanyName;
+
+            // Delete subdomain and custom domain from Azure before deleting from database
+            if (!string.IsNullOrWhiteSpace(subdomain) && _azureDnsService != null)
+            {
+                try
+                {
+                    _logger.LogInformation("Deleting subdomain and custom domain from Azure for company {CompanyId}: {Subdomain}", id, subdomain);
+                    
+                    // Delete custom domain from App Service first
+                    var customDomainDeleted = await _azureDnsService.DeleteCustomDomainFromAppServiceAsync(subdomain);
+                    if (customDomainDeleted)
+                    {
+                        _logger.LogInformation("Successfully deleted custom domain from App Service: {Subdomain}", subdomain);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to delete custom domain from App Service: {Subdomain}. Continuing with subdomain deletion...", subdomain);
+                    }
+
+                    // Delete subdomain (CNAME record) from Azure DNS
+                    var subdomainDeleted = await _azureDnsService.DeleteSubdomainAsync(subdomain);
+                    if (subdomainDeleted)
+                    {
+                        _logger.LogInformation("Successfully deleted subdomain from Azure DNS: {Subdomain}", subdomain);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to delete subdomain from Azure DNS: {Subdomain}. It may not exist.", subdomain);
+                    }
+                }
+                catch (Exception azureEx)
+                {
+                    _logger.LogError(azureEx, "Error deleting subdomain/custom domain from Azure for company {CompanyId}: {Subdomain}. Continuing with company deletion...", id, subdomain);
+                    // Continue with company deletion even if Azure cleanup fails
+                }
+            }
+            else if (string.IsNullOrWhiteSpace(subdomain))
+            {
+                _logger.LogInformation("No subdomain found for company {CompanyId}, skipping Azure cleanup", id);
+            }
+            else if (_azureDnsService == null)
+            {
+                _logger.LogWarning("Azure DNS service is not available. Skipping Azure cleanup for company {CompanyId}", id);
+            }
+
+            // Handle foreign key constraints before deleting company
+            // Delete related entities in the correct order to avoid constraint violations
+            
+            // 1. Delete payments associated with this company
+            var payments = await _context.Payments
+                .Where(p => p.CompanyId == id)
+                .ToListAsync();
+            
+            if (payments.Any())
+            {
+                _logger.LogInformation("Deleting {Count} payments for company {CompanyId}", payments.Count, id);
+                _context.Payments.RemoveRange(payments);
+            }
+
+            // 2. Delete rentals associated with this company
+            var rentals = await _context.Rentals
+                .Where(r => r.CompanyId == id)
+                .ToListAsync();
+            
+            if (rentals.Any())
+            {
+                _logger.LogInformation("Deleting {Count} rentals for company {CompanyId}", rentals.Count, id);
+                _context.Rentals.RemoveRange(rentals);
+            }
+
+            // 3. Delete bookings associated with this company
+            var bookings = await _context.Bookings
+                .Where(b => b.CompanyId == id)
+                .ToListAsync();
+            
+            if (bookings.Any())
+            {
+                _logger.LogInformation("Deleting {Count} bookings for company {CompanyId}", bookings.Count, id);
+                _context.Bookings.RemoveRange(bookings);
+            }
+
+            // 4. Delete vehicles (cars) associated with this company
+            var vehicles = await _context.Vehicles
+                .Where(v => v.CompanyId == id)
+                .ToListAsync();
+            
+            if (vehicles.Any())
+            {
+                _logger.LogInformation("Deleting {Count} vehicles for company {CompanyId}", vehicles.Count, id);
+                _context.Vehicles.RemoveRange(vehicles);
+            }
+
+            // 5. Delete vehicle models associated with this company (after vehicles are deleted)
+            var vehicleModels = await _context.VehicleModels
+                .Where(vm => vm.CompanyId == id)
+                .ToListAsync();
+            
+            if (vehicleModels.Any())
+            {
+                _logger.LogInformation("Deleting {Count} vehicle models for company {CompanyId}", vehicleModels.Count, id);
+                _context.VehicleModels.RemoveRange(vehicleModels);
+            }
+
+            // 6. Delete reviews associated with this company
+            var reviews = await _context.Reviews
+                .Where(r => r.CompanyId == id)
+                .ToListAsync();
+            
+            if (reviews.Any())
+            {
+                _logger.LogInformation("Deleting {Count} reviews for company {CompanyId}", reviews.Count, id);
+                _context.Reviews.RemoveRange(reviews);
+            }
+
+            // 7. Delete booking tokens associated with this company
+            // Use Select to only get IDs to avoid loading BookingData property
+            var bookingTokenIds = await _context.BookingTokens
+                .Where(bt => bt.CompanyId == id)
+                .Select(bt => bt.Id)
+                .ToListAsync();
+            
+            if (bookingTokenIds.Any())
+            {
+                _logger.LogInformation("Deleting {Count} booking tokens for company {CompanyId}", bookingTokenIds.Count, id);
+                // Create entities with only IDs for deletion
+                var bookingTokensToDelete = bookingTokenIds.Select(btId => new BookingToken { Id = btId }).ToList();
+                _context.BookingTokens.RemoveRange(bookingTokensToDelete);
+            }
+
+            // 8. Delete additional services associated with this company
+            var additionalServices = await _context.AdditionalServices
+                .Where(ads => ads.CompanyId == id)
+                .ToListAsync();
+            
+            if (additionalServices.Any())
+            {
+                _logger.LogInformation("Deleting {Count} additional services for company {CompanyId}", additionalServices.Count, id);
+                _context.AdditionalServices.RemoveRange(additionalServices);
+            }
+
+            // 9. Delete company services (junction table) associated with this company
+            var companyServices = await _context.CompanyServices
+                .Where(cs => cs.CompanyId == id)
+                .ToListAsync();
+            
+            if (companyServices.Any())
+            {
+                _logger.LogInformation("Deleting {Count} company services for company {CompanyId}", companyServices.Count, id);
+                _context.CompanyServices.RemoveRange(companyServices);
+            }
+
+            // 10. Delete company email styles associated with this company
+            var companyEmailStyles = new List<CompanyEmailStyle>();
+            try
+            {
+                companyEmailStyles = await _context.CompanyEmailStyles
+                    .Where(ces => ces.CompanyId == id)
+                    .ToListAsync();
+                
+                if (companyEmailStyles.Any())
+                {
+                    _logger.LogInformation("Deleting {Count} company email styles for company {CompanyId}", companyEmailStyles.Count, id);
+                    _context.CompanyEmailStyles.RemoveRange(companyEmailStyles);
+                }
+            }
+            catch (Exception ex) when (ex.Message.Contains("does not exist") || ex.Message.Contains("relation"))
+            {
+                _logger.LogWarning("Company email styles table does not exist, skipping deletion. Error: {Error}", ex.Message);
+            }
+
+            // 11. Delete company locations associated with this company
+            var companyLocations = await _context.CompanyLocations
+                .Where(cl => cl.CompanyId == id)
+                .ToListAsync();
+            
+            if (companyLocations.Any())
+            {
+                _logger.LogInformation("Deleting {Count} company locations for company {CompanyId}", companyLocations.Count, id);
+                _context.CompanyLocations.RemoveRange(companyLocations);
+            }
+
+            // 12. Delete locations associated with this company (after company locations are deleted)
+            var locations = await _context.Locations
+                .Where(l => l.CompanyId == id)
+                .ToListAsync();
+            
+            if (locations.Any())
+            {
+                _logger.LogInformation("Deleting {Count} locations for company {CompanyId}", locations.Count, id);
+                _context.Locations.RemoveRange(locations);
+            }
+
+            // 13. Delete Stripe-related entities associated with this company
+            var stripeCompanies = await _context.StripeCompanies
+                .Where(sc => sc.CompanyId == id)
+                .ToListAsync();
+            
+            if (stripeCompanies.Any())
+            {
+                _logger.LogInformation("Deleting {Count} Stripe companies for company {CompanyId}", stripeCompanies.Count, id);
+                _context.StripeCompanies.RemoveRange(stripeCompanies);
+            }
+
+            var stripeTransfers = await _context.StripeTransfers
+                .Where(st => st.CompanyId == id)
+                .ToListAsync();
+            
+            if (stripeTransfers.Any())
+            {
+                _logger.LogInformation("Deleting {Count} Stripe transfers for company {CompanyId}", stripeTransfers.Count, id);
+                _context.StripeTransfers.RemoveRange(stripeTransfers);
+            }
+
+            var stripePayoutRecords = await _context.StripePayoutRecords
+                .Where(spr => spr.CompanyId == id)
+                .ToListAsync();
+            
+            if (stripePayoutRecords.Any())
+            {
+                _logger.LogInformation("Deleting {Count} Stripe payout records for company {CompanyId}", stripePayoutRecords.Count, id);
+                _context.StripePayoutRecords.RemoveRange(stripePayoutRecords);
+            }
+
+            var stripeBalanceTransactions = await _context.StripeBalanceTransactions
+                .Where(sbt => sbt.CompanyId == id)
+                .ToListAsync();
+            
+            if (stripeBalanceTransactions.Any())
+            {
+                _logger.LogInformation("Deleting {Count} Stripe balance transactions for company {CompanyId}", stripeBalanceTransactions.Count, id);
+                _context.StripeBalanceTransactions.RemoveRange(stripeBalanceTransactions);
+            }
+
+            var stripeOnboardingSessions = await _context.StripeOnboardingSessions
+                .Where(sos => sos.CompanyId == id)
+                .ToListAsync();
+            
+            if (stripeOnboardingSessions.Any())
+            {
+                _logger.LogInformation("Deleting {Count} Stripe onboarding sessions for company {CompanyId}", stripeOnboardingSessions.Count, id);
+                _context.StripeOnboardingSessions.RemoveRange(stripeOnboardingSessions);
+            }
+
+            var stripeAccountCapabilities = await _context.StripeAccountCapabilities
+                .Where(sac => sac.CompanyId == id)
+                .ToListAsync();
+            
+            if (stripeAccountCapabilities.Any())
+            {
+                _logger.LogInformation("Deleting {Count} Stripe account capabilities for company {CompanyId}", stripeAccountCapabilities.Count, id);
+                _context.StripeAccountCapabilities.RemoveRange(stripeAccountCapabilities);
+            }
+
+            var webhookEvents = await _context.WebhookEvents
+                .Where(we => we.CompanyId == id)
+                .ToListAsync();
+            
+            if (webhookEvents.Any())
+            {
+                _logger.LogInformation("Deleting {Count} webhook events for company {CompanyId}", webhookEvents.Count, id);
+                _context.WebhookEvents.RemoveRange(webhookEvents);
+            }
+
+            var refundAnalytics = await _context.RefundAnalytics
+                .Where(ra => ra.CompanyId == id)
+                .ToListAsync();
+            
+            if (refundAnalytics.Any())
+            {
+                _logger.LogInformation("Deleting {Count} refund analytics for company {CompanyId}", refundAnalytics.Count, id);
+                _context.RefundAnalytics.RemoveRange(refundAnalytics);
+            }
+
+            var disputeAnalytics = await _context.DisputeAnalytics
+                .Where(da => da.CompanyId == id)
+                .ToListAsync();
+            
+            if (disputeAnalytics.Any())
+            {
+                _logger.LogInformation("Deleting {Count} dispute analytics for company {CompanyId}", disputeAnalytics.Count, id);
+                _context.DisputeAnalytics.RemoveRange(disputeAnalytics);
+            }
+
+            var licenseScans = await _context.LicenseScans
+                .Where(ls => ls.CompanyId == id)
+                .ToListAsync();
+            
+            if (licenseScans.Any())
+            {
+                _logger.LogInformation("Deleting {Count} license scans for company {CompanyId}", licenseScans.Count, id);
+                _context.LicenseScans.RemoveRange(licenseScans);
+            }
+
+            // 14. Set CompanyId to null for all customers associated with this company
+            var customersWithCompany = await _context.Customers
+                .Where(c => c.CompanyId == id)
+                .ToListAsync();
+
+            if (customersWithCompany.Any())
+            {
+                _logger.LogInformation("Found {Count} customers associated with company {CompanyId}. Setting CompanyId to null.", 
+                    customersWithCompany.Count, id);
+                
+                foreach (var customer in customersWithCompany)
+                {
+                    customer.CompanyId = null;
+                }
+            }
+
+            // Save all changes before deleting the company
+            if (payments.Any() || rentals.Any() || bookings.Any() || vehicles.Any() || vehicleModels.Any() || 
+                reviews.Any() || bookingTokenIds.Any() || additionalServices.Any() || companyServices.Any() || 
+                companyEmailStyles.Any() || companyLocations.Any() || locations.Any() || stripeCompanies.Any() ||
+                stripeTransfers.Any() || stripePayoutRecords.Any() || stripeBalanceTransactions.Any() ||
+                stripeOnboardingSessions.Any() || stripeAccountCapabilities.Any() || webhookEvents.Any() ||
+                refundAnalytics.Any() || disputeAnalytics.Any() || licenseScans.Any() || customersWithCompany.Any())
+            {
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Successfully deleted related entities: {Payments} payments, {Rentals} rentals, {Bookings} bookings, {Vehicles} vehicles, {VehicleModels} vehicle models, {Reviews} reviews, {BookingTokens} booking tokens, {AdditionalServices} additional services, {CompanyServices} company services, {CompanyEmailStyles} email styles, {CompanyLocations} company locations, {Locations} locations, {StripeCompanies} Stripe companies, {StripeTransfers} Stripe transfers, {StripePayoutRecords} Stripe payout records, {StripeBalanceTransactions} Stripe balance transactions, {StripeOnboardingSessions} Stripe onboarding sessions, {StripeAccountCapabilities} Stripe account capabilities, {WebhookEvents} webhook events, {RefundAnalytics} refund analytics, {DisputeAnalytics} dispute analytics, {LicenseScans} license scans, {Customers} customers updated", 
+                    payments.Count, rentals.Count, bookings.Count, vehicles.Count, vehicleModels.Count, reviews.Count,
+                    bookingTokenIds.Count, additionalServices.Count, companyServices.Count, companyEmailStyles.Count,
+                    companyLocations.Count, locations.Count, stripeCompanies.Count, stripeTransfers.Count,
+                    stripePayoutRecords.Count, stripeBalanceTransactions.Count, stripeOnboardingSessions.Count,
+                    stripeAccountCapabilities.Count, webhookEvents.Count, refundAnalytics.Count, disputeAnalytics.Count,
+                    licenseScans.Count, customersWithCompany.Count);
+            }
+
+            // 15. Delete company from database
             _context.Companies.Remove(company);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Company deleted: {CompanyName} (ID: {CompanyId})", company.CompanyName, company.Id);
+            _logger.LogInformation("Company deleted: {CompanyName} (ID: {CompanyId})", companyName, id);
 
             return NoContent();
         }

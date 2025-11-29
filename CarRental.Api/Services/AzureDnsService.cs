@@ -34,6 +34,7 @@ public interface IAzureDnsService
     string GetSubdomainUrl(string subdomain);
     Task<bool> CreateVerificationRecordAsync(string subdomain, string verificationId);
     Task<bool> AddCustomDomainToAppServiceAsync(string subdomain);
+    Task<bool> DeleteCustomDomainFromAppServiceAsync(string subdomain);
     Task<bool> EnableSslForDomainAsync(string subdomain);
     Task<bool> CreateSubdomainWithSslAsync(string subdomain);
 }
@@ -581,6 +582,42 @@ public class AzureDnsService : IAzureDnsService
         }
     }
 
+    public async Task<bool> DeleteCustomDomainFromAppServiceAsync(string subdomain)
+    {
+        try
+        {
+            var fullDomain = $"{subdomain.ToLower()}.{_dnsZone.Data.Name}";
+            
+            _logger.LogInformation("Deleting custom domain from App Service: {Domain}", fullDomain);
+
+            try
+            {
+                var binding = await _appService.GetSiteHostNameBindingAsync(fullDomain);
+                if (binding?.Value != null)
+                {
+                    await binding.Value.DeleteAsync(Azure.WaitUntil.Completed);
+                    _logger.LogInformation("Successfully deleted custom domain from App Service: {Domain}", fullDomain);
+                    return true;
+                }
+                else
+                {
+                    _logger.LogWarning("Custom domain binding not found in App Service: {Domain}", fullDomain);
+                    return false;
+                }
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogInformation("Custom domain binding not found in App Service (404): {Domain}. It may have already been deleted.", fullDomain);
+                return true; // Consider it successful if it doesn't exist
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete custom domain from App Service: {Subdomain}", subdomain);
+            return false;
+        }
+    }
+
     public async Task<bool> CreateSubdomainAsync(string subdomain, string? customTarget = null)
     {
         try
@@ -624,16 +661,60 @@ public class AzureDnsService : IAzureDnsService
         try
         {
             var recordSetName = subdomain.ToLower().Trim();
-            var cnameRecord = await _dnsZone.GetDnsCnameRecordAsync(recordSetName);
+            bool cnameDeleted = false;
+            bool asuidDeleted = false;
 
-            if (cnameRecord?.Value == null)
+            // Delete CNAME record
+            try
             {
-                _logger.LogWarning("Subdomain {Subdomain} not found", recordSetName);
-                return false;
+                var cnameRecord = await _dnsZone.GetDnsCnameRecordAsync(recordSetName);
+                if (cnameRecord?.Value != null)
+                {
+                    await cnameRecord.Value.DeleteAsync(Azure.WaitUntil.Completed);
+                    _logger.LogInformation("Successfully deleted CNAME record: {Subdomain}", recordSetName);
+                    cnameDeleted = true;
+                }
+                else
+                {
+                    _logger.LogInformation("CNAME record {Subdomain} not found, skipping", recordSetName);
+                }
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogInformation("CNAME record {Subdomain} not found (404), skipping", recordSetName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error deleting CNAME record for {Subdomain}, continuing with ASUID deletion", recordSetName);
             }
 
-            await cnameRecord.Value.DeleteAsync(Azure.WaitUntil.Completed);
-            return true;
+            // Delete ASUID TXT record
+            try
+            {
+                var asuidRecordName = $"asuid.{recordSetName}";
+                var txtRecord = await _dnsZone.GetDnsTxtRecordAsync(asuidRecordName);
+                if (txtRecord?.Value != null)
+                {
+                    await txtRecord.Value.DeleteAsync(Azure.WaitUntil.Completed);
+                    _logger.LogInformation("Successfully deleted ASUID TXT record: {AsuidRecord}", asuidRecordName);
+                    asuidDeleted = true;
+                }
+                else
+                {
+                    _logger.LogInformation("ASUID TXT record {AsuidRecord} not found, skipping", asuidRecordName);
+                }
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogInformation("ASUID TXT record asuid.{Subdomain} not found (404), skipping", recordSetName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error deleting ASUID TXT record for {Subdomain}", recordSetName);
+            }
+
+            // Return true if at least one record was deleted or if both don't exist (considered success)
+            return cnameDeleted || asuidDeleted || true; // Return true even if both don't exist
         }
         catch (Exception ex)
         {

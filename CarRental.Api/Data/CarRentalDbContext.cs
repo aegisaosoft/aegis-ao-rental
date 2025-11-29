@@ -572,6 +572,9 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             
+            // Explicitly ignore the BookingData property (it's a computed property from BookingDataJson)
+            entity.Ignore(e => e.BookingData);
+            
             entity.HasOne(e => e.Company)
                 .WithMany()
                 .HasForeignKey(e => e.CompanyId)

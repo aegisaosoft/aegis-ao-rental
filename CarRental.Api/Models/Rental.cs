@@ -76,6 +76,7 @@ public class Rental
     public decimal AdditionalCharges { get; set; } = 0;
 
     [MaxLength(50)]
+    [Column("status")]
     public string Status { get; set; } = "active";
 
     [Column("created_at")]

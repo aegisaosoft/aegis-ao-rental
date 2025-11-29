@@ -42,6 +42,7 @@ public class BookingToken
 
     [Required]
     [MaxLength(255)]
+    [Column("token")]
     public string Token { get; set; } = string.Empty;
 
     [Required]

@@ -43,8 +43,10 @@ public class Review
 
     [Required]
     [Range(1, 5)]
+    [Column("rating")]
     public int Rating { get; set; }
 
+    [Column("comment")]
     public string? Comment { get; set; }
 
     [Column("created_at")]
