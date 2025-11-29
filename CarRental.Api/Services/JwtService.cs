@@ -49,21 +49,72 @@ public class JwtService : IJwtService
             throw new InvalidOperationException("JWT secret key is null or empty");
         }
 
+        // Trim whitespace that might be in config
+        var trimmedKey = secretKey.Trim();
+        
+        // Check if the string is valid Base64 before attempting to decode
+        // This prevents FormatException from being thrown
+        if (IsValidBase64String(trimmedKey))
+        {
+            try
+            {
+                var keyBytes = Convert.FromBase64String(trimmedKey);
+                logger?.LogInformation("[JwtService] Secret key decoded as base64, key length: {Length} bytes", keyBytes.Length);
+                return keyBytes;
+            }
+            catch (FormatException ex)
+            {
+                // Should not happen if IsValidBase64String is correct, but handle it anyway
+                logger?.LogWarning(ex, "[JwtService] Failed to decode secret key as base64, falling back to UTF-8 encoding.");
+            }
+        }
+        else
+        {
+            logger?.LogDebug("[JwtService] Secret key is not valid base64, using UTF-8 encoding.");
+        }
+        
+        // Fallback: try UTF-8 encoding (for backward compatibility)
+        var utf8KeyBytes = Encoding.UTF8.GetBytes(secretKey);
+        logger?.LogInformation("[JwtService] Secret key treated as UTF-8, key length: {Length} bytes", utf8KeyBytes.Length);
+        return utf8KeyBytes;
+    }
+
+    /// <summary>
+    /// Checks if a string is a valid Base64 string without throwing an exception.
+    /// </summary>
+    private static bool IsValidBase64String(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s))
+            return false;
+
+        // Base64 strings must be a multiple of 4 in length (after padding)
+        // and can only contain A-Z, a-z, 0-9, +, /, and = (for padding)
+        if (s.Length % 4 != 0)
+            return false;
+
+        // Check for valid Base64 characters
+        foreach (char c in s)
+        {
+            if (!((c >= 'A' && c <= 'Z') || 
+                  (c >= 'a' && c <= 'z') || 
+                  (c >= '0' && c <= '9') || 
+                  c == '+' || 
+                  c == '/' || 
+                  c == '='))
+            {
+                return false;
+            }
+        }
+
+        // Additional validation: try to decode without throwing exception
         try
         {
-            // Trim whitespace that might be in config
-            var trimmedKey = secretKey.Trim();
-            var keyBytes = Convert.FromBase64String(trimmedKey);
-            logger?.LogInformation("[JwtService] Secret key decoded as base64, key length: {Length} bytes", keyBytes.Length);
-            return keyBytes;
+            Convert.FromBase64String(s);
+            return true;
         }
-        catch (FormatException ex)
+        catch
         {
-            logger?.LogWarning(ex, "[JwtService] Failed to decode secret key as base64, falling back to UTF-8 encoding.");
-            // Fallback: try UTF-8 encoding (for backward compatibility)
-            var keyBytes = Encoding.UTF8.GetBytes(secretKey);
-            logger?.LogInformation("[JwtService] Secret key treated as UTF-8, key length: {Length} bytes", keyBytes.Length);
-            return keyBytes;
+            return false;
         }
     }
 

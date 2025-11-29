@@ -84,7 +84,7 @@ public class UsersController : ControllerBase
         var normalizedRole = NormalizeRole(request.Role);
         if (normalizedRole == null)
         {
-            return BadRequest(new { error = "Invalid role. Allowed values: mainadmin, admin, agent" });
+            return BadRequest(new { error = "Invalid role. Allowed values: mainadmin, admin, agent, designer" });
         }
 
         if (!isMainAdmin && normalizedRole == "mainadmin")
@@ -170,7 +170,7 @@ public class UsersController : ControllerBase
             var normalizedRole = NormalizeRole(request.Role);
             if (normalizedRole == null)
             {
-                return BadRequest(new { error = "Invalid role. Allowed values: mainadmin, admin, agent" });
+                return BadRequest(new { error = "Invalid role. Allowed values: mainadmin, admin, agent, designer" });
             }
             if (!isMainAdmin && normalizedRole == "mainadmin")
             {
@@ -181,7 +181,7 @@ public class UsersController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(request.Password))
         {
-            if (!isMainAdmin && !string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase) && !string.Equals(user.Role, "agent", StringComparison.OrdinalIgnoreCase))
+            if (!isMainAdmin && !string.Equals(user.Role, "admin", StringComparison.OrdinalIgnoreCase) && !string.Equals(user.Role, "agent", StringComparison.OrdinalIgnoreCase) && !string.Equals(user.Role, "designer", StringComparison.OrdinalIgnoreCase))
             {
                 return Forbid();
             }
@@ -317,6 +317,7 @@ public class UsersController : ControllerBase
             "mainadmin" => "mainadmin",
             "admin" => "admin",
             "agent" => "agent",
+            "designer" => "designer",
             _ => null
         };
     }

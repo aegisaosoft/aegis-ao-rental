@@ -55,7 +55,7 @@ public class Customer
 
     [MaxLength(50)]
     [Column("role")]
-    public string Role { get; set; } = "customer"; // customer, worker, admin, mainadmin
+    public string Role { get; set; } = "customer"; // customer, worker, admin, mainadmin, designer
 
     [Column("is_active")]
     public bool IsActive { get; set; } = true;

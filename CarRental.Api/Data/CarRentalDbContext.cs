@@ -120,7 +120,7 @@ public class CarRentalDbContext : DbContext
             .HasDefaultValue("agent");
 
         modelBuilder.Entity<AegisUser>()
-            .ToTable(tb => tb.HasCheckConstraint("ck_aegis_users_role_valid", "role IN ('agent','admin','mainadmin')"));
+            .ToTable(tb => tb.HasCheckConstraint("valid_aegis_user_role", "role IN ('agent','admin','mainadmin','designer')"));
 
         modelBuilder.Entity<VehicleCategory>()
             .Property(e => e.Id)

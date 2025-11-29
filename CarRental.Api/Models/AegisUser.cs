@@ -81,9 +81,9 @@ public class AegisUser
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     [MaxLength(50)]
-    [RegularExpression("^(agent|admin|mainadmin)$", ErrorMessage = "Role must be agent, admin, or mainadmin.")]
+    [RegularExpression("^(agent|admin|mainadmin|designer)$", ErrorMessage = "Role must be agent, admin, mainadmin, or designer.")]
     [Column("role")]
-    public string Role { get; set; } = "agent"; // agent, admin, mainadmin
+    public string Role { get; set; } = "agent"; // agent, admin, mainadmin, designer
 
     [Column("is_active")]
     public bool IsActive { get; set; } = true;

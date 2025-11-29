@@ -47,7 +47,7 @@ public class AegisAdminRegisterDto
     public string? Phone { get; set; }
     
     [MaxLength(50)]
-    public string Role { get; set; } = "agent"; // agent, admin
+    public string Role { get; set; } = "agent"; // agent, admin, designer
 }
 
 public class AegisAdminResponseDto

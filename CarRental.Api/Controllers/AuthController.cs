@@ -130,7 +130,7 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Login customer (supports all roles: customer, worker, admin, mainadmin)
+    /// Login customer (supports all roles: customer, worker, admin, mainadmin, designer)
     /// </summary>
     [HttpPost("login")]
     [ProducesResponseType(200)]
@@ -239,7 +239,7 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Invalid token" });
         }
 
-        // Get customer profile (works for all roles: customer, worker, admin, mainadmin)
+        // Get customer profile (works for all roles: customer, worker, admin, mainadmin, designer)
         var customer = await _context.Customers
             .Include(c => c.Company)
             .FirstOrDefaultAsync(c => c.Id == customerId);

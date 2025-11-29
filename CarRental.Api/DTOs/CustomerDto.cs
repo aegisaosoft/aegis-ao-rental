@@ -103,6 +103,11 @@ public class CreateCustomerDto
     public string? PostalCode { get; set; }
     
     public string? CustomerType { get; set; }
+    
+    /// <summary>
+    /// Optional password. If not provided, a random password will be generated.
+    /// </summary>
+    public string? Password { get; set; }
 }
 
 public class UpdateCustomerDto

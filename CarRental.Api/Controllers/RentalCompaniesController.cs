@@ -17,8 +17,10 @@ using System;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Hosting;
+using System.Security.Claims;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.DTOs.Stripe;
@@ -40,6 +42,7 @@ public class RentalCompaniesController : ControllerBase
     private readonly IStripeConnectService _stripeConnectService;
     private readonly IAzureDnsService? _azureDnsService;
     private readonly IWebHostEnvironment _environment;
+    private readonly IEmailService _emailService;
 
     public RentalCompaniesController(
         CarRentalDbContext context, 
@@ -48,6 +51,7 @@ public class RentalCompaniesController : ControllerBase
         IEncryptionService encryptionService,
         IStripeConnectService stripeConnectService,
         IWebHostEnvironment environment,
+        IEmailService emailService,
         IAzureDnsService? azureDnsService = null)
     {
         _context = context;
@@ -56,6 +60,7 @@ public class RentalCompaniesController : ControllerBase
         _encryptionService = encryptionService;
         _stripeConnectService = stripeConnectService;
         _environment = environment;
+        _emailService = emailService;
         _azureDnsService = azureDnsService;
     }
 
@@ -230,9 +235,10 @@ public class RentalCompaniesController : ControllerBase
     }
 
     /// <summary>
-    /// Get rental company by email
+    /// Get rental company by email (public endpoint, no auth required)
     /// </summary>
     [HttpGet("email/{email}")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<ActionResult<RentalCompanyDto>> GetRentalCompanyByEmail(string email)
     {
         var company = await _context.Companies
@@ -283,11 +289,96 @@ public class RentalCompaniesController : ControllerBase
     }
 
     /// <summary>
-    /// Create a new rental company
+    /// Send email notification that company with this email already exists (public endpoint, no auth required)
+    /// </summary>
+    [HttpPost("email/{email}/notify-exists")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+    public async Task<ActionResult> NotifyCompanyExists(string email)
+    {
+        try
+        {
+            var decodedEmail = Uri.UnescapeDataString(email);
+            var company = await _context.Companies
+                .FirstOrDefaultAsync(c => c.Email == decodedEmail);
+
+            if (company == null)
+            {
+                return NotFound(new { message = "Company not found" });
+            }
+
+            // Send email notification
+            var subject = "Company Already Exists - Aegis Rental";
+            var body = $@"
+                <html>
+                <body>
+                    <h2>Company Already Exists</h2>
+                    <p>Hello,</p>
+                    <p>A company with the email address <strong>{decodedEmail}</strong> already exists in our system.</p>
+                    <p>Company Name: <strong>{company.CompanyName}</strong></p>
+                    <p>If you believe this is an error or if you need assistance, please contact our support team.</p>
+                    <p>Best regards,<br/>Aegis Rental Team</p>
+                </body>
+                </html>";
+
+            var emailSent = await _emailService.SendEmailAsync(decodedEmail, subject, body);
+
+            if (emailSent)
+            {
+                return Ok(new { message = "Email notification sent successfully" });
+            }
+            else
+            {
+                return StatusCode(500, new { message = "Failed to send email notification" });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending company exists notification to {Email}", email);
+            return StatusCode(500, new { message = "An error occurred while sending notification" });
+        }
+    }
+
+    /// <summary>
+    /// Check if the current user is an Aegis admin user
+    /// </summary>
+    /// <returns>True if user is an Aegis admin (agent, admin, mainadmin, or designer)</returns>
+    private bool IsAegisAdmin()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        
+        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userGuid))
+        {
+            return false;
+        }
+
+        // Check if user exists in AegisUsers table
+        var aegisUser = _context.AegisUsers.FirstOrDefault(u => u.Id == userGuid);
+        
+        if (aegisUser != null)
+        {
+            // All Aegis user roles (agent, admin, mainadmin, designer) can create companies
+            var role = aegisUser.Role?.ToLowerInvariant();
+            _logger.LogInformation("IsAegisAdmin: Aegis user found. Role: {Role}, UserId: {UserId}", role, userGuid);
+            return true; // Any Aegis user role can create companies
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Create a new rental company (Aegis admin users only)
     /// </summary>
     [HttpPost]
+    [Authorize]
     public async Task<ActionResult<RentalCompanyDto>> CreateRentalCompany(CreateRentalCompanyDto createCompanyDto)
     {
+        // Check if user is an Aegis admin
+        if (!IsAegisAdmin())
+        {
+            _logger.LogWarning("CreateRentalCompany: Unauthorized attempt by non-Aegis admin user");
+            return Forbid("Only Aegis admin users can create companies");
+        }
+
         // Check if company with email already exists
         var existingCompany = await _context.Companies
             .FirstOrDefaultAsync(c => c.Email == createCompanyDto.Email);

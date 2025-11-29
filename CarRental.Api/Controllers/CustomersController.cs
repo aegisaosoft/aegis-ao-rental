@@ -281,15 +281,17 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
-    /// Get customer by email
+    /// Get customer by email (public endpoint, no auth required)
     /// </summary>
     [HttpGet("email/{email}")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<ActionResult<CustomerDto>> GetCustomerByEmail(string email)
     {
         // Decode URL-encoded email if needed
         var decodedEmail = Uri.UnescapeDataString(email);
         
         var customer = await _context.Customers
+            .Include(c => c.Company) // Include company to get companyId and CompanyName
             .FirstOrDefaultAsync(c => EF.Functions.ILike(c.Email, decodedEmail));
 
         if (customer == null)
@@ -310,6 +312,10 @@ public class CustomersController : ControllerBase
             PostalCode = customer.PostalCode,
             StripeCustomerId = customer.StripeCustomerId,
             IsVerified = customer.IsVerified,
+            CustomerType = customer.CustomerType.ToString(),
+            Role = customer.Role,
+            CompanyId = customer.CompanyId, // Include CompanyId
+            CompanyName = customer.Company?.CompanyName, // Include CompanyName
             CreatedAt = customer.CreatedAt,
             UpdatedAt = customer.UpdatedAt
         };
@@ -318,9 +324,10 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
-    /// Create a new customer
+    /// Create a new customer (public endpoint for set-new-client flow)
     /// </summary>
     [HttpPost]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<ActionResult<CustomerDto>> CreateCustomer(CreateCustomerDto createCustomerDto)
     {
         // Check if customer with email already exists
@@ -333,18 +340,27 @@ public class CustomersController : ControllerBase
         // Get company ID from HttpContext if available (set by CompanyMiddleware)
         Guid? companyId = HttpContext.GetCompanyIdAsGuid();
 
-        // Generate random password if password is mandatory (always generate for now)
+        // Use provided password or generate random password
         string? generatedPassword = null;
         string? passwordHash = null;
         
-        // Generate a random password (12 characters: uppercase, lowercase, numbers)
-        var random = new Random();
-        const string chars = "ABCDEFGHJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        generatedPassword = new string(Enumerable.Repeat(chars, 12)
-            .Select(s => s[random.Next(s.Length)]).ToArray());
-        
-        // Hash the password
-        passwordHash = BCrypt.Net.BCrypt.HashPassword(generatedPassword);
+        if (!string.IsNullOrWhiteSpace(createCustomerDto.Password))
+        {
+            // Use provided password
+            generatedPassword = createCustomerDto.Password;
+            passwordHash = BCrypt.Net.BCrypt.HashPassword(generatedPassword);
+        }
+        else
+        {
+            // Generate a random password (12 characters: uppercase, lowercase, numbers)
+            var random = new Random();
+            const string chars = "ABCDEFGHJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            generatedPassword = new string(Enumerable.Repeat(chars, 12)
+                .Select(s => s[random.Next(s.Length)]).ToArray());
+            
+            // Hash the password
+            passwordHash = BCrypt.Net.BCrypt.HashPassword(generatedPassword);
+        }
 
         // Provide default values for FirstName and LastName if empty (required by database)
         // This allows admin-created customers with just email to be created
