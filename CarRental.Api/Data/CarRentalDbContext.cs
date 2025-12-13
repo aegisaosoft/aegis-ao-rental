@@ -31,6 +31,7 @@ public class CarRentalDbContext : DbContext
     public DbSet<Vehicle> Vehicles { get; set; }
     public DbSet<Location> Locations { get; set; }
     public DbSet<CompanyLocation> CompanyLocations { get; set; }
+    public DbSet<CompanyMode> CompanyModes { get; set; }
     public DbSet<Booking> Bookings { get; set; }
     public DbSet<Booking> Reservations => Bookings;
     public DbSet<Rental> Rentals { get; set; }
@@ -137,6 +138,29 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<CompanyLocation>()
             .Property(e => e.Id)
             .HasDefaultValueSql("uuid_generate_v4()");
+
+        // Configure CompanyMode
+        modelBuilder.Entity<CompanyMode>()
+            .Property(e => e.Id)
+            .HasDefaultValueSql("uuid_generate_v4()");
+
+        modelBuilder.Entity<CompanyMode>()
+            .Property(e => e.CompanyId)
+            .HasColumnName("company_id")
+            .IsRequired();
+
+        // Configure CompanyMode to Company relationship
+        modelBuilder.Entity<CompanyMode>()
+            .HasOne(cm => cm.Company)
+            .WithMany()
+            .HasForeignKey(cm => cm.CompanyId)
+            .HasPrincipalKey(c => c.Id)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Configure CompanyMode indexes
+        modelBuilder.Entity<CompanyMode>()
+            .HasIndex(cm => cm.CompanyId)
+            .IsUnique(); // One CompanyMode per company
 
         modelBuilder.Entity<Reservation>()
             .Property(e => e.Id)

@@ -114,6 +114,8 @@ public class RentalCompanyDto
     
     public bool IsActive { get; set; }
     public bool IsTestCompany { get; set; } = true;
+    public bool IsRental { get; set; } = true;
+    public bool IsViolations { get; set; } = true;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -207,6 +209,10 @@ public class CreateRentalCompanyDto
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     
     public bool? IsTestCompany { get; set; }
+    
+    public bool? IsRental { get; set; }
+    
+    public bool? IsViolations { get; set; }
 }
 
 public class UpdateRentalCompanyDto
@@ -307,6 +313,10 @@ public class UpdateRentalCompanyDto
     public bool? IsActive { get; set; }
     
     public bool? IsTestCompany { get; set; }
+    
+    public bool? IsRental { get; set; }
+    
+    public bool? IsViolations { get; set; }
 }
 
 public class UpdateTermsOfUseDto

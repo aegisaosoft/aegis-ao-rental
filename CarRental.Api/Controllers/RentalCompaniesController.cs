@@ -193,6 +193,10 @@ public class RentalCompaniesController : ControllerBase
         if (company == null)
             return NotFound();
 
+        // Load CompanyMode
+        var companyMode = await _context.CompanyModes
+            .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+
         var companyDto = new RentalCompanyDto
         {
             CompanyId = company.Id,
@@ -227,6 +231,8 @@ public class RentalCompaniesController : ControllerBase
             IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
             IsActive = company.IsActive,
             IsTestCompany = company.IsTestCompany,
+            IsRental = companyMode?.IsRental ?? true,
+            IsViolations = companyMode?.IsViolations ?? true,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
         };
@@ -247,6 +253,10 @@ public class RentalCompaniesController : ControllerBase
         if (company == null)
             return NotFound();
 
+        // Load CompanyMode
+        var companyMode = await _context.CompanyModes
+            .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+
         var companyDto = new RentalCompanyDto
         {
             CompanyId = company.Id,
@@ -281,6 +291,8 @@ public class RentalCompaniesController : ControllerBase
             IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
             IsActive = company.IsActive,
             IsTestCompany = company.IsTestCompany,
+            IsRental = companyMode?.IsRental ?? true,
+            IsViolations = companyMode?.IsViolations ?? true,
             CreatedAt = company.CreatedAt,
             UpdatedAt = company.UpdatedAt
         };
@@ -479,6 +491,65 @@ public class RentalCompaniesController : ControllerBase
             _context.Companies.Add(company);
             await _context.SaveChangesAsync();
 
+            // Create or update CompanyMode - Always ensure it exists
+            try
+            {
+                _logger.LogInformation("Creating CompanyMode for new company {CompanyId}: Request.IsRental={IsRental}, Request.IsViolations={IsViolations}", 
+                    company.Id, createCompanyDto.IsRental, createCompanyDto.IsViolations);
+                
+                var companyMode = await _context.CompanyModes
+                    .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+                
+                if (companyMode == null)
+                {
+                    // Create new CompanyMode
+                    companyMode = new CompanyMode
+                    {
+                        CompanyId = company.Id,
+                        IsRental = createCompanyDto.IsRental ?? true,
+                        IsViolations = createCompanyDto.IsViolations ?? true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.CompanyModes.Add(companyMode);
+                    _logger.LogInformation("Adding CompanyMode to context for new company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}, CompanyId={CompanyId}", 
+                        company.Id, companyMode.IsRental, companyMode.IsViolations, companyMode.CompanyId);
+                    
+                    var saveResult = await _context.SaveChangesAsync();
+                    _logger.LogInformation("Successfully created CompanyMode for new company {CompanyId}. SaveChangesAsync returned {SaveResult}", 
+                        company.Id, saveResult);
+                }
+                else
+                {
+                    // Update existing CompanyMode (shouldn't happen for new companies, but handle it)
+                    bool changed = false;
+                    if (createCompanyDto.IsRental.HasValue && createCompanyDto.IsRental.Value != companyMode.IsRental)
+                    {
+                        companyMode.IsRental = createCompanyDto.IsRental.Value;
+                        changed = true;
+                    }
+                    if (createCompanyDto.IsViolations.HasValue && createCompanyDto.IsViolations.Value != companyMode.IsViolations)
+                    {
+                        companyMode.IsViolations = createCompanyDto.IsViolations.Value;
+                        changed = true;
+                    }
+                    
+                    if (changed)
+                    {
+                        companyMode.UpdatedAt = DateTime.UtcNow;
+                        await _context.SaveChangesAsync();
+                        _logger.LogInformation("Updated CompanyMode for new company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}", 
+                            company.Id, companyMode.IsRental, companyMode.IsViolations);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving CompanyMode for new company {CompanyId}: {Message}. Stack trace: {StackTrace}", 
+                    company.Id, ex.Message, ex.StackTrace);
+                // Don't fail the entire creation if CompanyMode save fails, but log it
+            }
+
             // Create Stripe Connect account
             try
             {
@@ -563,6 +634,10 @@ public class RentalCompaniesController : ControllerBase
                 }
             }
 
+            // Reload CompanyMode to get the actual saved values
+            var savedCompanyMode = await _context.CompanyModes
+                .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+
             var companyDto = new RentalCompanyDto
             {
                 CompanyId = company.Id,
@@ -596,6 +671,8 @@ public class RentalCompaniesController : ControllerBase
                 IsSecurityDepositMandatory = company.IsSecurityDepositMandatory,
                 IsActive = company.IsActive,
                 IsTestCompany = company.IsTestCompany,
+                IsRental = savedCompanyMode?.IsRental ?? true,
+                IsViolations = savedCompanyMode?.IsViolations ?? true,
                 CreatedAt = company.CreatedAt,
                 UpdatedAt = company.UpdatedAt
             };
@@ -801,18 +878,71 @@ public class RentalCompaniesController : ControllerBase
                         // Create new DNS record if new subdomain is provided
                         if (!string.IsNullOrWhiteSpace(newSubdomain))
                         {
-                            var dnsCreated = await _azureDnsService.CreateSubdomainAsync(newSubdomain);
-                            if (dnsCreated)
+                            // If setting subdomain for the first time (originalSubdomain is empty), use CreateSubdomainWithSslAsync
+                            // to fully set up DNS, App Service binding, and SSL (same as company creation)
+                            // Run in background to avoid timeout - fire and forget
+                            if (string.IsNullOrWhiteSpace(originalSubdomain))
                             {
-                                _logger.LogInformation("Created new Azure DNS subdomain: {NewSubdomain} for company {CompanyId}", 
-                                    newSubdomain, id);
+                                var subdomainToSetup = newSubdomain;
+                                var companyIdToSetup = id;
+                                
+                                // Fire and forget - run in background to avoid timeout (same as CreateCompany)
+                                _ = Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        _logger.LogInformation("Starting background domain setup for subdomain: {Subdomain}, company: {CompanyId}", 
+                                            subdomainToSetup, companyIdToSetup);
+                                        
+                                        // Use CreateSubdomainWithSslAsync to fully set up DNS, App Service binding, and SSL
+                                        var dnsCreated = await _azureDnsService.CreateSubdomainWithSslAsync(subdomainToSetup);
+                                        if (dnsCreated)
+                                        {
+                                            _logger.LogInformation("Azure DNS subdomain with SSL created: {Subdomain} for company {CompanyId}", 
+                                                subdomainToSetup, companyIdToSetup);
+                                        }
+                                        else
+                                        {
+                                            _logger.LogWarning("Failed to create Azure DNS subdomain with SSL: {Subdomain} for company {CompanyId}. " +
+                                                "Subdomain may already exist in Azure DNS.", subdomainToSetup, companyIdToSetup);
+                                        }
+                                    }
+                                    catch (ArgumentException ex) when (ex.Message.Contains("not configured"))
+                                    {
+                                        // Azure DNS is not configured - log warning but don't fail company update
+                                        _logger.LogWarning("Azure DNS service is not configured. Cannot create subdomain '{Subdomain}' for company {CompanyId}. " +
+                                            "Company was updated successfully, but DNS/SSL setup was skipped. Error: {Error}", 
+                                            subdomainToSetup, companyIdToSetup, ex.Message);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogError(ex, "Error creating Azure DNS subdomain with SSL: {Subdomain} for company {CompanyId}. " +
+                                            "Company was updated successfully, but DNS/SSL setup failed.", 
+                                            subdomainToSetup, companyIdToSetup);
+                                        // Don't fail company update if DNS creation fails
+                                    }
+                                });
+                                
+                                _logger.LogInformation("Domain setup initiated in background for subdomain: {Subdomain}, company: {CompanyId}", 
+                                    subdomainToSetup, companyIdToSetup);
                             }
                             else
                             {
-                                _logger.LogWarning("Failed to create Azure DNS subdomain: {NewSubdomain} for company {CompanyId}. " +
-                                    "Subdomain may already exist in Azure DNS.", newSubdomain, id);
-                                return StatusCode(500, $"Failed to create Azure DNS subdomain: '{newSubdomain}'. " +
-                                    "Subdomain may already exist in Azure DNS.");
+                                // If changing existing subdomain, just create the DNS record synchronously (quick operation)
+                                var dnsCreated = await _azureDnsService.CreateSubdomainAsync(newSubdomain);
+                                
+                                if (dnsCreated)
+                                {
+                                    _logger.LogInformation("Created new Azure DNS subdomain: {NewSubdomain} for company {CompanyId}", 
+                                        newSubdomain, id);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("Failed to create Azure DNS subdomain: {NewSubdomain} for company {CompanyId}. " +
+                                        "Subdomain may already exist in Azure DNS.", newSubdomain, id);
+                                    return StatusCode(500, $"Failed to create Azure DNS subdomain: '{newSubdomain}'. " +
+                                        "Subdomain may already exist in Azure DNS.");
+                                }
                             }
                         }
                     }
@@ -906,6 +1036,73 @@ public class RentalCompaniesController : ControllerBase
             _logger.LogInformation("Successfully saved company {CompanyId}. IsSecurityDepositMandatory is now: {IsSecurityDepositMandatory}", 
                 company.Id, company.IsSecurityDepositMandatory);
 
+            // Update CompanyMode - Always ensure it exists
+            CompanyMode? companyMode = null;
+            try
+            {
+                _logger.LogInformation("Updating CompanyMode for company {CompanyId}: Request.IsRental={IsRental}, Request.IsViolations={IsViolations}", 
+                    company.Id, updateCompanyDto.IsRental, updateCompanyDto.IsViolations);
+                
+                companyMode = await _context.CompanyModes
+                    .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+                
+                if (companyMode == null)
+                {
+                    // Create new CompanyMode if it doesn't exist (with default or provided values)
+                    companyMode = new CompanyMode
+                    {
+                        CompanyId = company.Id,
+                        IsRental = updateCompanyDto.IsRental ?? true,
+                        IsViolations = updateCompanyDto.IsViolations ?? true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.CompanyModes.Add(companyMode);
+                    _logger.LogInformation("Creating CompanyMode for company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}", 
+                        company.Id, companyMode.IsRental, companyMode.IsViolations);
+                }
+                else
+                {
+                    // Update existing CompanyMode if values are provided
+                    bool changed = false;
+                    if (updateCompanyDto.IsRental.HasValue && updateCompanyDto.IsRental.Value != companyMode.IsRental)
+                    {
+                        companyMode.IsRental = updateCompanyDto.IsRental.Value;
+                        changed = true;
+                    }
+                    if (updateCompanyDto.IsViolations.HasValue && updateCompanyDto.IsViolations.Value != companyMode.IsViolations)
+                    {
+                        companyMode.IsViolations = updateCompanyDto.IsViolations.Value;
+                        changed = true;
+                    }
+                    
+                    if (changed)
+                    {
+                        companyMode.UpdatedAt = DateTime.UtcNow;
+                        _logger.LogInformation("Updating CompanyMode for company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}", 
+                            company.Id, companyMode.IsRental, companyMode.IsViolations);
+                    }
+                }
+                
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Successfully saved CompanyMode for company {CompanyId}", company.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving CompanyMode for company {CompanyId}: {Message}. Stack trace: {StackTrace}", 
+                    company.Id, ex.Message, ex.StackTrace);
+                // Try to reload companyMode if save failed to get current values
+                try
+                {
+                    companyMode = await _context.CompanyModes
+                        .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+                }
+                catch (Exception reloadEx)
+                {
+                    _logger.LogError(reloadEx, "Error reloading CompanyMode for company {CompanyId}", company.Id);
+                }
+            }
+
             // Update Stripe Connect account if exists
             if (!string.IsNullOrEmpty(company.StripeAccountId))
             {
@@ -924,7 +1121,55 @@ public class RentalCompaniesController : ControllerBase
                 }
             }
 
-            return NoContent();
+            // Reload company and CompanyMode to return updated values
+            var updatedCompany = await _context.Companies.FindAsync(id);
+            if (updatedCompany == null)
+                return NotFound();
+
+            var updatedCompanyMode = await _context.CompanyModes
+                .FirstOrDefaultAsync(cm => cm.CompanyId == id);
+
+            var updatedDto = new RentalCompanyDto
+            {
+                CompanyId = updatedCompany.Id,
+                CompanyName = updatedCompany.CompanyName,
+                Email = updatedCompany.Email,
+                Website = updatedCompany.Website,
+                StripeAccountId = null,
+                StripeSettingsId = updatedCompany.StripeSettingsId,
+                TaxId = updatedCompany.TaxId,
+                VideoLink = updatedCompany.VideoLink,
+                BannerLink = updatedCompany.BannerLink,
+                LogoLink = updatedCompany.LogoLink,
+                Motto = updatedCompany.Motto,
+                MottoDescription = updatedCompany.MottoDescription,
+                Invitation = updatedCompany.Invitation,
+                Texts = updatedCompany.Texts,
+                BackgroundLink = updatedCompany.BackgroundLink,
+                About = updatedCompany.About,
+                TermsOfUse = updatedCompany.TermsOfUse,
+                BookingIntegrated = updatedCompany.BookingIntegrated,
+                CompanyPath = updatedCompany.CompanyPath,
+                Subdomain = updatedCompany.Subdomain,
+                PrimaryColor = updatedCompany.PrimaryColor,
+                SecondaryColor = updatedCompany.SecondaryColor,
+                Currency = updatedCompany.Currency,
+                LogoUrl = updatedCompany.LogoUrl,
+                FaviconUrl = updatedCompany.FaviconUrl,
+                CustomCss = updatedCompany.CustomCss,
+                Country = updatedCompany.Country,
+                BlinkKey = updatedCompany.BlinkKey,
+                SecurityDeposit = updatedCompany.SecurityDeposit,
+                IsSecurityDepositMandatory = updatedCompany.IsSecurityDepositMandatory,
+                IsActive = updatedCompany.IsActive,
+                IsTestCompany = updatedCompany.IsTestCompany,
+                IsRental = updatedCompanyMode?.IsRental ?? true,
+                IsViolations = updatedCompanyMode?.IsViolations ?? true,
+                CreatedAt = updatedCompany.CreatedAt,
+                UpdatedAt = updatedCompany.UpdatedAt
+            };
+
+            return Ok(updatedDto);
         }
         catch (Exception ex)
         {
@@ -1637,7 +1882,7 @@ public class RentalCompaniesController : ControllerBase
             if (isTestCompany)
             {
                 var testSettings = await _context.StripeSettings
-                    .FirstOrDefaultAsync(s => s.Name.Equals("test", StringComparison.OrdinalIgnoreCase));
+                    .FirstOrDefaultAsync(s => s.Name.ToLower() == "test".ToLower());
                 
                 if (testSettings != null)
                 {
@@ -1652,8 +1897,9 @@ public class RentalCompaniesController : ControllerBase
             // Look for country-specific settings
             if (!string.IsNullOrWhiteSpace(countryCode))
             {
+                var countryCodeLower = countryCode.ToLower();
                 var countrySettings = await _context.StripeSettings
-                    .FirstOrDefaultAsync(s => s.Name.Equals(countryCode, StringComparison.OrdinalIgnoreCase));
+                    .FirstOrDefaultAsync(s => s.Name.ToLower() == countryCodeLower);
                 
                 if (countrySettings != null)
                 {
@@ -1667,7 +1913,7 @@ public class RentalCompaniesController : ControllerBase
 
             // Fallback to US settings
             var usSettings = await _context.StripeSettings
-                .FirstOrDefaultAsync(s => s.Name.Equals("US", StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefaultAsync(s => s.Name.ToLower() == "us".ToLower());
             
             if (usSettings != null)
             {

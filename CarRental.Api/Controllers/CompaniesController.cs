@@ -276,6 +276,10 @@ public class CompaniesController : ControllerBase
             // Load StripeAccountId from StripeCompany table
             await LoadStripeAccountIdAsync(company);
 
+            // Load CompanyMode
+            var companyMode = await _context.CompanyModes
+                .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+
             var result = new
             {
                 id = company.Id,
@@ -309,6 +313,9 @@ public class CompaniesController : ControllerBase
                 stripeOnboardingLink = company.StripeOnboardingLink,
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
+                isTestCompany = company.IsTestCompany,
+                isRental = companyMode?.IsRental ?? true,
+                isViolations = companyMode?.IsViolations ?? true,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
                 securityDeposit = company.SecurityDeposit,
@@ -470,6 +477,65 @@ public class CompaniesController : ControllerBase
                 company.StripeAccountId = _encryptionService.Encrypt(request.StripeAccountId);
                 await SaveStripeAccountIdAsync(company);
                 await _context.SaveChangesAsync();
+            }
+
+            // Create or update CompanyMode - Always ensure it exists
+            try
+            {
+                _logger.LogInformation("Creating CompanyMode for new company {CompanyId}: Request.IsRental={IsRental}, Request.IsViolations={IsViolations}", 
+                    company.Id, request.IsRental, request.IsViolations);
+                
+                var companyMode = await _context.CompanyModes
+                    .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+                
+                if (companyMode == null)
+                {
+                    // Create new CompanyMode
+                    companyMode = new CompanyMode
+                    {
+                        CompanyId = company.Id,
+                        IsRental = request.IsRental ?? true,
+                        IsViolations = request.IsViolations ?? true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.CompanyModes.Add(companyMode);
+                    _logger.LogInformation("Adding CompanyMode to context for new company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}, CompanyId={CompanyId}", 
+                        company.Id, companyMode.IsRental, companyMode.IsViolations, companyMode.CompanyId);
+                    
+                    var saveResult = await _context.SaveChangesAsync();
+                    _logger.LogInformation("Successfully created CompanyMode for new company {CompanyId}. SaveChangesAsync returned {SaveResult}", 
+                        company.Id, saveResult);
+                }
+                else
+                {
+                    // Update existing CompanyMode (shouldn't happen for new companies, but handle it)
+                    bool changed = false;
+                    if (request.IsRental.HasValue && request.IsRental.Value != companyMode.IsRental)
+                    {
+                        companyMode.IsRental = request.IsRental.Value;
+                        changed = true;
+                    }
+                    if (request.IsViolations.HasValue && request.IsViolations.Value != companyMode.IsViolations)
+                    {
+                        companyMode.IsViolations = request.IsViolations.Value;
+                        changed = true;
+                    }
+                    
+                    if (changed)
+                    {
+                        companyMode.UpdatedAt = DateTime.UtcNow;
+                        await _context.SaveChangesAsync();
+                        _logger.LogInformation("Updated CompanyMode for new company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}", 
+                            company.Id, companyMode.IsRental, companyMode.IsViolations);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving CompanyMode for new company {CompanyId}: {Message}. Stack trace: {StackTrace}", 
+                    company.Id, ex.Message, ex.StackTrace);
+                // Don't fail the entire creation if CompanyMode save fails, but log it
             }
 
             _logger.LogInformation("Company created: {CompanyName} (ID: {CompanyId})", company.CompanyName, company.Id);
@@ -926,6 +992,73 @@ public class CompaniesController : ControllerBase
             _context.Companies.Update(company);
             await _context.SaveChangesAsync();
 
+            // Update CompanyMode - Always ensure it exists
+            CompanyMode? companyMode = null;
+            try
+            {
+                _logger.LogInformation("Updating CompanyMode for company {CompanyId}: Request.IsRental={IsRental}, Request.IsViolations={IsViolations}", 
+                    company.Id, request.IsRental, request.IsViolations);
+                
+                companyMode = await _context.CompanyModes
+                    .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+                
+                if (companyMode == null)
+                {
+                    // Create new CompanyMode if it doesn't exist (with default or provided values)
+                    companyMode = new CompanyMode
+                    {
+                        CompanyId = company.Id,
+                        IsRental = request.IsRental ?? true,
+                        IsViolations = request.IsViolations ?? true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    _context.CompanyModes.Add(companyMode);
+                    _logger.LogInformation("Creating CompanyMode for company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}", 
+                        company.Id, companyMode.IsRental, companyMode.IsViolations);
+                }
+                else
+                {
+                    // Update existing CompanyMode if values are provided
+                    bool changed = false;
+                    if (request.IsRental.HasValue && request.IsRental.Value != companyMode.IsRental)
+                    {
+                        companyMode.IsRental = request.IsRental.Value;
+                        changed = true;
+                    }
+                    if (request.IsViolations.HasValue && request.IsViolations.Value != companyMode.IsViolations)
+                    {
+                        companyMode.IsViolations = request.IsViolations.Value;
+                        changed = true;
+                    }
+                    
+                    if (changed)
+                    {
+                        companyMode.UpdatedAt = DateTime.UtcNow;
+                        _logger.LogInformation("Updating CompanyMode for company {CompanyId}: IsRental={IsRental}, IsViolations={IsViolations}", 
+                            company.Id, companyMode.IsRental, companyMode.IsViolations);
+                    }
+                }
+                
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Successfully saved CompanyMode for company {CompanyId}", company.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving CompanyMode for company {CompanyId}: {Message}. Stack trace: {StackTrace}", 
+                    company.Id, ex.Message, ex.StackTrace);
+                // Try to reload companyMode if save failed to get current values
+                try
+                {
+                    companyMode = await _context.CompanyModes
+                        .FirstOrDefaultAsync(cm => cm.CompanyId == company.Id);
+                }
+                catch (Exception reloadEx)
+                {
+                    _logger.LogError(reloadEx, "Error reloading CompanyMode for company {CompanyId}", company.Id);
+                }
+            }
+
             _logger.LogInformation("Company updated: {CompanyName} (ID: {CompanyId})", company.CompanyName, company.Id);
 
             var result = new
@@ -959,6 +1092,9 @@ public class CompaniesController : ControllerBase
                 stripeSettingsId = company.StripeSettingsId,
                 blinkKey = company.BlinkKey,
                 isActive = company.IsActive,
+                isTestCompany = company.IsTestCompany,
+                isRental = companyMode?.IsRental ?? true,
+                isViolations = companyMode?.IsViolations ?? true,
                 createdAt = company.CreatedAt,
                 updatedAt = company.UpdatedAt,
                 securityDeposit = company.SecurityDeposit,
@@ -2524,6 +2660,8 @@ public class CreateCompanyRequest
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
     public bool? IsTestCompany { get; set; }
+    public bool? IsRental { get; set; }
+    public bool? IsViolations { get; set; }
     public string? AiIntegration { get; set; }
     public decimal? SecurityDeposit { get; set; }
     public string? TermsOfUse { get; set; }
@@ -2555,6 +2693,8 @@ public class UpdateCompanyRequest
     public string? TaxId { get; set; }
     public Guid? StripeSettingsId { get; set; }
     public bool? IsTestCompany { get; set; }
+    public bool? IsRental { get; set; }
+    public bool? IsViolations { get; set; }
     public string? StripeAccountId { get; set; }
     public string? BlinkKey { get; set; } // BlinkID license key for the company
     public bool? IsActive { get; set; }
