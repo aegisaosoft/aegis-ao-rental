@@ -1585,6 +1585,41 @@ public class CompaniesController : ControllerBase
                 company = await _companyService.GetCompanyByIdAsync(companyId.Value);
             }
             
+            // If company not found from middleware, try to resolve from hostname directly
+            if (company == null && !string.IsNullOrEmpty(hostname))
+            {
+                // Extract subdomain from hostname (e.g., miamilifecars.localhost -> miamilifecars)
+                var hostnameLower = hostname.ToLowerInvariant();
+                if (hostnameLower.Contains("."))
+                {
+                    var subdomain = hostnameLower.Split('.')[0];
+                    _logger.LogInformation(
+                        "GetCurrentCompanyConfig: Attempting to resolve company by subdomain '{Subdomain}' from hostname '{Hostname}'",
+                        subdomain,
+                        hostname
+                    );
+                    company = await _companyService.GetCompanyBySubdomainAsync(subdomain);
+                    
+                    if (company != null)
+                    {
+                        _logger.LogInformation(
+                            "GetCurrentCompanyConfig: Successfully resolved company {CompanyId} ({CompanyName}) by subdomain '{Subdomain}'",
+                            company.Id,
+                            company.CompanyName,
+                            subdomain
+                        );
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "GetCurrentCompanyConfig: No company found with subdomain '{Subdomain}' from hostname '{Hostname}'",
+                            subdomain,
+                            hostname
+                        );
+                    }
+                }
+            }
+            
             if (company == null)
             {
                 if (!companyId.HasValue)

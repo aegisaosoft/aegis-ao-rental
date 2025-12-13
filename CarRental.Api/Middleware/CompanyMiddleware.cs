@@ -131,55 +131,32 @@ namespace CarRental.Api.Middleware
                         hostname
                     );
                     
-                    // Use default company from configuration ONLY for localhost (development)
-                    // In production, only use companies resolved from actual domain/subdomain
-                    if (string.IsNullOrEmpty(companyId) && 
-                        (hostname == "localhost" || hostname == "127.0.0.1"))
-                    {
-                        var defaultCompanyIdString = _configuration["DefaultCompanyId"];
-                        if (!string.IsNullOrWhiteSpace(defaultCompanyIdString) && 
-                            Guid.TryParse(defaultCompanyIdString, out var defaultCompanyId))
-                        {
-                            var defaultCompany = await companyService.GetCompanyByIdAsync(defaultCompanyId);
-                            if (defaultCompany != null)
-                            {
-                                companyId = defaultCompany.Id.ToString();
-                                source = "config-default";
-                                _logger.LogInformation(
-                                    "Using default company {CompanyId} ({CompanyName}) from configuration for localhost (development only)",
-                                    companyId,
-                                    defaultCompany.CompanyName
-                                );
-                            }
-                            else
-                            {
-                                _logger.LogWarning(
-                                    "Default company with ID '{DefaultCompanyId}' from configuration not found. Please ensure this company exists in the database.",
-                                    defaultCompanyIdString
-                                );
-                            }
-                        }
-                    }
-                    // Try to resolve from hostname for non-localhost
-                    else if (hostname != "localhost" && hostname != "127.0.0.1" && !hostname.Contains("azurewebsites.net"))
+                    // Check if this is a .localhost subdomain (for local development)
+                    // Examples: miamilifecars.localhost, company1.localhost
+                    bool isLocalhostSubdomain = hostname.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase);
+                    
+                    // Try to resolve from hostname for all domains (including .localhost subdomains)
+                    // Skip Azure websites as they use different resolution
+                    if (!hostname.Contains("azurewebsites.net"))
                     {
                         var company = await companyService.GetCompanyByFullDomainAsync(hostname);
                         
                         if (company != null)
                         {
                             companyId = company.Id.ToString();
-                            source = "hostname";
+                            source = isLocalhostSubdomain ? "localhost-subdomain" : "hostname";
                             _logger.LogInformation(
-                                "Resolved company {CompanyId} ({CompanyName}) from hostname {Hostname}",
+                                "Resolved company {CompanyId} ({CompanyName}) from hostname {Hostname} (source: {Source})",
                                 companyId,
                                 company.CompanyName,
-                                hostname
+                                hostname,
+                                source
                             );
                         }
                         else
                         {
                             _logger.LogWarning(
-                                "Could not resolve company from hostname {Hostname}",
+                                "Could not resolve company from hostname {Hostname}. Make sure a company exists with subdomain matching the first part of the hostname.",
                                 hostname
                             );
                         }

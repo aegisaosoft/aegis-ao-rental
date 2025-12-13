@@ -73,6 +73,12 @@ public class CarRentalDbContext : DbContext
     // Insurance & License Tables
     public DbSet<AutoInsuranceCard> AutoInsuranceCards { get; set; }
     public DbSet<LicenseScan> LicenseScans { get; set; }
+    
+    // Violations Table
+    public DbSet<Violation> Violations { get; set; }
+    
+    // Finders List Table
+    public DbSet<FindersList> FindersLists { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
