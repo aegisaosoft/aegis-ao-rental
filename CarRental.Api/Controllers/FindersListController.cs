@@ -117,18 +117,43 @@ public class FindersListController : ControllerBase
                 return BadRequest(new { message = "Company ID is required" });
             }
 
+            // Get company to check country
+            var company = await _context.Companies
+                .FirstOrDefaultAsync(c => c.Id == resolvedCompanyId.Value);
+
+            if (company == null)
+            {
+                return BadRequest(new { message = "Company not found" });
+            }
+
+            // Prepare the finders list - add "USA" if company country is United States
+            var findersListToSave = new List<string>(dto.FindersList ?? new List<string>());
+            var companyCountry = company.Country?.Trim() ?? "";
+            
+            if (string.Equals(companyCountry, "United States", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(companyCountry, "USA", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(companyCountry, "US", StringComparison.OrdinalIgnoreCase))
+            {
+                // Add "USA" if not already in the list
+                if (!findersListToSave.Contains("USA", StringComparer.OrdinalIgnoreCase))
+                {
+                    findersListToSave.Add("USA");
+                }
+            }
+
             var existing = await _context.FindersLists
                 .FirstOrDefaultAsync(f => f.CompanyId == resolvedCompanyId.Value);
 
             if (existing != null)
             {
                 // Update existing
-                existing.StateCodes = dto.FindersList;
+                existing.StateCodes = findersListToSave;
                 existing.UpdatedAt = DateTime.UtcNow;
                 _context.FindersLists.Update(existing);
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("Updated finders list for company {CompanyId} with {Count} states", resolvedCompanyId.Value, dto.FindersList.Count);
+                _logger.LogInformation("Updated finders list for company {CompanyId} with {Count} states (country: {Country})", 
+                    resolvedCompanyId.Value, findersListToSave.Count, companyCountry);
 
                 return Ok(new FindersListDto
                 {
@@ -145,7 +170,7 @@ public class FindersListController : ControllerBase
                 var newFindersList = new FindersList
                 {
                     CompanyId = resolvedCompanyId.Value,
-                    StateCodes = dto.FindersList,
+                    StateCodes = findersListToSave,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -153,7 +178,8 @@ public class FindersListController : ControllerBase
                 _context.FindersLists.Add(newFindersList);
                 await _context.SaveChangesAsync();
 
-                _logger.LogInformation("Created finders list for company {CompanyId} with {Count} states", resolvedCompanyId.Value, dto.FindersList.Count);
+                _logger.LogInformation("Created finders list for company {CompanyId} with {Count} states (country: {Country})", 
+                    resolvedCompanyId.Value, findersListToSave.Count, companyCountry);
 
                 return Ok(new FindersListDto
                 {
