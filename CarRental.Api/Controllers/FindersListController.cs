@@ -63,6 +63,7 @@ public class FindersListController : ControllerBase
 
             if (findersList == null)
             {
+                _logger.LogInformation("Finders list not found for company {CompanyId}, returning empty list", resolvedCompanyId.Value);
                 // Return empty list if not found
                 return Ok(new FindersListDto
                 {
@@ -74,14 +75,23 @@ public class FindersListController : ControllerBase
                 });
             }
 
+            // Log the raw JSON to debug
+            _logger.LogInformation("Found finders list for company {CompanyId}: Id={Id}, JSON={Json}, StateCodes count={Count}", 
+                resolvedCompanyId.Value, findersList.Id, findersList.FindersListJson, findersList.StateCodes?.Count ?? 0);
+
+            var stateCodes = findersList.StateCodes ?? new List<string>();
+            
             var result = new FindersListDto
             {
                 Id = findersList.Id,
                 CompanyId = findersList.CompanyId,
-                FindersList = findersList.StateCodes,
+                FindersList = stateCodes,
                 CreatedAt = findersList.CreatedAt,
                 UpdatedAt = findersList.UpdatedAt
             };
+
+            _logger.LogInformation("Returning finders list DTO for company {CompanyId}: {Count} states", 
+                resolvedCompanyId.Value, result.FindersList.Count);
 
             return Ok(result);
         }

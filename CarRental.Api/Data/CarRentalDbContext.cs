@@ -1047,5 +1047,26 @@ public class CarRentalDbContext : DbContext
 
         modelBuilder.Entity<CustomerLicense>()
             .HasIndex(cl => cl.CompanyId);
+
+        // Configure FindersList entity
+        modelBuilder.Entity<FindersList>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.FindersListJson).HasColumnName("finders_list").HasColumnType("jsonb").IsRequired();
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            
+            // StateCodes is a [NotMapped] computed property, so it's automatically ignored by EF Core
+            // It deserializes from FindersListJson when accessed
+            
+            entity.HasIndex(e => e.CompanyId).IsUnique();
+            
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
     }
 }
