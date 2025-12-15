@@ -391,5 +391,96 @@ public class MediaController : ControllerBase
         
         await Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Upload driver license image (front or back) for a customer
+    /// </summary>
+    [HttpPost("customers/{customerId}/licenses/{side}")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(10_485_760)] // 10 MB limit for images
+    public async Task<ActionResult<object>> UploadCustomerLicenseImage(Guid customerId, string side, IFormFile image)
+    {
+        try
+        {
+            // Validate customer exists
+            var customer = await _context.Customers.FindAsync(customerId);
+            if (customer == null)
+                return NotFound("Customer not found");
+
+            // Validate side parameter
+            if (side != "front" && side != "back")
+                return BadRequest("Side must be 'front' or 'back'");
+
+            // Validate file
+            if (image == null || image.Length == 0)
+                return BadRequest("No file uploaded");
+
+            // Validate file type
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+            var fileExtension = Path.GetExtension(image.FileName).ToLowerInvariant();
+            
+            if (!allowedExtensions.Contains(fileExtension))
+                return BadRequest($"Invalid file type. Allowed types: {string.Join(", ", allowedExtensions)}");
+
+            // Validate file size (10 MB max)
+            if (image.Length > 10_485_760)
+                return BadRequest("File size exceeds 10 MB limit");
+
+            // Create folder structure: /customers/{customerId}/licenses
+            var folderPath = Path.Combine(_environment.WebRootPath, "customers", customerId.ToString(), "licenses");
+            Directory.CreateDirectory(folderPath);
+
+            // Determine file extension based on image format
+            var imageExtension = fileExtension; // Use original extension
+            if (string.IsNullOrEmpty(imageExtension))
+            {
+                // Determine from content type if extension is missing
+                imageExtension = image.ContentType switch
+                {
+                    "image/jpeg" => ".jpg",
+                    "image/jpg" => ".jpg",
+                    "image/png" => ".png",
+                    "image/gif" => ".gif",
+                    "image/webp" => ".webp",
+                    _ => ".jpg" // Default to jpg
+                };
+            }
+
+            // Use fixed filename: front.jpg or back.jpg (or appropriate extension)
+            var fileName = $"{side}{imageExtension}";
+            var filePath = Path.Combine(folderPath, fileName);
+
+            // Delete old file if exists
+            if (System.IO.File.Exists(filePath))
+            {
+                System.IO.File.Delete(filePath);
+            }
+
+            // Save file
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await image.CopyToAsync(stream);
+            }
+
+            // Generate URL path
+            var imageUrl = $"/customers/{customerId}/licenses/{fileName}";
+
+            _logger.LogInformation("Driver license {Side} image uploaded successfully for customer {CustomerId}: {ImageUrl}", side, customerId, imageUrl);
+
+            return Ok(new
+            {
+                imageUrl,
+                fileName,
+                fileSize = image.Length,
+                side,
+                message = $"Driver license {side} image uploaded successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading driver license {Side} image for customer {CustomerId}", side, customerId);
+            return StatusCode(500, $"Error uploading driver license {side} image");
+        }
+    }
 }
 
