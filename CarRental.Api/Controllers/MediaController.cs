@@ -73,9 +73,8 @@ public class MediaController : ControllerBase
                 await DeleteVideoFile(company.VideoLink);
             }
 
-            // Create folder structure: /<YYYY-MM-DD>/<company id>/videos
-            var date = DateTime.UtcNow.ToString("yyyy-MM-dd");
-            var folderPath = Path.Combine(_environment.WebRootPath, "uploads", date, companyId.ToString(), "videos");
+            // Create folder structure: /public/<company id>/videos
+            var folderPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString(), "videos");
             
             // Create directory if it doesn't exist
             Directory.CreateDirectory(folderPath);
@@ -91,7 +90,7 @@ public class MediaController : ControllerBase
             }
 
             // Generate URL path
-            var videoUrl = $"/uploads/{date}/{companyId}/videos/{uniqueFileName}";
+            var videoUrl = $"/public/{companyId}/videos/{uniqueFileName}";
 
             // Update company with video link
             company.VideoLink = videoUrl;
@@ -352,8 +351,18 @@ public class MediaController : ControllerBase
             if (string.IsNullOrEmpty(videoUrl))
                 return;
 
-            // Convert URL to file path
-            var filePath = Path.Combine(_environment.WebRootPath, videoUrl.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            string filePath;
+            
+            // Handle /public/ paths (use ContentRootPath) and /uploads/ paths (use WebRootPath)
+            if (videoUrl.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
+            {
+                filePath = Path.Combine(_environment.ContentRootPath, "wwwroot", videoUrl.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            }
+            else
+            {
+                // Legacy /uploads/ paths
+                filePath = Path.Combine(_environment.WebRootPath, videoUrl.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            }
             
             if (System.IO.File.Exists(filePath))
             {
