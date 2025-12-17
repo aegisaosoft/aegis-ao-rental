@@ -458,6 +458,22 @@ app.UseStaticFiles(new StaticFileOptions
     DefaultContentType = "application/octet-stream"
 });
 
+// 3b. Static files for customer license images (serve from wwwroot/customers)
+var customersPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "customers");
+if (!Directory.Exists(customersPath))
+{
+    Directory.CreateDirectory(customersPath);
+    startupLogger.LogInformation("Created customers directory at: {CustomersPath}", customersPath);
+}
+startupLogger.LogInformation("Customer license images will be served from: {CustomersPath} at path /customers", customersPath);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(customersPath),
+    RequestPath = "/customers",
+    ServeUnknownFileTypes = true, // Allow serving image files
+    DefaultContentType = "application/octet-stream"
+});
+
 // 4. CORS (before authentication)
 startupLogger.LogInformation("Configuring CORS...");
 app.UseCors("AllowAll");
