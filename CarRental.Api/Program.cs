@@ -474,6 +474,22 @@ app.UseStaticFiles(new StaticFileOptions
     DefaultContentType = "application/octet-stream"
 });
 
+// 3c. Static files for temporary wizard license images (serve from wwwroot/wizard)
+var wizardPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "wizard");
+if (!Directory.Exists(wizardPath))
+{
+    Directory.CreateDirectory(wizardPath);
+    startupLogger.LogInformation("Created wizard directory at: {WizardPath}", wizardPath);
+}
+startupLogger.LogInformation("Wizard license images will be served from: {WizardPath} at path /wizard", wizardPath);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(wizardPath),
+    RequestPath = "/wizard",
+    ServeUnknownFileTypes = true, // Allow serving image files
+    DefaultContentType = "application/octet-stream"
+});
+
 // 4. CORS (before authentication)
 startupLogger.LogInformation("Configuring CORS...");
 app.UseCors("AllowAll");

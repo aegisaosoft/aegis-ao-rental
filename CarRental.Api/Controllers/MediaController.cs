@@ -491,5 +491,99 @@ public class MediaController : ControllerBase
             return StatusCode(500, $"Error uploading driver license {side} image");
         }
     }
+
+    /// <summary>
+    /// Upload driver license image (front or back) temporarily using wizardId (for new customers without customerId)
+    /// </summary>
+    [HttpPost("wizard/{wizardId}/licenses/{side}")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(10_485_760)] // 10 MB limit for images
+    public async Task<ActionResult<object>> UploadWizardLicenseImage(string wizardId, string side, IFormFile image)
+    {
+        try
+        {
+            // Validate wizardId
+            if (string.IsNullOrWhiteSpace(wizardId))
+                return BadRequest("Wizard ID is required");
+
+            // Validate side parameter
+            if (side != "front" && side != "back")
+                return BadRequest("Side must be 'front' or 'back'");
+
+            // Validate file
+            if (image == null || image.Length == 0)
+                return BadRequest("No file uploaded");
+
+            // Validate file type
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+            var fileExtension = Path.GetExtension(image.FileName).ToLowerInvariant();
+            
+            if (!allowedExtensions.Contains(fileExtension))
+                return BadRequest($"Invalid file type. Allowed types: {string.Join(", ", allowedExtensions)}");
+
+            // Validate file size (10 MB max)
+            if (image.Length > 10_485_760)
+                return BadRequest("File size exceeds 10 MB limit");
+
+            // Sanitize wizardId to prevent directory traversal
+            var sanitizedWizardId = string.Join("_", wizardId.Split(Path.GetInvalidFileNameChars()));
+
+            // Create folder structure: /wizard/{wizardId}/licenses
+            var folderPath = Path.Combine(_environment.WebRootPath, "wizard", sanitizedWizardId, "licenses");
+            Directory.CreateDirectory(folderPath);
+
+            // Determine file extension based on image format
+            var imageExtension = fileExtension; // Use original extension
+            if (string.IsNullOrEmpty(imageExtension))
+            {
+                // Determine from content type if extension is missing
+                imageExtension = image.ContentType switch
+                {
+                    "image/jpeg" => ".jpg",
+                    "image/jpg" => ".jpg",
+                    "image/png" => ".png",
+                    "image/gif" => ".gif",
+                    "image/webp" => ".webp",
+                    _ => ".jpg" // Default to jpg
+                };
+            }
+
+            // Use fixed filename: front.jpg or back.jpg (or appropriate extension)
+            var fileName = $"{side}{imageExtension}";
+            var filePath = Path.Combine(folderPath, fileName);
+
+            // Delete old file if exists
+            if (System.IO.File.Exists(filePath))
+            {
+                System.IO.File.Delete(filePath);
+            }
+
+            // Save file
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await image.CopyToAsync(stream);
+            }
+
+            // Generate URL path
+            var imageUrl = $"/wizard/{sanitizedWizardId}/licenses/{fileName}";
+
+            _logger.LogInformation("Driver license {Side} image uploaded successfully for wizard {WizardId}: {ImageUrl}", side, wizardId, imageUrl);
+
+            return Ok(new
+            {
+                imageUrl,
+                fileName,
+                fileSize = image.Length,
+                side,
+                wizardId,
+                message = $"Driver license {side} image uploaded successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error uploading driver license {Side} image for wizard {WizardId}", side, wizardId);
+            return StatusCode(500, $"Error uploading driver license {side} image");
+        }
+    }
 }
 
