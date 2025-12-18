@@ -598,5 +598,73 @@ public class MediaController : ControllerBase
             return StatusCode(500, $"Error uploading driver license {side} image");
         }
     }
+
+    /// <summary>
+    /// Delete driver license image (front or back) for a wizard
+    /// </summary>
+    [HttpDelete("wizard/{wizardId}/licenses/{side}")]
+    public Task<IActionResult> DeleteWizardLicenseImage(string wizardId, string side)
+    {
+        try
+        {
+            _logger.LogInformation("DeleteWizardLicenseImage called - wizardId: {WizardId}, side: {Side}", wizardId, side);
+
+            // Validate wizardId
+            if (string.IsNullOrWhiteSpace(wizardId))
+            {
+                _logger.LogWarning("Wizard ID is required but was null or empty");
+                return Task.FromResult<IActionResult>(BadRequest("Wizard ID is required"));
+            }
+
+            // Validate side parameter
+            if (side != "front" && side != "back")
+            {
+                _logger.LogWarning("Invalid side parameter: {Side}", side);
+                return Task.FromResult<IActionResult>(BadRequest("Side must be 'front' or 'back'"));
+            }
+
+            // Sanitize wizardId to prevent directory traversal
+            var sanitizedWizardId = string.Join("_", wizardId.Split(Path.GetInvalidFileNameChars()));
+
+            // Construct file path
+            var folderPath = Path.Combine(_environment.WebRootPath, "wizard", sanitizedWizardId, "licenses");
+            
+            // Try different file extensions
+            var possibleExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+            bool fileDeleted = false;
+            
+            foreach (var ext in possibleExtensions)
+            {
+                var fileName = $"{side}{ext}";
+                var filePath = Path.Combine(folderPath, fileName);
+                
+                if (System.IO.File.Exists(filePath))
+                {
+                    System.IO.File.Delete(filePath);
+                    _logger.LogInformation("Deleted wizard license {Side} image: {FilePath}", side, filePath);
+                    fileDeleted = true;
+                    break;
+                }
+            }
+
+            if (!fileDeleted)
+            {
+                _logger.LogWarning("Wizard license {Side} image not found for wizard {WizardId}", side, wizardId);
+                return Task.FromResult<IActionResult>(NotFound($"Wizard license {side} image not found"));
+            }
+
+            return Task.FromResult<IActionResult>(Ok(new
+            {
+                message = $"Wizard license {side} image deleted successfully",
+                wizardId,
+                side
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting wizard license {Side} image for wizard {WizardId}", side, wizardId);
+            return Task.FromResult<IActionResult>(StatusCode(500, $"Error deleting wizard license {side} image"));
+        }
+    }
 }
 
