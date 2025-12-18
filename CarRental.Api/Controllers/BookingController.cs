@@ -39,6 +39,7 @@ public class BookingController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly ISettingsService _settingsService;
     private readonly IEncryptionService _encryptionService;
+    private readonly IRentalAgreementService _rentalAgreementService;
 
     public BookingController(
         CarRentalDbContext context,
@@ -47,7 +48,8 @@ public class BookingController : ControllerBase
         ILogger<BookingController> logger,
         IConfiguration configuration,
         ISettingsService settingsService,
-        IEncryptionService encryptionService)
+        IEncryptionService encryptionService,
+        IRentalAgreementService rentalAgreementService)
     {
         _context = context;
         _emailService = emailService;
@@ -56,6 +58,7 @@ public class BookingController : ControllerBase
         _configuration = configuration;
         _settingsService = settingsService;
         _encryptionService = encryptionService;
+        _rentalAgreementService = rentalAgreementService;
     }
 
     /// <summary>
@@ -1438,6 +1441,74 @@ public class BookingController : ControllerBase
             await _context.Entry(reservation)
                 .Reference(r => r.Company)
                 .LoadAsync();
+
+            // Create rental agreement if agreement data is provided
+            if (createReservationDto.AgreementData != null && !string.IsNullOrEmpty(createReservationDto.AgreementData.SignatureImage))
+            {
+                try
+                {
+                    // Get customer license info
+                    var license = await _context.CustomerLicenses
+                        .FirstOrDefaultAsync(l => l.CustomerId == customer.Id);
+                    
+                    // Format customer address
+                    var customerAddressParts = new List<string>();
+                    if (!string.IsNullOrEmpty(customer.Address)) customerAddressParts.Add(customer.Address);
+                    if (!string.IsNullOrEmpty(customer.City)) customerAddressParts.Add(customer.City);
+                    if (!string.IsNullOrEmpty(customer.State)) customerAddressParts.Add(customer.State);
+                    if (!string.IsNullOrEmpty(customer.PostalCode)) customerAddressParts.Add(customer.PostalCode);
+                    var customerAddress = customerAddressParts.Count > 0 ? string.Join(", ", customerAddressParts) : null;
+                    
+                    // Get vehicle name
+                    var vehicleName = (reservation.Vehicle?.VehicleModel?.Model != null)
+                        ? $"{reservation.Vehicle.VehicleModel.Model.Make} {reservation.Vehicle.VehicleModel.Model.ModelName} ({reservation.Vehicle.VehicleModel.Model.Year})"
+                        : "Unknown Vehicle";
+                    
+                    var agreementRequest = new CreateAgreementRequest
+                    {
+                        CompanyId = createReservationDto.CompanyId,
+                        BookingId = reservation.Id,
+                        CustomerId = createReservationDto.CustomerId,
+                        VehicleId = createReservationDto.VehicleId,
+                        
+                        // Customer info
+                        CustomerName = $"{customer.FirstName} {customer.LastName}",
+                        CustomerEmail = customer.Email,
+                        CustomerPhone = customer.Phone,
+                        CustomerAddress = customerAddress,
+                        DriverLicenseNumber = license?.LicenseNumber,
+                        DriverLicenseState = license?.StateIssued,
+                        
+                        // Vehicle info
+                        VehicleName = vehicleName,
+                        VehiclePlate = vehicle.LicensePlate,
+                        
+                        // Rental details
+                        PickupDate = createReservationDto.PickupDate,
+                        PickupLocation = createReservationDto.PickupLocation,
+                        ReturnDate = createReservationDto.ReturnDate,
+                        ReturnLocation = createReservationDto.ReturnLocation,
+                        RentalAmount = totalAmount,
+                        DepositAmount = createReservationDto.SecurityDeposit ?? 0m,
+                        Currency = company.Currency ?? "USD",
+                        
+                        // Agreement data from frontend
+                        AgreementData = createReservationDto.AgreementData,
+                        
+                        // Request context
+                        IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString()
+                    };
+                    
+                    await _rentalAgreementService.CreateAgreementAsync(agreementRequest);
+                    
+                    _logger.LogInformation("Created rental agreement for booking {BookingId}", reservation.Id);
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the booking
+                    _logger.LogError(ex, "Failed to create rental agreement for booking {BookingId}", reservation.Id);
+                }
+            }
 
             var reservationDto = new BookingDto
             {

@@ -143,6 +143,9 @@ public class CreateBookingDto
     public decimal? SecurityDeposit { get; set; }
 
     public string? Notes { get; set; }
+    
+    // Rental agreement data (optional)
+    public AgreementDataDto? AgreementData { get; set; }
 }
 
 public class UpdateBookingDto
@@ -171,6 +174,93 @@ public class UpdateBookingDto
     public string? Status { get; set; }
 
     public string? Notes { get; set; }
+}
+
+/// <summary>
+/// Agreement data included in booking request
+/// </summary>
+public class AgreementDataDto
+{
+    /// <summary>
+    /// Base64 encoded PNG signature image
+    /// </summary>
+    public string SignatureImage { get; set; } = string.Empty;
+    
+    /// <summary>
+    /// Language code used for agreement (en, es, pt, de, fr)
+    /// </summary>
+    public string Language { get; set; } = "en";
+    
+    /// <summary>
+    /// Consent timestamps
+    /// </summary>
+    public AgreementConsentsDto Consents { get; set; } = new();
+    
+    /// <summary>
+    /// Localized consent texts shown to customer
+    /// </summary>
+    public ConsentTextsDto ConsentTexts { get; set; } = new();
+    
+    /// <summary>
+    /// Browser user agent string
+    /// </summary>
+    public string? UserAgent { get; set; }
+    
+    /// <summary>
+    /// Customer's timezone (e.g., "America/New_York")
+    /// </summary>
+    public string? Timezone { get; set; }
+    
+    /// <summary>
+    /// When the agreement was signed (ISO 8601)
+    /// </summary>
+    public DateTime SignedAt { get; set; }
+    
+    /// <summary>
+    /// Optional geolocation data
+    /// </summary>
+    public GeolocationDto? Geolocation { get; set; }
+    
+    /// <summary>
+    /// Optional device info
+    /// </summary>
+    public Dictionary<string, object>? DeviceInfo { get; set; }
+}
+
+/// <summary>
+/// Consent acceptance timestamps
+/// </summary>
+public class AgreementConsentsDto
+{
+    public DateTime? TermsAcceptedAt { get; set; }
+    public DateTime? NonRefundableAcceptedAt { get; set; }
+    public DateTime? DamagePolicyAcceptedAt { get; set; }
+    public DateTime? CardAuthorizationAcceptedAt { get; set; }
+}
+
+/// <summary>
+/// Localized consent texts
+/// </summary>
+public class ConsentTextsDto
+{
+    public string TermsTitle { get; set; } = string.Empty;
+    public string TermsText { get; set; } = string.Empty;
+    public string NonRefundableTitle { get; set; } = string.Empty;
+    public string NonRefundableText { get; set; } = string.Empty;
+    public string DamagePolicyTitle { get; set; } = string.Empty;
+    public string DamagePolicyText { get; set; } = string.Empty;
+    public string CardAuthorizationTitle { get; set; } = string.Empty;
+    public string CardAuthorizationText { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Geolocation data from browser
+/// </summary>
+public class GeolocationDto
+{
+    public decimal? Latitude { get; set; }
+    public decimal? Longitude { get; set; }
+    public decimal? Accuracy { get; set; }
 }
 
 public class BookingSearchDto

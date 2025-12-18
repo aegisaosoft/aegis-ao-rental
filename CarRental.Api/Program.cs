@@ -212,6 +212,9 @@ builder.Services.AddScoped<ICompanyManagementService, CompanyManagementService>(
 // Add Company Service for domain-based multi-tenancy
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 
+// Add Rental Agreement Service
+builder.Services.AddScoped<IRentalAgreementService, RentalAgreementService>();
+
 // Add Memory Cache for company domain mapping
 builder.Services.AddMemoryCache();
 

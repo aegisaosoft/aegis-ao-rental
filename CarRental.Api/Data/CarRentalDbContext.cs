@@ -79,6 +79,10 @@ public class CarRentalDbContext : DbContext
     
     // Finders List Table
     public DbSet<FindersList> FindersLists { get; set; }
+    
+    // Rental Agreement Tables
+    public DbSet<RentalAgreementEntity> RentalAgreements { get; set; }
+    public DbSet<RentalAgreementAuditLog> RentalAgreementAuditLogs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1068,5 +1072,9 @@ public class CarRentalDbContext : DbContext
                 .HasForeignKey(e => e.CompanyId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
+        
+        // Configure Rental Agreements
+        modelBuilder.ApplyConfiguration(new RentalAgreementConfiguration());
+        modelBuilder.ApplyConfiguration(new RentalAgreementAuditLogConfiguration());
     }
 }
