@@ -498,21 +498,33 @@ public class MediaController : ControllerBase
     [HttpPost("wizard/{wizardId}/licenses/{side}")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(10_485_760)] // 10 MB limit for images
-    public async Task<ActionResult<object>> UploadWizardLicenseImage(string wizardId, string side, IFormFile image)
+    public async Task<ActionResult<object>> UploadWizardLicenseImage(string wizardId, string side, [FromForm] IFormFile image)
     {
         try
         {
+            _logger.LogInformation("UploadWizardLicenseImage called - wizardId: {WizardId}, side: {Side}, hasImage: {HasImage}, imageLength: {ImageLength}", 
+                wizardId, side, image != null, image?.Length ?? 0);
+
             // Validate wizardId
             if (string.IsNullOrWhiteSpace(wizardId))
+            {
+                _logger.LogWarning("Wizard ID is required but was null or empty");
                 return BadRequest("Wizard ID is required");
+            }
 
             // Validate side parameter
             if (side != "front" && side != "back")
+            {
+                _logger.LogWarning("Invalid side parameter: {Side}", side);
                 return BadRequest("Side must be 'front' or 'back'");
+            }
 
             // Validate file
             if (image == null || image.Length == 0)
+            {
+                _logger.LogWarning("No file uploaded - image is null or empty");
                 return BadRequest("No file uploaded");
+            }
 
             // Validate file type
             var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
