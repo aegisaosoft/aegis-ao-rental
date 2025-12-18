@@ -493,6 +493,22 @@ app.UseStaticFiles(new StaticFileOptions
     DefaultContentType = "application/octet-stream"
 });
 
+// 3d. Static files for rental agreement PDFs (serve from wwwroot/agreements)
+var agreementsPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "agreements");
+if (!Directory.Exists(agreementsPath))
+{
+    Directory.CreateDirectory(agreementsPath);
+    startupLogger.LogInformation("Created agreements directory at: {AgreementsPath}", agreementsPath);
+}
+startupLogger.LogInformation("Rental agreement PDFs will be served from: {AgreementsPath} at path /agreements", agreementsPath);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(agreementsPath),
+    RequestPath = "/agreements",
+    ServeUnknownFileTypes = true, // Allow serving PDF files
+    DefaultContentType = "application/pdf"
+});
+
 // 4. CORS (before authentication)
 startupLogger.LogInformation("Configuring CORS...");
 app.UseCors("AllowAll");

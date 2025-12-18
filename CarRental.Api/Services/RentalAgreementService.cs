@@ -8,15 +8,21 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Hosting;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
+using CarRental.Api.Models;
 
 namespace CarRental.Api.Services;
 
 public interface IRentalAgreementService
 {
     Task<RentalAgreementEntity> CreateAgreementAsync(CreateAgreementRequest request, CancellationToken ct = default);
+    Task<RentalAgreementEntity?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<RentalAgreementEntity?> GetByBookingIdAsync(Guid bookingId, CancellationToken ct = default);
+    Task<string> GenerateAndStorePdfAsync(Guid agreementId, CancellationToken ct = default);
+    Task VoidAgreementAsync(Guid agreementId, string reason, string performedBy, CancellationToken ct = default);
+    Task LogActionAsync(Guid agreementId, string action, string performedBy, string? ipAddress = null, string? userAgent = null, object? details = null, CancellationToken ct = default);
 }
 
 public class CreateAgreementRequest
@@ -58,17 +64,38 @@ public class RentalAgreementService : IRentalAgreementService
 {
     private readonly CarRentalDbContext _db;
     private readonly ILogger<RentalAgreementService> _logger;
+    private readonly IWebHostEnvironment _environment;
 
     public RentalAgreementService(
         CarRentalDbContext db,
-        ILogger<RentalAgreementService> logger)
+        ILogger<RentalAgreementService> logger,
+        IWebHostEnvironment environment)
     {
         _db = db;
         _logger = logger;
+        _environment = environment;
     }
 
     public async Task<RentalAgreementEntity> CreateAgreementAsync(CreateAgreementRequest request, CancellationToken ct = default)
     {
+        _logger.LogInformation(
+            "[RentalAgreement] Creating agreement - BookingId: {BookingId}, CustomerId: {CustomerId}, HasSignature: {HasSignature}, SignatureLength: {SignatureLength}",
+            request.BookingId,
+            request.CustomerId,
+            !string.IsNullOrEmpty(request.AgreementData?.SignatureImage),
+            request.AgreementData?.SignatureImage?.Length ?? 0
+        );
+        
+        if (request.AgreementData == null)
+        {
+            throw new ArgumentNullException(nameof(request.AgreementData), "AgreementData cannot be null");
+        }
+        
+        if (string.IsNullOrEmpty(request.AgreementData.SignatureImage))
+        {
+            throw new ArgumentException("SignatureImage cannot be null or empty", nameof(request.AgreementData.SignatureImage));
+        }
+        
         // Generate agreement number
         var agreementNumber = await GenerateAgreementNumberAsync(request.CompanyId, ct);
         
@@ -142,16 +169,46 @@ public class RentalAgreementService : IRentalAgreementService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _db.RentalAgreements.Add(agreement);
-        await _db.SaveChangesAsync(ct);
+        try
+        {
+            _db.RentalAgreements.Add(agreement);
+            await _db.SaveChangesAsync(ct);
+            
+            _logger.LogInformation(
+                "[RentalAgreement] Successfully saved agreement {AgreementId} (AgreementNumber: {AgreementNumber}) to database for booking {BookingId}",
+                agreement.Id,
+                agreement.AgreementNumber,
+                request.BookingId
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, 
+                "[RentalAgreement] Failed to save agreement to database - BookingId: {BookingId}, AgreementNumber: {AgreementNumber}, Error: {ErrorMessage}",
+                request.BookingId,
+                agreement.AgreementNumber,
+                ex.Message);
+            throw; // Re-throw to let the caller handle it
+        }
         
-        // Log creation
-        await LogActionAsync(agreement.Id, "created", request.CustomerEmail, request.IpAddress, request.AgreementData.UserAgent, ct);
-        
-        _logger.LogInformation("Created rental agreement {AgreementNumber} for booking {BookingId}", 
-            agreementNumber, request.BookingId);
+        // Log creation (don't fail if audit log fails)
+        try
+        {
+            await LogActionAsync(agreement.Id, "created", request.CustomerEmail, request.IpAddress, request.AgreementData.UserAgent, null, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[RentalAgreement] Failed to create audit log for agreement {AgreementId}, but agreement was saved", agreement.Id);
+        }
         
         return agreement;
+    }
+
+    public async Task<RentalAgreementEntity?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    {
+        return await _db.RentalAgreements
+            .Include(a => a.AuditLogs)
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
     }
 
     public async Task<RentalAgreementEntity?> GetByBookingIdAsync(Guid bookingId, CancellationToken ct = default)
@@ -159,6 +216,100 @@ public class RentalAgreementService : IRentalAgreementService
         return await _db.RentalAgreements
             .Where(a => a.BookingId == bookingId && a.Status == "active")
             .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<string> GenerateAndStorePdfAsync(Guid agreementId, CancellationToken ct = default)
+    {
+        var agreement = await _db.RentalAgreements
+            .FirstOrDefaultAsync(a => a.Id == agreementId, ct);
+            
+        if (agreement == null)
+            throw new InvalidOperationException($"Agreement {agreementId} not found");
+        
+        var company = await _db.Companies
+            .FirstOrDefaultAsync(c => c.Id == agreement.CompanyId, ct);
+            
+        if (company == null)
+            throw new InvalidOperationException($"Company {agreement.CompanyId} not found");
+        
+        // Generate PDF using the PDF generator
+        var pdfGenerator = new RentalAgreementPdfGenerator();
+        var pdfBytes = pdfGenerator.Generate(new RentalAgreementPdfData
+        {
+            AgreementNumber = agreement.AgreementNumber,
+            Language = agreement.Language,
+            CompanyName = company.CompanyName,
+            CompanyAddress = GetCompanyAddress(company),
+            CompanyPhone = null, // Company model doesn't have Phone property
+            CompanyEmail = company.Email,
+            CustomerName = agreement.CustomerName,
+            CustomerEmail = agreement.CustomerEmail,
+            CustomerPhone = agreement.CustomerPhone,
+            CustomerAddress = agreement.CustomerAddress,
+            DriverLicenseNumber = agreement.DriverLicenseNumber,
+            DriverLicenseState = agreement.DriverLicenseState,
+            VehicleName = agreement.VehicleName,
+            VehiclePlate = agreement.VehiclePlate,
+            PickupDate = agreement.PickupDate,
+            PickupLocation = agreement.PickupLocation,
+            ReturnDate = agreement.ReturnDate,
+            ReturnLocation = agreement.ReturnLocation,
+            RentalAmount = agreement.RentalAmount,
+            DepositAmount = agreement.DepositAmount,
+            Currency = agreement.Currency,
+            SignatureImage = agreement.SignatureImage,
+            SignedAt = agreement.SignedAt,
+            TermsText = agreement.TermsText,
+            NonRefundableText = agreement.NonRefundableText,
+            DamagePolicyText = agreement.DamagePolicyText,
+            CardAuthorizationText = agreement.CardAuthorizationText,
+        });
+        
+        // Save PDF to local file system
+        var agreementsFolder = Path.Combine(_environment.ContentRootPath, "wwwroot", "agreements", agreement.CompanyId.ToString());
+        Directory.CreateDirectory(agreementsFolder);
+        
+        var fileName = $"{agreement.AgreementNumber}.pdf";
+        var filePath = Path.Combine(agreementsFolder, fileName);
+        
+        await System.IO.File.WriteAllBytesAsync(filePath, pdfBytes, ct);
+        
+        // Generate URL path
+        var pdfUrl = $"/agreements/{agreement.CompanyId}/{fileName}";
+        
+        // Update agreement with PDF URL
+        agreement.PdfUrl = pdfUrl;
+        agreement.PdfGeneratedAt = DateTime.UtcNow;
+        agreement.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        
+        await LogActionAsync(agreement.Id, "pdf_generated", "system", null, null, null, ct);
+        
+        _logger.LogInformation("Generated PDF for agreement {AgreementNumber}: {PdfUrl}", 
+            agreement.AgreementNumber, pdfUrl);
+        
+        return pdfUrl;
+    }
+
+    public async Task VoidAgreementAsync(Guid agreementId, string reason, string performedBy, CancellationToken ct = default)
+    {
+        var agreement = await _db.RentalAgreements
+            .FirstOrDefaultAsync(a => a.Id == agreementId, ct);
+            
+        if (agreement == null)
+            throw new InvalidOperationException($"Agreement {agreementId} not found");
+        
+        agreement.Status = "voided";
+        agreement.VoidedAt = DateTime.UtcNow;
+        agreement.VoidedReason = reason;
+        agreement.UpdatedAt = DateTime.UtcNow;
+        
+        await _db.SaveChangesAsync(ct);
+        
+        await LogActionAsync(agreementId, "voided", performedBy, null, null, new { reason }, ct);
+        
+        _logger.LogInformation("Voided agreement {AgreementId} by {PerformedBy}: {Reason}", 
+            agreementId, performedBy, reason);
     }
 
     private async Task<string> GenerateAgreementNumberAsync(Guid companyId, CancellationToken ct)
@@ -195,7 +346,14 @@ public class RentalAgreementService : IRentalAgreementService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    private async Task LogActionAsync(Guid agreementId, string action, string? performedBy, string? ipAddress, string? userAgent, CancellationToken ct)
+    public async Task LogActionAsync(
+        Guid agreementId, 
+        string action, 
+        string performedBy, 
+        string? ipAddress = null, 
+        string? userAgent = null,
+        object? details = null,
+        CancellationToken ct = default)
     {
         var log = new RentalAgreementAuditLog
         {
@@ -206,11 +364,19 @@ public class RentalAgreementService : IRentalAgreementService
             PerformedAt = DateTime.UtcNow,
             IpAddress = ipAddress,
             UserAgent = userAgent,
+            Details = details != null ? JsonSerializer.SerializeToDocument(details) : null,
             CreatedAt = DateTime.UtcNow
         };
         
         _db.RentalAgreementAuditLogs.Add(log);
         await _db.SaveChangesAsync(ct);
+    }
+
+    private static string? GetCompanyAddress(Company company)
+    {
+        // Company model doesn't have address fields, return null or use company name
+        // If you need company address, you may need to get it from CompanyLocation or another source
+        return null;
     }
 }
 

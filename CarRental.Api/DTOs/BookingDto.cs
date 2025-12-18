@@ -440,3 +440,40 @@ public class SendBookingLinkDto
     public int ExpirationHours { get; set; } = 24;
     public string? CustomMessage { get; set; }
 }
+
+/// <summary>
+/// Rental Agreement Response DTO
+/// </summary>
+public class RentalAgreementResponseDto
+{
+    public Guid Id { get; set; }
+    public string AgreementNumber { get; set; } = string.Empty;
+    public Guid BookingId { get; set; }
+    public Guid CustomerId { get; set; }
+    public Guid VehicleId { get; set; }
+    public Guid CompanyId { get; set; }
+    public string Language { get; set; } = "en";
+    public string CustomerName { get; set; } = string.Empty;
+    public string CustomerEmail { get; set; } = string.Empty;
+    public string? CustomerPhone { get; set; }
+    public string? CustomerAddress { get; set; }
+    public string? DriverLicenseNumber { get; set; }
+    public string? DriverLicenseState { get; set; }
+    public string VehicleName { get; set; } = string.Empty;
+    public string? VehiclePlate { get; set; }
+    public DateTime PickupDate { get; set; }
+    public string? PickupLocation { get; set; }
+    public DateTime ReturnDate { get; set; }
+    public string? ReturnLocation { get; set; }
+    public decimal RentalAmount { get; set; }
+    public decimal DepositAmount { get; set; }
+    public string Currency { get; set; } = "USD";
+    public string SignatureImage { get; set; } = string.Empty;
+    public DateTime SignedAt { get; set; }
+    public string? PdfUrl { get; set; }
+    public DateTime? PdfGeneratedAt { get; set; }
+    public string Status { get; set; } = "active";
+    public DateTime CreatedAt { get; set; }
+    public AgreementConsentsDto Consents { get; set; } = new();
+    public ConsentTextsDto ConsentTexts { get; set; } = new();
+}

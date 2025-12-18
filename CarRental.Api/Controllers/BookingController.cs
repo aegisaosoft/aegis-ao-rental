@@ -28,6 +28,13 @@ using BCrypt.Net;
 
 namespace CarRental.Api.Controllers;
 
+// Helper DTO for raw SQL license query
+public class LicenseInfoDto
+{
+    public string? LicenseNumber { get; set; }
+    public string? StateIssued { get; set; }
+}
+
 [ApiController]
 [Route("api/[controller]")]
 public class BookingController : ControllerBase
@@ -1355,8 +1362,22 @@ public class BookingController : ControllerBase
     {
         try
         {
+            // Log received booking data for debugging
+            _logger.LogInformation(
+                "[Booking] CreateBooking called - CustomerId: {CustomerId}, VehicleId: {VehicleId}, CompanyId: {CompanyId}, HasAgreementData: {HasAgreementData}, HasSignature: {HasSignature}",
+                createReservationDto.CustomerId,
+                createReservationDto.VehicleId,
+                createReservationDto.CompanyId,
+                createReservationDto.AgreementData != null,
+                createReservationDto.AgreementData?.SignatureImage != null && !string.IsNullOrEmpty(createReservationDto.AgreementData.SignatureImage)
+            );
+            
             if (!ModelState.IsValid)
+            {
+                _logger.LogWarning("[Booking] ModelState is invalid: {Errors}", 
+                    string.Join(", ", ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage)));
                 return BadRequest(ModelState);
+            }
 
             var customer = await _context.Customers.FindAsync(createReservationDto.CustomerId);
             if (customer == null)
@@ -1443,13 +1464,26 @@ public class BookingController : ControllerBase
                 .LoadAsync();
 
             // Create rental agreement if agreement data is provided
+            _logger.LogInformation(
+                "[Booking] Agreement data check - AgreementData is null: {IsNull}, SignatureImage is null/empty: {IsSignatureEmpty}",
+                createReservationDto.AgreementData == null,
+                createReservationDto.AgreementData?.SignatureImage == null || string.IsNullOrEmpty(createReservationDto.AgreementData.SignatureImage)
+            );
+            
             if (createReservationDto.AgreementData != null && !string.IsNullOrEmpty(createReservationDto.AgreementData.SignatureImage))
             {
                 try
                 {
-                    // Get customer license info
-                    var license = await _context.CustomerLicenses
-                        .FirstOrDefaultAsync(l => l.CustomerId == customer.Id);
+                    _logger.LogInformation("[Booking] Creating rental agreement for booking {BookingId}", reservation.Id);
+                    
+                    // Get customer license info (select only fields that exist in database)
+                    // Use raw SQL to avoid EF trying to load CompanyId which doesn't exist in DB
+                    var licenseQuery = _context.Database
+                        .SqlQueryRaw<LicenseInfoDto>(
+                            "SELECT license_number as LicenseNumber, state_issued as StateIssued FROM customer_licenses WHERE customer_id = {0} LIMIT 1",
+                            customer.Id);
+                    
+                    var license = await licenseQuery.FirstOrDefaultAsync();
                     
                     // Format customer address
                     var customerAddressParts = new List<string>();
@@ -1476,8 +1510,8 @@ public class BookingController : ControllerBase
                         CustomerEmail = customer.Email,
                         CustomerPhone = customer.Phone,
                         CustomerAddress = customerAddress,
-                        DriverLicenseNumber = license?.LicenseNumber,
-                        DriverLicenseState = license?.StateIssued,
+                        DriverLicenseNumber = license != null ? license.LicenseNumber : null,
+                        DriverLicenseState = license != null ? license.StateIssued : null,
                         
                         // Vehicle info
                         VehicleName = vehicleName,
@@ -1499,16 +1533,58 @@ public class BookingController : ControllerBase
                         IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString()
                     };
                     
-                    await _rentalAgreementService.CreateAgreementAsync(agreementRequest);
+                    var createdAgreement = await _rentalAgreementService.CreateAgreementAsync(agreementRequest);
                     
-                    _logger.LogInformation("Created rental agreement for booking {BookingId}", reservation.Id);
+                    _logger.LogInformation(
+                        "Successfully created rental agreement {AgreementId} (AgreementNumber: {AgreementNumber}) for booking {BookingId}",
+                        createdAgreement.Id,
+                        createdAgreement.AgreementNumber,
+                        reservation.Id
+                    );
+                    
+                    // Generate PDF in background (don't block booking creation)
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _rentalAgreementService.GenerateAndStorePdfAsync(createdAgreement.Id);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Log error but don't fail the booking
+                            _logger.LogError(ex, "Failed to generate agreement PDF for booking {BookingId}", reservation.Id);
+                        }
+                    });
                 }
                 catch (Exception ex)
                 {
                     // Log error but don't fail the booking
-                    _logger.LogError(ex, "Failed to create rental agreement for booking {BookingId}", reservation.Id);
+                    _logger.LogError(ex, 
+                        "Failed to create rental agreement for booking {BookingId}. Error: {ErrorMessage}, StackTrace: {StackTrace}", 
+                        reservation.Id, 
+                        ex.Message,
+                        ex.StackTrace);
+                    
+                    // Log inner exception if present
+                    if (ex.InnerException != null)
+                    {
+                        _logger.LogError(ex.InnerException, 
+                            "Inner exception when creating rental agreement for booking {BookingId}", 
+                            reservation.Id);
+                    }
                 }
             }
+            else
+            {
+                _logger.LogWarning(
+                    "[Booking] Rental agreement NOT created for booking {BookingId} - AgreementData is null: {IsNull}, SignatureImage is null/empty: {IsSignatureEmpty}",
+                    reservation.Id,
+                    createReservationDto.AgreementData == null,
+                    createReservationDto.AgreementData?.SignatureImage == null || string.IsNullOrEmpty(createReservationDto.AgreementData.SignatureImage)
+                );
+            }
+
+            // ... existing code ...
 
             var reservationDto = new BookingDto
             {
@@ -2294,6 +2370,87 @@ public class BookingController : ControllerBase
         {
             _logger.LogError(ex, "Error retrieving reservation by booking number {BookingNumber}", bookingNumber);
             return StatusCode(500, "Internal server error");
+        }
+    }
+
+    /// <summary>
+    /// Get rental agreement for a booking
+    /// </summary>
+    /// <param name="id">Booking ID</param>
+    /// <returns>Rental agreement details</returns>
+    [HttpGet("bookings/{id}/rental-agreement")]
+    [Authorize]
+    [ProducesResponseType(typeof(RentalAgreementResponseDto), 200)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> GetRentalAgreement(Guid id)
+    {
+        try
+        {
+            var agreement = await _rentalAgreementService.GetByBookingIdAsync(id);
+            
+            if (agreement == null)
+            {
+                return NotFound(new { message = "Rental agreement not found for this booking" });
+            }
+
+            var response = new RentalAgreementResponseDto
+            {
+                Id = agreement.Id,
+                AgreementNumber = agreement.AgreementNumber,
+                BookingId = agreement.BookingId,
+                CustomerId = agreement.CustomerId,
+                VehicleId = agreement.VehicleId,
+                CompanyId = agreement.CompanyId,
+                Language = agreement.Language,
+                CustomerName = agreement.CustomerName,
+                CustomerEmail = agreement.CustomerEmail,
+                CustomerPhone = agreement.CustomerPhone,
+                CustomerAddress = agreement.CustomerAddress,
+                DriverLicenseNumber = agreement.DriverLicenseNumber,
+                DriverLicenseState = agreement.DriverLicenseState,
+                VehicleName = agreement.VehicleName,
+                VehiclePlate = agreement.VehiclePlate,
+                PickupDate = agreement.PickupDate,
+                PickupLocation = agreement.PickupLocation,
+                ReturnDate = agreement.ReturnDate,
+                ReturnLocation = agreement.ReturnLocation,
+                RentalAmount = agreement.RentalAmount,
+                DepositAmount = agreement.DepositAmount,
+                Currency = agreement.Currency,
+                SignatureImage = agreement.SignatureImage,
+                SignedAt = agreement.SignedAt,
+                PdfUrl = agreement.PdfUrl,
+                PdfGeneratedAt = agreement.PdfGeneratedAt,
+                Status = agreement.Status,
+                CreatedAt = agreement.CreatedAt,
+                // Consent timestamps
+                Consents = new AgreementConsentsDto
+                {
+                    TermsAcceptedAt = agreement.TermsAcceptedAt,
+                    NonRefundableAcceptedAt = agreement.NonRefundableAcceptedAt,
+                    DamagePolicyAcceptedAt = agreement.DamagePolicyAcceptedAt,
+                    CardAuthorizationAcceptedAt = agreement.CardAuthorizationAcceptedAt,
+                },
+                // Consent texts
+                ConsentTexts = new ConsentTextsDto
+                {
+                    TermsTitle = agreement.TermsText?.Split('\n')[0] ?? "",
+                    TermsText = (agreement.TermsText?.Contains('\n') ?? false) ? agreement.TermsText.Substring(agreement.TermsText.IndexOf('\n') + 1) : "",
+                    NonRefundableTitle = agreement.NonRefundableText?.Split('\n')[0] ?? "",
+                    NonRefundableText = (agreement.NonRefundableText?.Contains('\n') ?? false) ? agreement.NonRefundableText.Substring(agreement.NonRefundableText.IndexOf('\n') + 1) : "",
+                    DamagePolicyTitle = agreement.DamagePolicyText?.Split('\n')[0] ?? "",
+                    DamagePolicyText = (agreement.DamagePolicyText?.Contains('\n') ?? false) ? agreement.DamagePolicyText.Substring(agreement.DamagePolicyText.IndexOf('\n') + 1) : "",
+                    CardAuthorizationTitle = agreement.CardAuthorizationText?.Split('\n')[0] ?? "",
+                    CardAuthorizationText = (agreement.CardAuthorizationText?.Contains('\n') ?? false) ? agreement.CardAuthorizationText.Substring(agreement.CardAuthorizationText.IndexOf('\n') + 1) : "",
+                }
+            };
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving rental agreement for booking {BookingId}", id);
+            return StatusCode(500, new { message = "Error retrieving rental agreement" });
         }
     }
 
