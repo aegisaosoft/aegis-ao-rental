@@ -579,7 +579,7 @@ public class MediaController : ControllerBase
             // Generate URL path
             var imageUrl = $"/wizard/{sanitizedWizardId}/licenses/{fileName}";
 
-            _logger.LogInformation("Driver license {Side} image uploaded successfully for wizard {WizardId}: {ImageUrl}", side, wizardId, imageUrl);
+            _logger.LogInformation("Driver license {Side} image uploaded successfully for wizard {WizardId} (sanitized: {SanitizedWizardId}): {ImageUrl}", side, wizardId, sanitizedWizardId, imageUrl);
 
             return Ok(new
             {
@@ -588,6 +588,7 @@ public class MediaController : ControllerBase
                 fileSize = image.Length,
                 side,
                 wizardId,
+                sanitizedWizardId, // Include sanitized version so frontend can use it for fetching
                 message = $"Driver license {side} image uploaded successfully"
             });
         }
