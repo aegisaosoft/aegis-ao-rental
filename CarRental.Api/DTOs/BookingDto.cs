@@ -112,8 +112,15 @@ public class CreateBookingDto
     [Required]
     public Guid CustomerId { get; set; }
 
-    [Required]
-    public Guid VehicleId { get; set; }
+    // VehicleId is optional - if not provided, will find first available vehicle by Make/Model
+    public Guid? VehicleId { get; set; }
+
+    // Make and Model are required if VehicleId is not provided
+    [MaxLength(100)]
+    public string? Make { get; set; }
+
+    [MaxLength(100)]
+    public string? Model { get; set; }
 
     [Required]
     public Guid CompanyId { get; set; }

@@ -1364,9 +1364,11 @@ public class BookingController : ControllerBase
         {
             // Log received booking data for debugging
             _logger.LogInformation(
-                "[Booking] CreateBooking called - CustomerId: {CustomerId}, VehicleId: {VehicleId}, CompanyId: {CompanyId}, HasAgreementData: {HasAgreementData}, HasSignature: {HasSignature}",
+                "[Booking] CreateBooking called - CustomerId: {CustomerId}, VehicleId: {VehicleId}, Make: {Make}, Model: {Model}, CompanyId: {CompanyId}, HasAgreementData: {HasAgreementData}, HasSignature: {HasSignature}",
                 createReservationDto.CustomerId,
                 createReservationDto.VehicleId,
+                createReservationDto.Make,
+                createReservationDto.Model,
                 createReservationDto.CompanyId,
                 createReservationDto.AgreementData != null,
                 createReservationDto.AgreementData?.SignatureImage != null && !string.IsNullOrEmpty(createReservationDto.AgreementData.SignatureImage)
@@ -1379,16 +1381,15 @@ public class BookingController : ControllerBase
                 return BadRequest(ModelState);
             }
 
+            // Validate that either VehicleId or Make/Model are provided
+            if (!createReservationDto.VehicleId.HasValue && (string.IsNullOrWhiteSpace(createReservationDto.Make) || string.IsNullOrWhiteSpace(createReservationDto.Model)))
+            {
+                return BadRequest("Either VehicleId or both Make and Model must be provided");
+            }
+
             var customer = await _context.Customers.FindAsync(createReservationDto.CustomerId);
             if (customer == null)
                 return BadRequest("Customer not found");
-
-            var vehicle = await _context.Vehicles.FindAsync(createReservationDto.VehicleId);
-            if (vehicle == null)
-                return BadRequest("Vehicle not found");
-
-            if (vehicle.Status != VehicleStatus.Available)
-                return BadRequest("Vehicle is not available");
 
             var company = await _context.Companies.FindAsync(createReservationDto.CompanyId);
             if (company == null)
@@ -1400,25 +1401,88 @@ public class BookingController : ControllerBase
             // Normalize request dates: pickup at start of day, return at end of day
             var requestPickupDateStart = createReservationDto.PickupDate.Date; // Start of pickup day (00:00:00)
             var requestReturnDateEnd = createReservationDto.ReturnDate.Date.AddDays(1); // Start of day after return (00:00:00, exclusive)
-            
-            // Check if there are any existing bookings for this vehicle with overlapping dates
-            var hasOverlappingBooking = await _context.Bookings
-                .AnyAsync(b => b.VehicleId == createReservationDto.VehicleId &&
-                               unavailableStatuses.Contains(b.Status) &&
-                               // Booking's pickup date is before the end of requested return date
-                               b.PickupDate < requestReturnDateEnd &&
-                               // Booking's return date is on or after the start of requested pickup date
-                               b.ReturnDate >= requestPickupDateStart);
 
-            if (hasOverlappingBooking)
+            Vehicle? vehicle = null;
+            Guid? modelId = null;
+            string? make = null;
+            string? modelName = null;
+
+            // If VehicleId is provided, get the model info; otherwise find model by Make/Model
+            if (createReservationDto.VehicleId.HasValue)
+            {
+                var requestedVehicle = await _context.Vehicles
+                    .Include(v => v.VehicleModel)
+                        .ThenInclude(vm => vm != null ? vm.Model : null!)
+                    .FirstOrDefaultAsync(v => v.Id == createReservationDto.VehicleId!.Value);
+                
+                if (requestedVehicle == null)
+                    return BadRequest("Vehicle not found");
+
+                // Get model info from the requested vehicle
+                modelId = requestedVehicle.VehicleModel?.ModelId;
+                make = requestedVehicle.VehicleModel?.Model?.Make;
+                modelName = requestedVehicle.VehicleModel?.Model?.ModelName;
+
+                if (modelId == null || make == null || modelName == null)
+                    return BadRequest("Vehicle model information not found");
+            }
+            else
+            {
+                // Find model by Make and Model name
+                var model = await _context.Models
+                    .FirstOrDefaultAsync(m => m.Make == createReservationDto.Make && 
+                                             m.ModelName == createReservationDto.Model);
+                
+                if (model == null)
+                    return BadRequest($"Vehicle model not found: {createReservationDto.Make} {createReservationDto.Model}");
+
+                modelId = model.Id;
+                make = model.Make;
+                modelName = model.ModelName;
+            }
+
+            // Find first available vehicle of this model for the particular dates (no overlapping bookings)
+            vehicle = await _context.Vehicles
+                .Include(v => v.VehicleModel)
+                    .ThenInclude(vm => vm != null ? vm.Model : null!)
+                .Where(v => v.CompanyId == createReservationDto.CompanyId &&
+                           v.Status == VehicleStatus.Available &&
+                           v.VehicleModel != null &&
+                           v.VehicleModel.ModelId == modelId!.Value)
+                .Where(v => !_context.Bookings
+                    .Any(b => b.VehicleId == v.Id &&
+                             unavailableStatuses.Contains(b.Status) &&
+                             b.PickupDate < requestReturnDateEnd &&
+                             b.ReturnDate >= requestPickupDateStart))
+                .FirstOrDefaultAsync();
+
+            if (vehicle == null)
             {
                 _logger.LogWarning(
-                    "Attempted to create booking for vehicle {VehicleId} with overlapping dates. Pickup: {PickupDate}, Return: {ReturnDate}",
-                    createReservationDto.VehicleId,
+                    "No available vehicle found for Make={Make}, Model={Model}, CompanyId={CompanyId} for dates {PickupDate} to {ReturnDate}",
+                    make,
+                    modelName,
+                    createReservationDto.CompanyId,
                     createReservationDto.PickupDate,
                     createReservationDto.ReturnDate
                 );
-                return BadRequest("This vehicle is already booked for the selected dates. Please choose different dates.");
+                return BadRequest($"No available {make} {modelName} vehicles found for the selected dates ({createReservationDto.PickupDate:yyyy-MM-dd} to {createReservationDto.ReturnDate:yyyy-MM-dd}).");
+            }
+
+            _logger.LogInformation(
+                "Found first available vehicle {VehicleId} for Make={Make}, Model={Model}",
+                vehicle.Id,
+                vehicle.VehicleModel?.Model?.Make ?? createReservationDto.Make ?? "Unknown",
+                vehicle.VehicleModel?.Model?.ModelName ?? createReservationDto.Model ?? "Unknown"
+            );
+
+            // Update VehicleId in DTO for consistency
+            createReservationDto.VehicleId = vehicle.Id;
+            
+            // Update daily rate from vehicle model if available
+            if (vehicle.VehicleModel?.DailyRate.HasValue == true)
+            {
+                createReservationDto.DailyRate = vehicle.VehicleModel.DailyRate.Value;
             }
 
             var totalDays = (int)(createReservationDto.ReturnDate - createReservationDto.PickupDate).TotalDays + 1;
@@ -1427,10 +1491,13 @@ public class BookingController : ControllerBase
 
             var bookingNumber = $"BK-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpper()}";
 
+            // VehicleId is guaranteed to be set at this point (set above at line 1480)
+            var vehicleId = createReservationDto.VehicleId ?? throw new InvalidOperationException("VehicleId must be set before creating booking");
+
             var reservation = new Booking
             {
                 CustomerId = createReservationDto.CustomerId,
-                VehicleId = createReservationDto.VehicleId,
+                VehicleId = vehicleId,
                 CompanyId = createReservationDto.CompanyId,
                 BookingNumber = bookingNumber,
                 AltBookingNumber = createReservationDto.AltBookingNumber,
@@ -1503,7 +1570,7 @@ public class BookingController : ControllerBase
                         CompanyId = createReservationDto.CompanyId,
                         BookingId = reservation.Id,
                         CustomerId = createReservationDto.CustomerId,
-                        VehicleId = createReservationDto.VehicleId,
+                        VehicleId = vehicleId,
                         
                         // Customer info
                         CustomerName = $"{customer.FirstName} {customer.LastName}",
