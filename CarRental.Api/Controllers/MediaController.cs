@@ -493,6 +493,61 @@ public class MediaController : ControllerBase
     }
 
     /// <summary>
+    /// Delete driver license image (front or back) for a customer
+    /// </summary>
+    [HttpDelete("customers/{customerId}/licenses/{side}")]
+    public Task<IActionResult> DeleteCustomerLicenseImage(Guid customerId, string side)
+    {
+        try
+        {
+            _logger.LogInformation("DeleteCustomerLicenseImage called - customerId: {CustomerId}, side: {Side}", customerId, side);
+
+            if (side != "front" && side != "back")
+            {
+                _logger.LogWarning("Invalid side parameter: {Side}", side);
+                return Task.FromResult<IActionResult>(BadRequest("Side must be 'front' or 'back'"));
+            }
+
+            var folderPath = Path.Combine(_environment.WebRootPath, "customers", customerId.ToString(), "licenses");
+            
+            var possibleExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+            bool fileDeleted = false;
+            
+            foreach (var ext in possibleExtensions)
+            {
+                var fileName = $"{side}{ext}";
+                var filePath = Path.Combine(folderPath, fileName);
+                
+                if (System.IO.File.Exists(filePath))
+                {
+                    System.IO.File.Delete(filePath);
+                    _logger.LogInformation("Deleted customer license {Side} image: {FilePath}", side, filePath);
+                    fileDeleted = true;
+                    break;
+                }
+            }
+
+            if (!fileDeleted)
+            {
+                _logger.LogWarning("Customer license {Side} image not found for customer {CustomerId}", side, customerId);
+                return Task.FromResult<IActionResult>(NotFound($"Customer license {side} image not found"));
+            }
+
+            return Task.FromResult<IActionResult>(Ok(new
+            {
+                message = $"Customer license {side} image deleted successfully",
+                customerId,
+                side
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting customer license {Side} image for customer {CustomerId}", side, customerId);
+            return Task.FromResult<IActionResult>(StatusCode(500, $"Error deleting customer license {side} image"));
+        }
+    }
+
+    /// <summary>
     /// Upload driver license image (front or back) temporarily using wizardId (for new customers without customerId)
     /// </summary>
     [HttpPost("wizard/{wizardId}/licenses/{side}")]
