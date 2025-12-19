@@ -171,8 +171,7 @@ builder.Services.AddDbContext<CarRentalDbContext>((serviceProvider, options) =>
         // Query splitting behavior is handled at query level, not configuration level
         // This setting is for reference only
         
-        logger.LogInformation("[Database] Database context configured successfully. CommandTimeout: {Timeout}s, RetryOnFailure: {RetryEnabled}, MaxRetryCount: {MaxRetry}", 
-            dbSettings.CommandTimeout, dbSettings.EnableRetryOnFailure, dbSettings.MaxRetryCount);
+        // Success message removed
     }
     catch (Exception ex)
     {
@@ -469,13 +468,37 @@ if (!Directory.Exists(customersPath))
     startupLogger.LogInformation("Created customers directory at: {CustomersPath}", customersPath);
 }
 startupLogger.LogInformation("Customer license images will be served from: {CustomersPath} at path /customers", customersPath);
-app.UseStaticFiles(new StaticFileOptions
+startupLogger.LogInformation("ContentRootPath: {ContentRootPath}", builder.Environment.ContentRootPath);
+startupLogger.LogInformation("WebRootPath: {WebRootPath}", builder.Environment.WebRootPath);
+startupLogger.LogInformation("Customers path (ContentRootPath/wwwroot/customers): {CustomersPath}", customersPath);
+var customersStaticFileOptions = new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(customersPath),
     RequestPath = "/customers",
     ServeUnknownFileTypes = true, // Allow serving image files
-    DefaultContentType = "application/octet-stream"
-});
+    DefaultContentType = "application/octet-stream",
+    OnPrepareResponse = ctx =>
+    {
+        // Set proper content type for image files
+        var fileExtension = Path.GetExtension(ctx.File.Name).ToLowerInvariant();
+        var contentType = fileExtension switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            _ => "application/octet-stream"
+        };
+        ctx.Context.Response.ContentType = contentType;
+        
+        // Add CORS headers for images
+        ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
+        ctx.Context.Response.Headers.Append("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+        
+        startupLogger.LogInformation("Serving static file: {File} with Content-Type: {ContentType}", ctx.File.Name, contentType);
+    }
+};
+app.UseStaticFiles(customersStaticFileOptions);
 
 // 3c. Static files for temporary wizard license images (serve from wwwroot/wizard)
 var wizardPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "wizard");
@@ -513,12 +536,16 @@ app.UseStaticFiles(new StaticFileOptions
 startupLogger.LogInformation("Configuring CORS...");
 app.UseCors("AllowAll");
 
-// 5. Authentication & Authorization
+// 5. Routing (after static files, before authentication)
+startupLogger.LogInformation("Configuring routing...");
+app.UseRouting();
+
+// 6. Authentication & Authorization
 startupLogger.LogInformation("Configuring authentication and authorization...");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// 6. Company Middleware - must come after Authentication/Authorization
+// 7. Company Middleware - must come after Authentication/Authorization
 // This middleware resolves company from domain/subdomain and sets it in HttpContext
 startupLogger.LogInformation("Adding company middleware...");
 app.UseCompanyMiddleware();
@@ -536,7 +563,6 @@ if (app.Environment.IsDevelopment())
             c.RoutePrefix = "swagger"; // Access at /swagger
             c.DocumentTitle = "Car Rental API Documentation";
         });
-        startupLogger.LogInformation("Swagger configured successfully");
     }
     catch (Exception ex)
     {
@@ -597,12 +623,11 @@ app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.Health
         await context.Response.WriteAsync(result);
     }
 });
-startupLogger.LogInformation("Health check endpoints mapped successfully");
 
 // 9. Map Controllers (always last)
 startupLogger.LogInformation("Mapping controllers...");
+// 9. Map controllers (must be after routing)
 app.MapControllers();
-startupLogger.LogInformation("Controllers mapped successfully");
 startupLogger.LogInformation("HTTP request pipeline configuration complete");
 
 // Test database connection before starting the server (non-blocking)
@@ -619,7 +644,6 @@ _ = Task.Run(async () =>
             var canConnect = await dbContext.Database.CanConnectAsync();
             if (canConnect)
             {
-                startupLogger.LogInformation("[Database] Connection test successful");
             }
             else
             {

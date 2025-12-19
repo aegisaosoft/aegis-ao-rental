@@ -16,6 +16,7 @@
 using Microsoft.AspNetCore.Mvc;
 using CarRental.Api.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Linq;
 
 namespace CarRental.Api.Controllers;
 
@@ -97,7 +98,6 @@ public class MediaController : ControllerBase
             company.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Video uploaded successfully for company {CompanyId}: {VideoUrl}", companyId, videoUrl);
 
             return Ok(new
             {
@@ -137,7 +137,6 @@ public class MediaController : ControllerBase
             company.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Video deleted successfully for company {CompanyId}", companyId);
 
             return Ok(new { message = "Video deleted successfully" });
         }
@@ -436,8 +435,15 @@ public class MediaController : ControllerBase
                 return BadRequest("File size exceeds 10 MB limit");
 
             // Create folder structure: /customers/{customerId}/licenses
-            var folderPath = Path.Combine(_environment.WebRootPath, "customers", customerId.ToString(), "licenses");
+            // Use ContentRootPath/wwwroot/customers to match static file serving configuration
+            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
+            var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
             Directory.CreateDirectory(folderPath);
+            
+            _logger.LogInformation("Saving license image - ContentRootPath: {ContentRootPath}, WebRootPath: {WebRootPath}", 
+                _environment.ContentRootPath, _environment.WebRootPath);
+            _logger.LogInformation("Saving license image to: {FilePath}", folderPath);
+            _logger.LogInformation("Folder created/exists: {Exists}", Directory.Exists(folderPath));
 
             // Determine file extension based on image format
             var imageExtension = fileExtension; // Use original extension
@@ -474,7 +480,6 @@ public class MediaController : ControllerBase
             // Generate URL path
             var imageUrl = $"/customers/{customerId}/licenses/{fileName}";
 
-            _logger.LogInformation("Driver license {Side} image uploaded successfully for customer {CustomerId}: {ImageUrl}", side, customerId, imageUrl);
 
             return Ok(new
             {
@@ -489,6 +494,142 @@ public class MediaController : ControllerBase
         {
             _logger.LogError(ex, "Error uploading driver license {Side} image for customer {CustomerId}", side, customerId);
             return StatusCode(500, $"Error uploading driver license {side} image");
+        }
+    }
+
+    /// <summary>
+    /// Direct file serving endpoint for cross-server access
+    /// GET /api/Media/customers/{customerId}/licenses/file/{fileName}
+    /// This endpoint serves files directly from disk, making it work when client and API are on separate servers
+    /// </summary>
+    [HttpGet("customers/{customerId}/licenses/file/{fileName}")]
+    public IActionResult GetCustomerLicenseImageFile(Guid customerId, string fileName)
+    {
+        try
+        {
+            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
+            var filePath = Path.Combine(customersPath, customerId.ToString(), "licenses", fileName);
+            
+            _logger.LogInformation("Direct file serving - Checking file: {FilePath}", filePath);
+            _logger.LogInformation("File exists: {Exists}", System.IO.File.Exists(filePath));
+            
+            if (!System.IO.File.Exists(filePath))
+            {
+                _logger.LogWarning("File not found: {FilePath}", filePath);
+                return NotFound(new { error = "File not found", path = filePath });
+            }
+            
+            var fileInfo = new FileInfo(filePath);
+            var contentType = Path.GetExtension(fileName).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream"
+            };
+            
+            _logger.LogInformation("Serving file: {FilePath}, Size: {Size}, ContentType: {ContentType}", filePath, fileInfo.Length, contentType);
+            
+            // Set CORS headers for cross-origin requests
+            Response.Headers.Append("Access-Control-Allow-Origin", "*");
+            Response.Headers.Append("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+            
+            // Use PhysicalFile to serve the file with proper content type
+            return PhysicalFile(filePath, contentType);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error serving license image file");
+            return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Get list of driver license images for a customer
+    /// Returns the actual filenames and URLs of existing images
+    /// </summary>
+    [HttpGet("customers/{customerId}/licenses")]
+    public IActionResult GetCustomerLicenseImages(Guid customerId)
+    {
+        try
+        {
+            // Validate customer exists
+            var customer = _context.Customers.Find(customerId);
+            if (customer == null)
+                return NotFound("Customer not found");
+
+            // Use ContentRootPath/wwwroot/customers (not WebRootPath which might be different)
+            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
+            var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
+            
+            _logger.LogInformation("Checking license images for customer {CustomerId} in folder: {FolderPath}", customerId, folderPath);
+            _logger.LogInformation("Folder exists: {Exists}", Directory.Exists(folderPath));
+            
+            string? frontFile = null;
+            string? backFile = null;
+            string? frontUrl = null;
+            string? backUrl = null;
+
+            if (Directory.Exists(folderPath))
+            {
+                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+                var allFiles = Directory.GetFiles(folderPath);
+                _logger.LogInformation("Found {Count} files in folder", allFiles.Length);
+                
+                var files = allFiles
+                    .Where(f => allowedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .Select(Path.GetFileName)
+                    .Where(f => f != null)
+                    .Cast<string>()
+                    .ToList();
+                
+                _logger.LogInformation("Filtered to {Count} image files: {Files}", files.Count, string.Join(", ", files));
+
+                // Find front image (starts with "front")
+                frontFile = files.FirstOrDefault(f => f != null && f.StartsWith("front", StringComparison.OrdinalIgnoreCase));
+                if (frontFile != null)
+                {
+                    frontUrl = $"/customers/{customerId}/licenses/{frontFile}";
+                    _logger.LogInformation("Found front image: {FrontFile} -> {FrontUrl}", frontFile, frontUrl);
+                }
+                else
+                {
+                    _logger.LogInformation("No front image found");
+                }
+
+                // Find back image (starts with "back")
+                backFile = files.FirstOrDefault(f => f != null && f.StartsWith("back", StringComparison.OrdinalIgnoreCase));
+                if (backFile != null)
+                {
+                    backUrl = $"/customers/{customerId}/licenses/{backFile}";
+                    _logger.LogInformation("Found back image: {BackFile} -> {BackUrl}", backFile, backUrl);
+                }
+                else
+                {
+                    _logger.LogInformation("No back image found");
+                }
+            }
+            else
+            {
+                _logger.LogWarning("License folder does not exist: {FolderPath}", folderPath);
+            }
+
+            var result = new
+            {
+                customerId = customerId.ToString(),
+                front = frontFile,
+                back = backFile,
+                frontUrl = frontUrl,
+                backUrl = backUrl
+            };
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting license images for customer {CustomerId}", customerId);
+            return StatusCode(500, "Error getting license images");
         }
     }
 
@@ -508,7 +649,9 @@ public class MediaController : ControllerBase
                 return Task.FromResult<IActionResult>(BadRequest("Side must be 'front' or 'back'"));
             }
 
-            var folderPath = Path.Combine(_environment.WebRootPath, "customers", customerId.ToString(), "licenses");
+            // Use ContentRootPath/wwwroot/customers to match static file serving and upload paths
+            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
+            var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
             
             var possibleExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
             bool fileDeleted = false;
@@ -634,7 +777,6 @@ public class MediaController : ControllerBase
             // Generate URL path
             var imageUrl = $"/wizard/{sanitizedWizardId}/licenses/{fileName}";
 
-            _logger.LogInformation("Driver license {Side} image uploaded successfully for wizard {WizardId} (sanitized: {SanitizedWizardId}): {ImageUrl}", side, wizardId, sanitizedWizardId, imageUrl);
 
             return Ok(new
             {
