@@ -265,16 +265,44 @@ public class RentalAgreementService : IRentalAgreementService
             CardAuthorizationText = agreement.CardAuthorizationText,
         });
         
-        // Save PDF to local file system
+        // Save PDF to company agreements folder (existing location)
         var agreementsFolder = Path.Combine(_environment.ContentRootPath, "wwwroot", "agreements", agreement.CompanyId.ToString());
         Directory.CreateDirectory(agreementsFolder);
         
         var fileName = $"{agreement.AgreementNumber}.pdf";
-        var filePath = Path.Combine(agreementsFolder, fileName);
+        var companyFilePath = Path.Combine(agreementsFolder, fileName);
         
-        await System.IO.File.WriteAllBytesAsync(filePath, pdfBytes, ct);
+        await System.IO.File.WriteAllBytesAsync(companyFilePath, pdfBytes, ct);
         
-        // Generate URL path
+        // Additionally store under customers/{customerId}/agreements/{YYYY-MM-DD}/
+        // to satisfy per-customer archival and static serving from /customers path
+        try
+        {
+            var dateFolder = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var customerAgreementsFolder = Path.Combine(
+                _environment.ContentRootPath,
+                "wwwroot",
+                "customers",
+                agreement.CustomerId.ToString(),
+                "agreements",
+                dateFolder
+            );
+            Directory.CreateDirectory(customerAgreementsFolder);
+            var customerFilePath = Path.Combine(customerAgreementsFolder, fileName);
+            await System.IO.File.WriteAllBytesAsync(customerFilePath, pdfBytes, ct);
+            
+            _logger.LogInformation(
+                "Stored agreement PDF for customer at {CustomerFilePath}",
+                customerFilePath
+            );
+        }
+        catch (Exception copyEx)
+        {
+            // Don't fail overall generation if copy fails; log and continue
+            _logger.LogWarning(copyEx, "Failed to copy agreement PDF to customer folder for Agreement {AgreementNumber}", agreement.AgreementNumber);
+        }
+        
+        // Generate URL path (existing URL kept for compatibility)
         var pdfUrl = $"/agreements/{agreement.CompanyId}/{fileName}";
         
         // Update agreement with PDF URL

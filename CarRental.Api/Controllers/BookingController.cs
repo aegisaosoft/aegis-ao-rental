@@ -1547,7 +1547,7 @@ public class BookingController : ControllerBase
                     // Use raw SQL to avoid EF trying to load CompanyId which doesn't exist in DB
                     var licenseQuery = _context.Database
                         .SqlQueryRaw<LicenseInfoDto>(
-                            "SELECT license_number as LicenseNumber, state_issued as StateIssued FROM customer_licenses WHERE customer_id = {0} LIMIT 1",
+                            "SELECT license_number AS \"LicenseNumber\", state_issued AS \"StateIssued\" FROM customer_licenses WHERE customer_id = {0} LIMIT 1",
                             customer.Id);
                     
                     var license = await licenseQuery.FirstOrDefaultAsync();
@@ -1609,19 +1609,16 @@ public class BookingController : ControllerBase
                         reservation.Id
                     );
                     
-                    // Generate PDF in background (don't block booking creation)
-                    _ = Task.Run(async () =>
+                    // Generate PDF immediately so errors surface and file paths are created deterministically
+                    try
                     {
-                        try
-                        {
-                            await _rentalAgreementService.GenerateAndStorePdfAsync(createdAgreement.Id);
-                        }
-                        catch (Exception ex)
-                        {
-                            // Log error but don't fail the booking
-                            _logger.LogError(ex, "Failed to generate agreement PDF for booking {BookingId}", reservation.Id);
-                        }
-                    });
+                        await _rentalAgreementService.GenerateAndStorePdfAsync(createdAgreement.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log error but don't fail the booking creation itself
+                        _logger.LogError(ex, "Failed to generate agreement PDF for booking {BookingId}", reservation.Id);
+                    }
                 }
                 catch (Exception ex)
                 {
