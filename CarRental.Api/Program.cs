@@ -207,12 +207,12 @@ builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
 var azureStorageConnectionString = builder.Configuration["AzureStorage:ConnectionString"];
 if (!string.IsNullOrEmpty(azureStorageConnectionString))
 {
-    startupLogger.LogInformation("Azure Blob Storage configured - using AzureBlobStorageService");
+    Console.WriteLine("✅ Azure Blob Storage configured - using AzureBlobStorageService");
     builder.Services.AddSingleton<IAzureBlobStorageService, AzureBlobStorageService>();
 }
 else
 {
-    startupLogger.LogWarning("Azure Blob Storage NOT configured - using LocalFileStorageService (files will NOT persist on Azure App Service!)");
+    Console.WriteLine("⚠️ Azure Blob Storage NOT configured - using LocalFileStorageService (files will NOT persist on Azure App Service!)");
     builder.Services.AddSingleton<IAzureBlobStorageService, LocalFileStorageService>();
 }
 
