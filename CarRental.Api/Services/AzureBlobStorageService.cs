@@ -102,6 +102,14 @@ public class AzureBlobStorageService : IAzureBlobStorageService
         try
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            
+            // Check if container exists first
+            if (!await containerClient.ExistsAsync())
+            {
+                _logger.LogWarning("Container {Container} does not exist", containerName);
+                return null;
+            }
+            
             var blobClient = containerClient.GetBlobClient(blobPath);
 
             if (!await blobClient.ExistsAsync())
@@ -154,6 +162,13 @@ public class AzureBlobStorageService : IAzureBlobStorageService
         try
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            
+            // Check if container exists first
+            if (!await containerClient.ExistsAsync())
+            {
+                return false;
+            }
+            
             var blobClient = containerClient.GetBlobClient(blobPath);
 
             return await blobClient.ExistsAsync();
@@ -175,6 +190,14 @@ public class AzureBlobStorageService : IAzureBlobStorageService
         try
         {
             var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            
+            // Check if container exists first
+            if (!await containerClient.ExistsAsync())
+            {
+                _logger.LogInformation("Container {Container} does not exist yet, returning empty list", containerName);
+                return Enumerable.Empty<string>();
+            }
+            
             var blobs = new List<string>();
 
             await foreach (var blobItem in containerClient.GetBlobsAsync(prefix: prefix))
