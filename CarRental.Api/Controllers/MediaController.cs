@@ -484,9 +484,35 @@ public class MediaController : ControllerBase
                 _logger.LogWarning(localEx, "Failed to save local backup of license image (not critical on Azure)");
             }
 
+            // Save URL to database
+            var relativeUrl = $"/customers/{customerId}/licenses/{fileName}";
+            try
+            {
+                var license = await _context.CustomerLicenses.FirstOrDefaultAsync(l => l.CustomerId == customerId);
+                if (license != null)
+                {
+                    if (side == "front")
+                        license.FrontImageUrl = relativeUrl;
+                    else
+                        license.BackImageUrl = relativeUrl;
+                    
+                    license.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                    _logger.LogInformation("Saved {Side} image URL to database for customer {CustomerId}", side, customerId);
+                }
+                else
+                {
+                    _logger.LogWarning("No customer_licenses record found for customer {CustomerId}, URL not saved to DB", customerId);
+                }
+            }
+            catch (Exception dbEx)
+            {
+                _logger.LogWarning(dbEx, "Failed to save image URL to database (non-critical)");
+            }
+
             return Ok(new
             {
-                imageUrl = $"/customers/{customerId}/licenses/{fileName}",
+                imageUrl = relativeUrl,
                 blobUrl = imageUrl,
                 fileName,
                 fileSize = image.Length,
@@ -589,30 +615,51 @@ public class MediaController : ControllerBase
             string? frontUrl = null;
             string? backUrl = null;
 
-            // First, try to find files in Azure Blob Storage
-            var blobPrefix = $"{customerId}/licenses/";
-            var blobs = await _blobStorage.ListFilesAsync(CustomerLicensesContainer, blobPrefix);
-            var blobList = blobs.ToList();
-            
-            _logger.LogInformation("Checking blob storage for customer {CustomerId}, found {Count} blobs", customerId, blobList.Count);
-
-            if (blobList.Any())
+            // First, check the database for stored URLs
+            var license = await _context.CustomerLicenses.FirstOrDefaultAsync(l => l.CustomerId == customerId);
+            if (license != null)
             {
-                // Find front and back images from blob storage
-                foreach (var blobPath in blobList)
+                if (!string.IsNullOrEmpty(license.FrontImageUrl))
                 {
-                    var fileName = Path.GetFileName(blobPath);
-                    if (fileName.StartsWith("front", StringComparison.OrdinalIgnoreCase))
+                    frontUrl = license.FrontImageUrl;
+                    frontFile = Path.GetFileName(frontUrl);
+                    _logger.LogInformation("Found front image URL in database: {Url}", frontUrl);
+                }
+                if (!string.IsNullOrEmpty(license.BackImageUrl))
+                {
+                    backUrl = license.BackImageUrl;
+                    backFile = Path.GetFileName(backUrl);
+                    _logger.LogInformation("Found back image URL in database: {Url}", backUrl);
+                }
+            }
+
+            // If not in database, try to find files in Azure Blob Storage
+            if (frontFile == null || backFile == null)
+            {
+                var blobPrefix = $"{customerId}/licenses/";
+                var blobs = await _blobStorage.ListFilesAsync(CustomerLicensesContainer, blobPrefix);
+                var blobList = blobs.ToList();
+                
+                _logger.LogInformation("Checking blob storage for customer {CustomerId}, found {Count} blobs", customerId, blobList.Count);
+
+                if (blobList.Any())
+                {
+                    // Find front and back images from blob storage
+                    foreach (var blobPath in blobList)
                     {
-                        frontFile = fileName;
-                        frontUrl = $"/customers/{customerId}/licenses/{fileName}";
-                        _logger.LogInformation("Found front image in blob storage: {FileName}", fileName);
-                    }
-                    else if (fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase))
-                    {
-                        backFile = fileName;
-                        backUrl = $"/customers/{customerId}/licenses/{fileName}";
-                        _logger.LogInformation("Found back image in blob storage: {FileName}", fileName);
+                        var fileName = Path.GetFileName(blobPath);
+                        if (fileName.StartsWith("front", StringComparison.OrdinalIgnoreCase))
+                        {
+                            frontFile = fileName;
+                            frontUrl = $"/customers/{customerId}/licenses/{fileName}";
+                            _logger.LogInformation("Found front image in blob storage: {FileName}", fileName);
+                        }
+                        else if (fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase))
+                        {
+                            backFile = fileName;
+                            backUrl = $"/customers/{customerId}/licenses/{fileName}";
+                            _logger.LogInformation("Found back image in blob storage: {FileName}", fileName);
+                        }
                     }
                 }
             }

@@ -106,6 +106,13 @@ public class CustomerLicense
     [Column("raw_barcode_data")]
     public string? RawBarcodeData { get; set; }
 
+    // License Images (URLs stored in Azure Blob Storage)
+    [Column("front_image_url")]
+    public string? FrontImageUrl { get; set; }
+
+    [Column("back_image_url")]
+    public string? BackImageUrl { get; set; }
+
     // Verification
     [Column("is_verified")]
     public bool IsVerified { get; set; } = true;
