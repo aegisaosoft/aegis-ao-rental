@@ -202,6 +202,20 @@ builder.Services.AddScoped<ISettingsService, SettingsService>();
 // Add Azure DNS Service (mandatory - requires Azure configuration)
 builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
 
+// Add Azure Blob Storage Service (or local fallback)
+// Check if Azure Storage is configured
+var azureStorageConnectionString = builder.Configuration["AzureStorage:ConnectionString"];
+if (!string.IsNullOrEmpty(azureStorageConnectionString))
+{
+    startupLogger.LogInformation("Azure Blob Storage configured - using AzureBlobStorageService");
+    builder.Services.AddSingleton<IAzureBlobStorageService, AzureBlobStorageService>();
+}
+else
+{
+    startupLogger.LogWarning("Azure Blob Storage NOT configured - using LocalFileStorageService (files will NOT persist on Azure App Service!)");
+    builder.Services.AddSingleton<IAzureBlobStorageService, LocalFileStorageService>();
+}
+
 // Add Translation Service
 builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
 

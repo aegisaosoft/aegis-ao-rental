@@ -15,6 +15,7 @@
 
 using Microsoft.AspNetCore.Mvc;
 using CarRental.Api.Data;
+using CarRental.Api.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
 
@@ -27,15 +28,19 @@ public class MediaController : ControllerBase
     private readonly IWebHostEnvironment _environment;
     private readonly CarRentalDbContext _context;
     private readonly ILogger<MediaController> _logger;
+    private readonly IAzureBlobStorageService _blobStorage;
+    private const string CustomerLicensesContainer = "customer-licenses";
 
     public MediaController(
         IWebHostEnvironment environment,
         CarRentalDbContext context,
-        ILogger<MediaController> logger)
+        ILogger<MediaController> logger,
+        IAzureBlobStorageService blobStorage)
     {
         _environment = environment;
         _context = context;
         _logger = logger;
+        _blobStorage = blobStorage;
     }
 
     /// <summary>
@@ -434,56 +439,55 @@ public class MediaController : ControllerBase
             if (image.Length > 10_485_760)
                 return BadRequest("File size exceeds 10 MB limit");
 
-            // Create folder structure: /customers/{customerId}/licenses
-            // Use ContentRootPath/wwwroot/customers to match static file serving configuration
-            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
-            var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
-            Directory.CreateDirectory(folderPath);
-            
-            _logger.LogInformation("Saving license image - ContentRootPath: {ContentRootPath}, WebRootPath: {WebRootPath}", 
-                _environment.ContentRootPath, _environment.WebRootPath);
-            _logger.LogInformation("Saving license image to: {FilePath}", folderPath);
-            _logger.LogInformation("Folder created/exists: {Exists}", Directory.Exists(folderPath));
-
-            // Determine file extension based on image format
-            var imageExtension = fileExtension; // Use original extension
-            if (string.IsNullOrEmpty(imageExtension))
+            // Determine content type
+            var contentType = fileExtension switch
             {
-                // Determine from content type if extension is missing
-                imageExtension = image.ContentType switch
-                {
-                    "image/jpeg" => ".jpg",
-                    "image/jpg" => ".jpg",
-                    "image/png" => ".png",
-                    "image/gif" => ".gif",
-                    "image/webp" => ".webp",
-                    _ => ".jpg" // Default to jpg
-                };
-            }
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream"
+            };
 
             // Use fixed filename: front.jpg or back.jpg (or appropriate extension)
-            var fileName = $"{side}{imageExtension}";
-            var filePath = Path.Combine(folderPath, fileName);
+            var fileName = $"{side}{fileExtension}";
+            var blobPath = $"{customerId}/licenses/{fileName}";
 
-            // Delete old file if exists
-            if (System.IO.File.Exists(filePath))
+            _logger.LogInformation("Uploading license image to blob storage: {BlobPath}", blobPath);
+
+            // Upload to Azure Blob Storage (or local fallback)
+            using var stream = image.OpenReadStream();
+            var imageUrl = await _blobStorage.UploadFileAsync(stream, CustomerLicensesContainer, blobPath, contentType);
+
+            _logger.LogInformation("License image uploaded successfully: {ImageUrl}", imageUrl);
+
+            // Also save locally as backup/cache for development
+            try
             {
-                System.IO.File.Delete(filePath);
+                var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
+                var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
+                Directory.CreateDirectory(folderPath);
+                
+                var localFilePath = Path.Combine(folderPath, fileName);
+                
+                // Reset stream position and save locally
+                stream.Position = 0;
+                using (var fileStream = new FileStream(localFilePath, FileMode.Create))
+                {
+                    using var imageStream = image.OpenReadStream();
+                    await imageStream.CopyToAsync(fileStream);
+                }
+                _logger.LogInformation("License image also saved locally: {LocalPath}", localFilePath);
             }
-
-            // Save file
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            catch (Exception localEx)
             {
-                await image.CopyToAsync(stream);
+                _logger.LogWarning(localEx, "Failed to save local backup of license image (not critical on Azure)");
             }
-
-            // Generate URL path
-            var imageUrl = $"/customers/{customerId}/licenses/{fileName}";
-
 
             return Ok(new
             {
-                imageUrl,
+                imageUrl = $"/customers/{customerId}/licenses/{fileName}",
+                blobUrl = imageUrl,
                 fileName,
                 fileSize = image.Length,
                 side,
@@ -500,26 +504,18 @@ public class MediaController : ControllerBase
     /// <summary>
     /// Direct file serving endpoint for cross-server access
     /// GET /api/Media/customers/{customerId}/licenses/file/{fileName}
-    /// This endpoint serves files directly from disk, making it work when client and API are on separate servers
+    /// This endpoint serves files directly from Azure Blob Storage or local disk
     /// </summary>
     [HttpGet("customers/{customerId}/licenses/file/{fileName}")]
-    public IActionResult GetCustomerLicenseImageFile(Guid customerId, string fileName)
+    public async Task<IActionResult> GetCustomerLicenseImageFile(Guid customerId, string fileName)
     {
         try
         {
-            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
-            var filePath = Path.Combine(customersPath, customerId.ToString(), "licenses", fileName);
+            var blobPath = $"{customerId}/licenses/{fileName}";
             
-            _logger.LogInformation("Direct file serving - Checking file: {FilePath}", filePath);
-            _logger.LogInformation("File exists: {Exists}", System.IO.File.Exists(filePath));
+            _logger.LogInformation("Direct file serving - Checking blob storage: {BlobPath}", blobPath);
             
-            if (!System.IO.File.Exists(filePath))
-            {
-                _logger.LogWarning("File not found: {FilePath}", filePath);
-                return NotFound(new { error = "File not found", path = filePath });
-            }
-            
-            var fileInfo = new FileInfo(filePath);
+            // Determine content type from file extension
             var contentType = Path.GetExtension(fileName).ToLowerInvariant() switch
             {
                 ".png" => "image/png",
@@ -528,8 +524,37 @@ public class MediaController : ControllerBase
                 ".webp" => "image/webp",
                 _ => "application/octet-stream"
             };
+
+            // First, try to get from Azure Blob Storage
+            var stream = await _blobStorage.DownloadFileAsync(CustomerLicensesContainer, blobPath);
             
-            _logger.LogInformation("Serving file: {FilePath}, Size: {Size}, ContentType: {ContentType}", filePath, fileInfo.Length, contentType);
+            if (stream != null)
+            {
+                _logger.LogInformation("Serving file from blob storage: {BlobPath}", blobPath);
+                
+                // Set CORS headers
+                Response.Headers.Append("Access-Control-Allow-Origin", "*");
+                Response.Headers.Append("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+                
+                return File(stream, contentType);
+            }
+            
+            // Fallback: try local file system
+            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
+            var filePath = Path.Combine(customersPath, customerId.ToString(), "licenses", fileName);
+            
+            _logger.LogInformation("Blob not found, checking local file: {FilePath}", filePath);
+            
+            if (!System.IO.File.Exists(filePath))
+            {
+                _logger.LogWarning("File not found in blob storage or locally: {BlobPath} / {FilePath}", blobPath, filePath);
+                return NotFound(new { error = "File not found", blobPath, localPath = filePath });
+            }
+            
+            var fileInfo = new FileInfo(filePath);
+            
+            _logger.LogInformation("Serving file from local disk: {FilePath}, Size: {Size}, ContentType: {ContentType}", 
+                filePath, fileInfo.Length, contentType);
             
             // Set CORS headers for cross-origin requests
             Response.Headers.Append("Access-Control-Allow-Origin", "*");
@@ -550,7 +575,7 @@ public class MediaController : ControllerBase
     /// Returns the actual filenames and URLs of existing images
     /// </summary>
     [HttpGet("customers/{customerId}/licenses")]
-    public IActionResult GetCustomerLicenseImages(Guid customerId)
+    public async Task<IActionResult> GetCustomerLicenseImages(Guid customerId)
     {
         try
         {
@@ -559,60 +584,81 @@ public class MediaController : ControllerBase
             if (customer == null)
                 return NotFound("Customer not found");
 
-            // Use ContentRootPath/wwwroot/customers (not WebRootPath which might be different)
-            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
-            var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
-            
-            _logger.LogInformation("Checking license images for customer {CustomerId} in folder: {FolderPath}", customerId, folderPath);
-            _logger.LogInformation("Folder exists: {Exists}", Directory.Exists(folderPath));
-            
             string? frontFile = null;
             string? backFile = null;
             string? frontUrl = null;
             string? backUrl = null;
 
-            if (Directory.Exists(folderPath))
+            // First, try to find files in Azure Blob Storage
+            var blobPrefix = $"{customerId}/licenses/";
+            var blobs = await _blobStorage.ListFilesAsync(CustomerLicensesContainer, blobPrefix);
+            var blobList = blobs.ToList();
+            
+            _logger.LogInformation("Checking blob storage for customer {CustomerId}, found {Count} blobs", customerId, blobList.Count);
+
+            if (blobList.Any())
             {
-                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
-                var allFiles = Directory.GetFiles(folderPath);
-                _logger.LogInformation("Found {Count} files in folder", allFiles.Length);
-                
-                var files = allFiles
-                    .Where(f => allowedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
-                    .Select(Path.GetFileName)
-                    .Where(f => f != null)
-                    .Cast<string>()
-                    .ToList();
-                
-                _logger.LogInformation("Filtered to {Count} image files: {Files}", files.Count, string.Join(", ", files));
-
-                // Find front image (starts with "front")
-                frontFile = files.FirstOrDefault(f => f != null && f.StartsWith("front", StringComparison.OrdinalIgnoreCase));
-                if (frontFile != null)
+                // Find front and back images from blob storage
+                foreach (var blobPath in blobList)
                 {
-                    frontUrl = $"/customers/{customerId}/licenses/{frontFile}";
-                    _logger.LogInformation("Found front image: {FrontFile} -> {FrontUrl}", frontFile, frontUrl);
-                }
-                else
-                {
-                    _logger.LogInformation("No front image found");
-                }
-
-                // Find back image (starts with "back")
-                backFile = files.FirstOrDefault(f => f != null && f.StartsWith("back", StringComparison.OrdinalIgnoreCase));
-                if (backFile != null)
-                {
-                    backUrl = $"/customers/{customerId}/licenses/{backFile}";
-                    _logger.LogInformation("Found back image: {BackFile} -> {BackUrl}", backFile, backUrl);
-                }
-                else
-                {
-                    _logger.LogInformation("No back image found");
+                    var fileName = Path.GetFileName(blobPath);
+                    if (fileName.StartsWith("front", StringComparison.OrdinalIgnoreCase))
+                    {
+                        frontFile = fileName;
+                        frontUrl = $"/customers/{customerId}/licenses/{fileName}";
+                        _logger.LogInformation("Found front image in blob storage: {FileName}", fileName);
+                    }
+                    else if (fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase))
+                    {
+                        backFile = fileName;
+                        backUrl = $"/customers/{customerId}/licenses/{fileName}";
+                        _logger.LogInformation("Found back image in blob storage: {FileName}", fileName);
+                    }
                 }
             }
-            else
+
+            // Fallback: check local file system (for development or if blob storage not configured)
+            if (frontFile == null || backFile == null)
             {
-                _logger.LogWarning("License folder does not exist: {FolderPath}", folderPath);
+                var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
+                var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
+                
+                _logger.LogInformation("Checking local file system for customer {CustomerId} in folder: {FolderPath}", customerId, folderPath);
+                
+                if (Directory.Exists(folderPath))
+                {
+                    var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+                    var files = Directory.GetFiles(folderPath)
+                        .Where(f => allowedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                        .Select(Path.GetFileName)
+                        .Where(f => f != null)
+                        .Cast<string>()
+                        .ToList();
+                    
+                    _logger.LogInformation("Found {Count} local image files", files.Count);
+
+                    // Find front image if not already found
+                    if (frontFile == null)
+                    {
+                        frontFile = files.FirstOrDefault(f => f.StartsWith("front", StringComparison.OrdinalIgnoreCase));
+                        if (frontFile != null)
+                        {
+                            frontUrl = $"/customers/{customerId}/licenses/{frontFile}";
+                            _logger.LogInformation("Found front image locally: {FrontFile}", frontFile);
+                        }
+                    }
+
+                    // Find back image if not already found
+                    if (backFile == null)
+                    {
+                        backFile = files.FirstOrDefault(f => f.StartsWith("back", StringComparison.OrdinalIgnoreCase));
+                        if (backFile != null)
+                        {
+                            backUrl = $"/customers/{customerId}/licenses/{backFile}";
+                            _logger.LogInformation("Found back image locally: {BackFile}", backFile);
+                        }
+                    }
+                }
             }
 
             var result = new
