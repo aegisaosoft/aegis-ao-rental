@@ -83,6 +83,10 @@ public class CarRentalDbContext : DbContext
     // Rental Agreement Tables
     public DbSet<RentalAgreementEntity> RentalAgreements { get; set; }
     public DbSet<RentalAgreementAuditLog> RentalAgreementAuditLogs { get; set; }
+    
+    // Meta (Facebook/Instagram) Integration Tables
+    public DbSet<CompanyMetaCredentials> CompanyMetaCredentials { get; set; }
+    public DbSet<VehicleSocialPost> VehicleSocialPosts { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1076,5 +1080,85 @@ public class CarRentalDbContext : DbContext
         // Configure Rental Agreements
         modelBuilder.ApplyConfiguration(new RentalAgreementConfiguration());
         modelBuilder.ApplyConfiguration(new RentalAgreementAuditLogConfiguration());
+        
+        // Configure CompanyMetaCredentials
+        modelBuilder.Entity<CompanyMetaCredentials>(entity =>
+        {
+            entity.ToTable("company_meta_credentials");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.UserAccessToken).HasColumnName("user_access_token").IsRequired();
+            entity.Property(e => e.TokenExpiresAt).HasColumnName("token_expires_at").IsRequired();
+            entity.Property(e => e.PageId).HasColumnName("page_id").HasMaxLength(50);
+            entity.Property(e => e.PageName).HasColumnName("page_name").HasMaxLength(255);
+            entity.Property(e => e.PageAccessToken).HasColumnName("page_access_token");
+            entity.Property(e => e.CatalogId).HasColumnName("catalog_id").HasMaxLength(50);
+            entity.Property(e => e.PixelId).HasColumnName("pixel_id").HasMaxLength(50);
+            entity.Property(e => e.InstagramAccountId).HasColumnName("instagram_account_id").HasMaxLength(50);
+            entity.Property(e => e.InstagramUsername).HasColumnName("instagram_username").HasMaxLength(100);
+            
+            // Configure JSONB for AvailablePages
+            entity.Property(e => e.AvailablePages)
+                .HasColumnName("available_pages")
+                .HasColumnType("jsonb")
+                .HasConversion(
+                    v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+                    v => v == null || string.IsNullOrWhiteSpace(v) ? null : System.Text.Json.JsonDocument.Parse(v, default(System.Text.Json.JsonDocumentOptions)));
+            
+            // Map enum to string (using PostgreSQL enum type)
+            entity.Property(e => e.Status)
+                .HasColumnName("status")
+                .HasConversion<string>()
+                .HasColumnType("meta_credential_status")
+                .IsRequired();
+            
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+            entity.Property(e => e.LastTokenRefresh).HasColumnName("last_token_refresh");
+            
+            // Indexes
+            entity.HasIndex(e => e.CompanyId).IsUnique();
+            entity.HasIndex(e => e.Status).HasDatabaseName("idx_company_meta_credentials_status");
+            
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure VehicleSocialPost
+        modelBuilder.Entity<VehicleSocialPost>(entity =>
+        {
+            entity.ToTable("vehicle_social_posts");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.VehicleId).HasColumnName("vehicle_id").IsRequired();
+            entity.Property(e => e.Platform).HasColumnName("platform").HasColumnType("social_platform").IsRequired();
+            entity.Property(e => e.PostId).HasColumnName("post_id").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Permalink).HasColumnName("permalink").HasMaxLength(500);
+            entity.Property(e => e.Caption).HasColumnName("caption");
+            entity.Property(e => e.ImageUrl).HasColumnName("image_url").HasMaxLength(1000);
+            entity.Property(e => e.DailyRate).HasColumnName("daily_rate").HasColumnType("decimal(10,2)");
+            entity.Property(e => e.IsActive).HasColumnName("is_active").IsRequired().HasDefaultValue(true);
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+            
+            // Indexes
+            entity.HasIndex(e => new { e.CompanyId, e.VehicleId });
+            entity.HasIndex(e => new { e.CompanyId, e.Platform }).HasFilter("is_active = true");
+            entity.HasIndex(e => new { e.VehicleId, e.Platform }).HasFilter("is_active = true");
+            
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+                
+            entity.HasOne(e => e.Vehicle)
+                .WithMany()
+                .HasForeignKey(e => e.VehicleId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
     }
 }

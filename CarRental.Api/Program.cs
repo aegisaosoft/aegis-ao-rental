@@ -251,6 +251,13 @@ builder.Services.AddScoped<MultiTenantEmailService>();
 
 // Add background services
 builder.Services.AddHostedService<SecurityDepositCollectionService>();
+builder.Services.AddHostedService<MetaTokenRefreshBackgroundService>();
+
+// Add Meta OAuth Integration Services
+builder.Services.Configure<CarRental.Api.Models.MetaOAuthSettings>(builder.Configuration.GetSection("MetaOAuth"));
+builder.Services.AddScoped<IMetaOAuthService, MetaOAuthService>();
+builder.Services.AddScoped<ICompanyMetaCredentialsRepository, CompanyMetaCredentialsRepository>();
+builder.Services.AddScoped<IVehicleSocialPostRepository, VehicleSocialPostRepository>();
 
 // Configure JWT Authentication
 var jwtSettings = builder.Configuration.GetSection("Jwt");
