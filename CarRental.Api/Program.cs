@@ -259,6 +259,12 @@ builder.Services.AddScoped<IMetaOAuthService, MetaOAuthService>();
 builder.Services.AddScoped<ICompanyMetaCredentialsRepository, CompanyMetaCredentialsRepository>();
 builder.Services.AddScoped<IVehicleSocialPostRepository, VehicleSocialPostRepository>();
 
+// Add Instagram Campaign Service
+builder.Services.AddScoped<IInstagramCampaignService, InstagramCampaignService>();
+
+// Add Social Media Scheduler Background Service (for scheduled posts)
+builder.Services.AddHostedService<SocialMediaSchedulerService>();
+
 // Configure JWT Authentication
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var jwtSettingsLegacy = builder.Configuration.GetSection("JwtSettings");

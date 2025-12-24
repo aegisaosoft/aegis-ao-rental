@@ -87,6 +87,12 @@ public class CarRentalDbContext : DbContext
     // Meta (Facebook/Instagram) Integration Tables
     public DbSet<CompanyMetaCredentials> CompanyMetaCredentials { get; set; }
     public DbSet<VehicleSocialPost> VehicleSocialPosts { get; set; }
+    
+    // Instagram Campaign Tables
+    public DbSet<ScheduledPost> ScheduledPosts { get; set; }
+    public DbSet<CompanyAutoPostSettings> CompanyAutoPostSettings { get; set; }
+    public DbSet<SocialPostTemplate> SocialPostTemplates { get; set; }
+    public DbSet<SocialPostAnalytics> SocialPostAnalytics { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1158,6 +1164,136 @@ public class CarRentalDbContext : DbContext
             entity.HasOne(e => e.Vehicle)
                 .WithMany()
                 .HasForeignKey(e => e.VehicleId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure ScheduledPost
+        modelBuilder.Entity<ScheduledPost>(entity =>
+        {
+            entity.ToTable("scheduled_posts");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.VehicleId).HasColumnName("vehicle_id");
+            entity.Property(e => e.VehicleIds).HasColumnName("vehicle_ids").HasColumnType("uuid[]");
+            entity.Property(e => e.PostType).HasColumnName("post_type").IsRequired();
+            entity.Property(e => e.Platform).HasColumnName("platform").IsRequired();
+            entity.Property(e => e.Caption).HasColumnName("caption");
+            entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for").IsRequired();
+            entity.Property(e => e.IncludePrice).HasColumnName("include_price");
+            entity.Property(e => e.DailyRate).HasColumnName("daily_rate").HasColumnType("decimal(10,2)");
+            entity.Property(e => e.Currency).HasColumnName("currency").HasMaxLength(3);
+            entity.Property(e => e.CustomHashtags).HasColumnName("custom_hashtags").HasColumnType("text[]");
+            entity.Property(e => e.Status).HasColumnName("status").IsRequired();
+            entity.Property(e => e.ErrorMessage).HasColumnName("error_message");
+            entity.Property(e => e.PostId).HasColumnName("post_id").HasMaxLength(100);
+            entity.Property(e => e.Permalink).HasColumnName("permalink");
+            entity.Property(e => e.PublishedAt).HasColumnName("published_at");
+            entity.Property(e => e.RetryCount).HasColumnName("retry_count").HasDefaultValue(0);
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ScheduledFor);
+            entity.HasIndex(e => new { e.Status, e.ScheduledFor }).HasFilter("status = 0");
+
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Vehicle)
+                .WithMany()
+                .HasForeignKey(e => e.VehicleId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // Configure CompanyAutoPostSettings
+        modelBuilder.Entity<CompanyAutoPostSettings>(entity =>
+        {
+            entity.ToTable("company_auto_post_settings");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.IsEnabled).HasColumnName("is_enabled").HasDefaultValue(false);
+            entity.Property(e => e.PostOnVehicleAdded).HasColumnName("post_on_vehicle_added").HasDefaultValue(true);
+            entity.Property(e => e.PostOnVehicleUpdated).HasColumnName("post_on_vehicle_updated").HasDefaultValue(false);
+            entity.Property(e => e.PostOnVehicleAvailable).HasColumnName("post_on_vehicle_available").HasDefaultValue(false);
+            entity.Property(e => e.PostOnPriceChange).HasColumnName("post_on_price_change").HasDefaultValue(false);
+            entity.Property(e => e.IncludePriceInPosts).HasColumnName("include_price_in_posts").HasDefaultValue(true);
+            entity.Property(e => e.DefaultHashtags).HasColumnName("default_hashtags").HasColumnType("text[]");
+            entity.Property(e => e.DefaultCallToAction).HasColumnName("default_call_to_action");
+            entity.Property(e => e.CrossPostToFacebook).HasColumnName("cross_post_to_facebook").HasDefaultValue(false);
+            entity.Property(e => e.MinHoursBetweenPosts).HasColumnName("min_hours_between_posts").HasDefaultValue(4);
+            entity.Property(e => e.LastAutoPostAt).HasColumnName("last_auto_post_at");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+
+            entity.HasIndex(e => e.CompanyId).IsUnique();
+
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure SocialPostTemplate
+        modelBuilder.Entity<SocialPostTemplate>(entity =>
+        {
+            entity.ToTable("social_post_templates");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.Name).HasColumnName("name").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Description).HasColumnName("description").HasMaxLength(500);
+            entity.Property(e => e.CaptionTemplate).HasColumnName("caption_template").IsRequired();
+            entity.Property(e => e.Hashtags).HasColumnName("hashtags").HasColumnType("text[]");
+            entity.Property(e => e.CallToAction).HasColumnName("call_to_action");
+            entity.Property(e => e.IncludePrice).HasColumnName("include_price").HasDefaultValue(true);
+            entity.Property(e => e.ApplicableCategories).HasColumnName("applicable_categories").HasColumnType("text[]");
+            entity.Property(e => e.IsDefault).HasColumnName("is_default").HasDefaultValue(false);
+            entity.Property(e => e.IsActive).HasColumnName("is_active").HasDefaultValue(true);
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => new { e.CompanyId, e.IsActive });
+
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure SocialPostAnalytics
+        modelBuilder.Entity<SocialPostAnalytics>(entity =>
+        {
+            entity.ToTable("social_post_analytics");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.SocialPostId).HasColumnName("social_post_id").IsRequired();
+            entity.Property(e => e.PostId).HasColumnName("post_id").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Platform).HasColumnName("platform").IsRequired();
+            entity.Property(e => e.Impressions).HasColumnName("impressions").HasDefaultValue(0);
+            entity.Property(e => e.Reach).HasColumnName("reach").HasDefaultValue(0);
+            entity.Property(e => e.Engagement).HasColumnName("engagement").HasDefaultValue(0);
+            entity.Property(e => e.Likes).HasColumnName("likes").HasDefaultValue(0);
+            entity.Property(e => e.Comments).HasColumnName("comments").HasDefaultValue(0);
+            entity.Property(e => e.Shares).HasColumnName("shares").HasDefaultValue(0);
+            entity.Property(e => e.Saves).HasColumnName("saves").HasDefaultValue(0);
+            entity.Property(e => e.Clicks).HasColumnName("clicks").HasDefaultValue(0);
+            entity.Property(e => e.ProfileVisits).HasColumnName("profile_visits").HasDefaultValue(0);
+            entity.Property(e => e.RecordedAt).HasColumnName("recorded_at").IsRequired();
+
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.SocialPostId);
+            entity.HasIndex(e => e.RecordedAt);
+
+            entity.HasOne(e => e.SocialPost)
+                .WithMany()
+                .HasForeignKey(e => e.SocialPostId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
