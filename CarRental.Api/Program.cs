@@ -258,6 +258,7 @@ builder.Services.Configure<CarRental.Api.Models.MetaOAuthSettings>(builder.Confi
 builder.Services.AddScoped<IMetaOAuthService, MetaOAuthService>();
 builder.Services.AddScoped<ICompanyMetaCredentialsRepository, CompanyMetaCredentialsRepository>();
 builder.Services.AddScoped<IVehicleSocialPostRepository, VehicleSocialPostRepository>();
+builder.Services.AddScoped<IAutoPublishService, AutoPublishService>();
 
 // Add Instagram Campaign Service
 builder.Services.AddScoped<IInstagramCampaignService, InstagramCampaignService>();

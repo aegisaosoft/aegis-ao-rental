@@ -13,7 +13,9 @@
 
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using CarRental.Api.Data;
 using CarRental.Api.Models;
 using CarRental.Api.Services;
 
@@ -422,6 +424,329 @@ public class SocialPostController : ControllerBase
         return Ok(posts);
     }
 
+    /// <summary>
+    /// Bulk publish all vehicles to Facebook and/or Instagram
+    /// </summary>
+    [HttpPost("publish/bulk/{companyId}")]
+    public async Task<IActionResult> BulkPublish(Guid companyId, [FromBody] BulkPublishRequest request, [FromServices] CarRentalDbContext dbContext)
+    {
+        var credentials = await _credentialsRepo.GetByCompanyIdAsync(companyId);
+        if (credentials == null || string.IsNullOrEmpty(credentials.PageAccessToken))
+        {
+            return BadRequest(new { error = "Not connected to Meta" });
+        }
+
+        // Get company for branding info
+        var company = await dbContext.Companies.FindAsync(companyId);
+        if (company == null)
+        {
+            return NotFound(new { error = "Company not found" });
+        }
+
+        // Get all available vehicles for company
+        var vehiclesQuery = dbContext.Vehicles
+            .Include(v => v.VehicleModel)
+                .ThenInclude(vm => vm.Model)
+            .Where(v => v.CompanyId == companyId && v.Status == VehicleStatus.Available);
+
+        // If specific vehicle IDs provided, filter to those
+        if (request.VehicleIds != null && request.VehicleIds.Count > 0)
+        {
+            var vehicleGuids = request.VehicleIds
+                .Where(id => Guid.TryParse(id, out _))
+                .Select(id => Guid.Parse(id))
+                .ToList();
+            vehiclesQuery = vehiclesQuery.Where(v => vehicleGuids.Contains(v.Id));
+        }
+
+        var vehicles = await vehiclesQuery.ToListAsync();
+
+        if (vehicles.Count == 0)
+        {
+            return Ok(new { success = true, message = "No vehicles to publish", published = 0 });
+        }
+
+        // Get already published vehicles to skip (unless force republish)
+        var existingPosts = await _postRepo.GetByCompanyAsync(companyId);
+        var publishedFacebookIds = existingPosts
+            .Where(p => p.Platform == SocialPlatform.Facebook && p.IsActive)
+            .Select(p => p.VehicleId)
+            .ToHashSet();
+        var publishedInstagramIds = existingPosts
+            .Where(p => p.Platform == SocialPlatform.Instagram && p.IsActive)
+            .Select(p => p.VehicleId)
+            .ToHashSet();
+
+        var results = new List<BulkPublishResult>();
+        var publishedCount = 0;
+        var skippedCount = 0;
+        var errorCount = 0;
+
+        foreach (var vehicle in vehicles)
+        {
+            var result = new BulkPublishResult
+            {
+                VehicleId = vehicle.Id.ToString(),
+                VehicleName = $"{vehicle.VehicleModel?.Make} {vehicle.VehicleModel?.Model} {vehicle.VehicleModel?.Year}"
+            };
+
+            // Build caption
+            var caption = BuildVehicleCaption(vehicle, company, request.IncludePrice, request.Hashtags);
+
+            var publishRequest = new PublishVehicleRequest
+            {
+                VehicleId = vehicle.Id.ToString(),
+                ImageUrl = vehicle.ImageUrl ?? vehicle.VehicleModel?.ImageUrl,
+                Caption = caption,
+                DailyRate = vehicle.VehicleModel?.DailyRate,
+                IncludePrice = request.IncludePrice,
+                Hashtags = request.Hashtags
+            };
+
+            // Skip if no image
+            if (string.IsNullOrEmpty(publishRequest.ImageUrl))
+            {
+                result.Skipped = true;
+                result.SkipReason = "No image";
+                skippedCount++;
+                results.Add(result);
+                continue;
+            }
+
+            // Publish to Facebook
+            if (request.Platforms.Contains("facebook", StringComparer.OrdinalIgnoreCase))
+            {
+                if (!request.ForceRepublish && publishedFacebookIds.Contains(vehicle.Id))
+                {
+                    result.FacebookSkipped = true;
+                }
+                else
+                {
+                    try
+                    {
+                        publishRequest.UpdateMode = request.ForceRepublish ? "republish" : "update";
+                        var fbResult = await PublishToFacebook(companyId, publishRequest);
+                        if (fbResult is OkObjectResult okResult)
+                        {
+                            result.FacebookSuccess = true;
+                            result.FacebookPostId = (okResult.Value as dynamic)?.postId;
+                        }
+                        else
+                        {
+                            result.FacebookError = "Failed to publish";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        result.FacebookError = ex.Message;
+                    }
+                }
+            }
+
+            // Publish to Instagram
+            if (request.Platforms.Contains("instagram", StringComparer.OrdinalIgnoreCase))
+            {
+                if (!request.ForceRepublish && publishedInstagramIds.Contains(vehicle.Id))
+                {
+                    result.InstagramSkipped = true;
+                }
+                else
+                {
+                    try
+                    {
+                        var igResult = await PublishToInstagram(companyId, publishRequest);
+                        if (igResult is OkObjectResult okResult)
+                        {
+                            result.InstagramSuccess = true;
+                            result.InstagramPostId = (okResult.Value as dynamic)?.postId;
+                        }
+                        else
+                        {
+                            result.InstagramError = "Failed to publish";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        result.InstagramError = ex.Message;
+                    }
+                }
+            }
+
+            // Count results
+            if (result.FacebookSuccess || result.InstagramSuccess)
+                publishedCount++;
+            else if (result.FacebookSkipped && result.InstagramSkipped)
+                skippedCount++;
+            else if (!string.IsNullOrEmpty(result.FacebookError) || !string.IsNullOrEmpty(result.InstagramError))
+                errorCount++;
+
+            results.Add(result);
+
+            // Rate limiting - wait between posts to avoid API limits
+            await Task.Delay(request.DelayBetweenPosts ?? 1000);
+        }
+
+        _logger.LogInformation(
+            "Bulk publish completed for company {CompanyId}. Published: {Published}, Skipped: {Skipped}, Errors: {Errors}",
+            companyId, publishedCount, skippedCount, errorCount);
+
+        return Ok(new
+        {
+            success = true,
+            totalVehicles = vehicles.Count,
+            published = publishedCount,
+            skipped = skippedCount,
+            errors = errorCount,
+            results
+        });
+    }
+
+    /// <summary>
+    /// Get unpublished vehicles (not yet posted to social media)
+    /// </summary>
+    [HttpGet("unpublished/{companyId}")]
+    public async Task<IActionResult> GetUnpublishedVehicles(Guid companyId, [FromServices] CarRentalDbContext dbContext)
+    {
+        var allVehicles = await dbContext.Vehicles
+            .Include(v => v.VehicleModel)
+                .ThenInclude(vm => vm.Model)
+            .Where(v => v.CompanyId == companyId && v.Status == VehicleStatus.Available)
+            .ToListAsync();
+
+        var existingPosts = await _postRepo.GetByCompanyAsync(companyId);
+        var publishedIds = existingPosts
+            .Where(p => p.IsActive)
+            .Select(p => p.VehicleId)
+            .Distinct()
+            .ToHashSet();
+
+        var unpublished = allVehicles
+            .Where(v => !publishedIds.Contains(v.Id))
+            .Select(v => new
+            {
+                id = v.Id,
+                name = v.VehicleModel?.Model != null 
+                    ? $"{v.VehicleModel.Model.Make} {v.VehicleModel.Model.ModelName} {v.VehicleModel.Model.Year}"
+                    : v.LicensePlate,
+                licensePlate = v.LicensePlate,
+                imageUrl = v.ImageUrl,
+                dailyRate = v.VehicleModel?.DailyRate,
+                hasImage = !string.IsNullOrEmpty(v.ImageUrl)
+            })
+            .ToList();
+
+        return Ok(new
+        {
+            total = allVehicles.Count,
+            published = publishedIds.Count,
+            unpublished = unpublished.Count,
+            vehicles = unpublished
+        });
+    }
+
+    /// <summary>
+    /// Build caption for vehicle post
+    /// </summary>
+    private string BuildVehicleCaption(Vehicle vehicle, Company company, bool includePrice, List<string>? hashtags)
+    {
+        var vehicleModel = vehicle.VehicleModel;
+        var catalogModel = vehicleModel?.Model;
+        var parts = new List<string>();
+
+        // Vehicle name
+        var vehicleName = catalogModel != null
+            ? $"{catalogModel.Year} {catalogModel.Make} {catalogModel.ModelName}"
+            : $"Vehicle {vehicle.LicensePlate}";
+        parts.Add($"🚗 {vehicleName}");
+
+        // Features
+        var features = new List<string>();
+        if (!string.IsNullOrEmpty(vehicle.Transmission))
+            features.Add(vehicle.Transmission);
+        if (vehicle.Seats.HasValue)
+            features.Add($"{vehicle.Seats} seats");
+        if (!string.IsNullOrEmpty(vehicle.Color))
+            features.Add(vehicle.Color);
+
+        if (features.Count > 0)
+            parts.Add(string.Join(" • ", features));
+
+        // Price
+        if (includePrice && vehicleModel?.DailyRate > 0)
+        {
+            parts.Add($"💰 ${vehicleModel.DailyRate}/day");
+        }
+
+        // Company info
+        parts.Add($"📍 {company.CompanyName}");
+
+        // Booking URL
+        var bookingUrl = GetBookingUrl(vehicle, company);
+        if (!string.IsNullOrEmpty(bookingUrl))
+        {
+            parts.Add($"🔗 Book now: {bookingUrl}");
+        }
+        else
+        {
+            parts.Add("Book now! Link in bio 👆");
+        }
+
+        // Hashtags
+        var allHashtags = new List<string> { "#carrental", "#rentalcar" };
+        if (catalogModel != null)
+        {
+            if (!string.IsNullOrEmpty(catalogModel.Make))
+                allHashtags.Add($"#{catalogModel.Make.ToLower().Replace(" ", "")}");
+            if (!string.IsNullOrEmpty(catalogModel.ModelName))
+                allHashtags.Add($"#{catalogModel.ModelName.ToLower().Replace(" ", "")}");
+        }
+        if (hashtags != null)
+            allHashtags.AddRange(hashtags);
+
+        parts.Add(string.Join(" ", allHashtags.Distinct()));
+
+        return string.Join("\n\n", parts);
+    }
+
+    /// <summary>
+    /// Get booking URL for vehicle
+    /// </summary>
+    private string? GetBookingUrl(Vehicle vehicle, Company company)
+    {
+        if (vehicle.VehicleModel?.Model == null)
+            return null;
+
+        var catalogModel = vehicle.VehicleModel.Model;
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        
+        // Build query parameters
+        var queryParams = new List<string>();
+        
+        if (catalogModel.CategoryId != null)
+            queryParams.Add($"category={catalogModel.CategoryId}");
+        
+        if (!string.IsNullOrEmpty(catalogModel.Make))
+            queryParams.Add($"make={Uri.EscapeDataString(catalogModel.Make)}");
+        
+        if (!string.IsNullOrEmpty(catalogModel.ModelName))
+            queryParams.Add($"model={Uri.EscapeDataString(catalogModel.ModelName)}");
+        
+        queryParams.Add($"companyId={company.Id}");
+        queryParams.Add($"startDate={today}");
+        queryParams.Add($"endDate={today}");
+        
+        var query = string.Join("&", queryParams);
+        
+        // Use company subdomain if available
+        if (!string.IsNullOrEmpty(company.Subdomain))
+        {
+            return $"https://{company.Subdomain}.aegis-rental.com/book?{query}";
+        }
+
+        // Fallback to main site
+        return $"https://aegis-rental.com/book?{query}";
+    }
+
     #region Private Methods
 
     private async Task<FacebookPostResult> PublishFacebookPost(string pageId, string pageAccessToken, PublishVehicleRequest request)
@@ -581,6 +906,55 @@ public class SocialPostController : ControllerBase
 public class BulkStatusRequest
 {
     public List<string> VehicleIds { get; set; } = new();
+}
+
+public class BulkPublishRequest
+{
+    /// <summary>
+    /// Optional: specific vehicle IDs to publish. If empty, publishes all available vehicles.
+    /// </summary>
+    public List<string>? VehicleIds { get; set; }
+    
+    /// <summary>
+    /// Platforms to publish to: "facebook", "instagram", or both
+    /// </summary>
+    public List<string> Platforms { get; set; } = new() { "facebook", "instagram" };
+    
+    /// <summary>
+    /// Whether to include price in caption
+    /// </summary>
+    public bool IncludePrice { get; set; } = true;
+    
+    /// <summary>
+    /// Additional hashtags to include
+    /// </summary>
+    public List<string>? Hashtags { get; set; }
+    
+    /// <summary>
+    /// Force republish even if already published
+    /// </summary>
+    public bool ForceRepublish { get; set; } = false;
+    
+    /// <summary>
+    /// Delay between posts in milliseconds (default 1000ms to avoid rate limits)
+    /// </summary>
+    public int? DelayBetweenPosts { get; set; } = 1000;
+}
+
+public class BulkPublishResult
+{
+    public string VehicleId { get; set; } = "";
+    public string? VehicleName { get; set; }
+    public bool Skipped { get; set; }
+    public string? SkipReason { get; set; }
+    public bool FacebookSuccess { get; set; }
+    public bool FacebookSkipped { get; set; }
+    public string? FacebookPostId { get; set; }
+    public string? FacebookError { get; set; }
+    public bool InstagramSuccess { get; set; }
+    public bool InstagramSkipped { get; set; }
+    public string? InstagramPostId { get; set; }
+    public string? InstagramError { get; set; }
 }
 
 public class PublishVehicleRequest

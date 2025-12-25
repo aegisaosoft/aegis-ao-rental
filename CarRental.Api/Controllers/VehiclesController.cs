@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
+using CarRental.Api.Services;
 using System.Security.Claims;
 using System.IO;
 using System.Linq;
@@ -693,6 +694,24 @@ public class VehiclesController : ControllerBase
                 CreatedAt = vehicle.CreatedAt,
                 UpdatedAt = vehicle.UpdatedAt
             };
+
+            // Auto-publish to social media if enabled (fire and forget)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = HttpContext.RequestServices.CreateScope();
+                    var autoPublishService = scope.ServiceProvider.GetService<IAutoPublishService>();
+                    if (autoPublishService != null)
+                    {
+                        await autoPublishService.PublishVehicleAsync(vehicle.CompanyId, vehicle.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Auto-publish failed for vehicle {VehicleId}", vehicle.Id);
+                }
+            });
 
             return CreatedAtAction(nameof(GetVehicle), new { id = vehicle.Id }, vehicleDto);
         }

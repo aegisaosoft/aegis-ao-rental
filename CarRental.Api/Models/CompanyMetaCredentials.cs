@@ -101,6 +101,26 @@ public class CompanyMetaCredentials
     /// </summary>
     public DateTime? LastTokenRefresh { get; set; }
 
+    /// <summary>
+    /// Auto-publish new vehicles to Facebook
+    /// </summary>
+    public bool AutoPublishFacebook { get; set; } = false;
+
+    /// <summary>
+    /// Auto-publish new vehicles to Instagram
+    /// </summary>
+    public bool AutoPublishInstagram { get; set; } = false;
+
+    /// <summary>
+    /// Include price in auto-published posts
+    /// </summary>
+    public bool AutoPublishIncludePrice { get; set; } = true;
+
+    /// <summary>
+    /// Custom hashtags for auto-published posts (JSON array)
+    /// </summary>
+    public string? AutoPublishHashtags { get; set; }
+
     // Navigation property
     public Company? Company { get; set; }
 }

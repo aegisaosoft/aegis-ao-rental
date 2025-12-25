@@ -1123,6 +1123,12 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
             entity.Property(e => e.LastTokenRefresh).HasColumnName("last_token_refresh");
             
+            // Auto-publish settings
+            entity.Property(e => e.AutoPublishFacebook).HasColumnName("auto_publish_facebook").HasDefaultValue(false);
+            entity.Property(e => e.AutoPublishInstagram).HasColumnName("auto_publish_instagram").HasDefaultValue(false);
+            entity.Property(e => e.AutoPublishIncludePrice).HasColumnName("auto_publish_include_price").HasDefaultValue(true);
+            entity.Property(e => e.AutoPublishHashtags).HasColumnName("auto_publish_hashtags");
+            
             // Indexes
             entity.HasIndex(e => e.CompanyId).IsUnique();
             entity.HasIndex(e => e.Status).HasDatabaseName("idx_company_meta_credentials_status");

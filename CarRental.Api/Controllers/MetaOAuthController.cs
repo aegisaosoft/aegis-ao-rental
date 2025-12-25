@@ -360,6 +360,67 @@ public class MetaOAuthController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Get auto-publish settings for company
+    /// </summary>
+    [HttpGet("auto-publish/{companyId}")]
+    [Authorize]
+    public async Task<IActionResult> GetAutoPublishSettings(Guid companyId)
+    {
+        var credentials = await _credentialsRepo.GetByCompanyIdAsync(companyId);
+        if (credentials == null)
+        {
+            return NotFound(new { error = "Company not connected to Meta" });
+        }
+
+        List<string>? hashtags = null;
+        if (!string.IsNullOrEmpty(credentials.AutoPublishHashtags))
+        {
+            try
+            {
+                hashtags = System.Text.Json.JsonSerializer.Deserialize<List<string>>(credentials.AutoPublishHashtags);
+            }
+            catch { /* ignore */ }
+        }
+
+        return Ok(new
+        {
+            autoPublishFacebook = credentials.AutoPublishFacebook,
+            autoPublishInstagram = credentials.AutoPublishInstagram,
+            includePrice = credentials.AutoPublishIncludePrice,
+            hashtags = hashtags
+        });
+    }
+
+    /// <summary>
+    /// Update auto-publish settings for company
+    /// </summary>
+    [HttpPost("auto-publish/{companyId}")]
+    [Authorize]
+    public async Task<IActionResult> UpdateAutoPublishSettings(Guid companyId, [FromBody] UpdateAutoPublishRequest request)
+    {
+        var credentials = await _credentialsRepo.GetByCompanyIdAsync(companyId);
+        if (credentials == null)
+        {
+            return NotFound(new { error = "Company not connected to Meta" });
+        }
+
+        credentials.AutoPublishFacebook = request.AutoPublishFacebook;
+        credentials.AutoPublishInstagram = request.AutoPublishInstagram;
+        credentials.AutoPublishIncludePrice = request.IncludePrice;
+        credentials.AutoPublishHashtags = request.Hashtags != null
+            ? System.Text.Json.JsonSerializer.Serialize(request.Hashtags)
+            : null;
+
+        await _credentialsRepo.UpdateAsync(credentials);
+
+        _logger.LogInformation(
+            "Updated auto-publish settings for company {CompanyId}: FB={Facebook}, IG={Instagram}",
+            companyId, request.AutoPublishFacebook, request.AutoPublishInstagram);
+
+        return Ok(new { message = "Auto-publish settings updated" });
+    }
+
     #region Private Helper Methods
 
     private string? GetOriginFromRequest()
@@ -444,6 +505,14 @@ public class MetaOAuthController : ControllerBase
 public class SelectPageRequest
 {
     public string PageId { get; set; } = "";
+}
+
+public class UpdateAutoPublishRequest
+{
+    public bool AutoPublishFacebook { get; set; }
+    public bool AutoPublishInstagram { get; set; }
+    public bool IncludePrice { get; set; } = true;
+    public List<string>? Hashtags { get; set; }
 }
 
 public class MetaConnectionStatus
