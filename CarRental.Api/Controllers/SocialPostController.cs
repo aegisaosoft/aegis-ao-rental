@@ -446,7 +446,7 @@ public class SocialPostController : ControllerBase
         // Get all available vehicles for company
         var vehiclesQuery = dbContext.Vehicles
             .Include(v => v.VehicleModel)
-                .ThenInclude(vm => vm.Model)
+                .ThenInclude(vm => vm!.Model)
             .Where(v => v.CompanyId == companyId && v.Status == VehicleStatus.Available);
 
         // If specific vehicle IDs provided, filter to those
@@ -611,7 +611,7 @@ public class SocialPostController : ControllerBase
     {
         var allVehicles = await dbContext.Vehicles
             .Include(v => v.VehicleModel)
-                .ThenInclude(vm => vm.Model)
+                .ThenInclude(vm => vm!.Model)
             .Where(v => v.CompanyId == companyId && v.Status == VehicleStatus.Available)
             .ToListAsync();
 
