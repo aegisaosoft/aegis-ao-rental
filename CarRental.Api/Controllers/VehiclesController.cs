@@ -1672,8 +1672,8 @@ public class VehiclesController : ControllerBase
                                 lineNumber, vehicleModel.Id, model.Id, parsedCompanyId, dailyRate);
                             
                             // Auto-publish new model (fire and forget)
-                            var modelId = vehicleModel.Id;
-                            var companyId = vehicleModel.CompanyId;
+                            var autoPublishModelId = vehicleModel.Id;
+                            var autoPublishCompanyId = vehicleModel.CompanyId;
                             _ = Task.Run(async () =>
                             {
                                 try
@@ -1684,12 +1684,12 @@ public class VehiclesController : ControllerBase
                                     var autoPublishService = scope.ServiceProvider.GetService<IAutoPublishService>();
                                     if (autoPublishService != null)
                                     {
-                                        await autoPublishService.PublishModelAsync(companyId, modelId);
+                                        await autoPublishService.PublishModelAsync(autoPublishCompanyId, autoPublishModelId);
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    _logger.LogError(ex, "Auto-publish failed for imported model {VehicleModelId}", modelId);
+                                    _logger.LogError(ex, "Auto-publish failed for imported model {VehicleModelId}", autoPublishModelId);
                                 }
                             });
                         }

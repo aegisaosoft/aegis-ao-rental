@@ -487,7 +487,9 @@ public class SocialPostController : ControllerBase
             var result = new BulkPublishResult
             {
                 VehicleId = vehicle.Id.ToString(),
-                VehicleName = $"{vehicle.VehicleModel?.Make} {vehicle.VehicleModel?.Model} {vehicle.VehicleModel?.Year}"
+                VehicleName = vehicle.VehicleModel?.Model != null 
+                    ? $"{vehicle.VehicleModel.Model.Make} {vehicle.VehicleModel.Model.ModelName}"
+                    : vehicle.LicensePlate
             };
 
             // Build caption
@@ -496,7 +498,7 @@ public class SocialPostController : ControllerBase
             var publishRequest = new PublishVehicleRequest
             {
                 VehicleId = vehicle.Id.ToString(),
-                ImageUrl = vehicle.ImageUrl ?? vehicle.VehicleModel?.ImageUrl,
+                ImageUrl = vehicle.ImageUrl,
                 Caption = caption,
                 DailyRate = vehicle.VehicleModel?.DailyRate,
                 IncludePrice = request.IncludePrice,

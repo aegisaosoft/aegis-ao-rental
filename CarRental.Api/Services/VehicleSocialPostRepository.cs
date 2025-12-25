@@ -68,7 +68,7 @@ public class VehicleSocialPostRepository : IVehicleSocialPostRepository
         var ids = vehicleIds.ToList();
         return await _context.VehicleSocialPosts
             .Where(p => p.CompanyId == companyId)
-            .Where(p => ids.Contains(p.VehicleId))
+            .Where(p => p.VehicleId.HasValue && ids.Contains(p.VehicleId.Value))
             .Where(p => p.IsActive)
             .ToListAsync();
     }

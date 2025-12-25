@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using CarRental.Api.Data;
 using CarRental.Api.Models;
 using CarRental.Api.Services;
+using ServiceBulkPublishRequest = CarRental.Api.Services.BulkPublishRequest;
 
 namespace CarRental.Api.Controllers;
 
@@ -154,7 +155,7 @@ public class InstagramCampaignController : ControllerBase
     /// Bulk publish multiple vehicles
     /// </summary>
     [HttpPost("bulk-publish/{companyId}")]
-    public async Task<IActionResult> BulkPublish(Guid companyId, [FromBody] BulkPublishRequest request)
+    public async Task<IActionResult> BulkPublish(Guid companyId, [FromBody] ServiceBulkPublishRequest request)
     {
         var result = await _campaignService.BulkPublishAsync(companyId, request);
         return Ok(result);
