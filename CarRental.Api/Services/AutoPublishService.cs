@@ -21,9 +21,9 @@ namespace CarRental.Api.Services;
 public interface IAutoPublishService
 {
     /// <summary>
-    /// Publish a vehicle to configured social platforms based on company settings
+    /// Publish a vehicle model to configured social platforms based on company settings
     /// </summary>
-    Task PublishVehicleAsync(Guid companyId, Guid vehicleId);
+    Task PublishModelAsync(Guid companyId, Guid vehicleModelId);
     
     /// <summary>
     /// Update auto-publish settings for a company
@@ -69,7 +69,7 @@ public class AutoPublishService : IAutoPublishService
         _apiBaseUrl = configuration["ApiBaseUrl"] ?? "https://aegis-ao-rental.azurewebsites.net";
     }
 
-    public async Task PublishVehicleAsync(Guid companyId, Guid vehicleId)
+    public async Task PublishModelAsync(Guid companyId, Guid vehicleModelId)
     {
         try
         {
@@ -87,24 +87,27 @@ public class AutoPublishService : IAutoPublishService
                 return;
             }
 
-            // Get vehicle with model info
-            var vehicle = await _dbContext.Vehicles
-                .Include(v => v.VehicleModel)
-                    .ThenInclude(vm => vm.Model)
-                .Include(v => v.Company)
-                .FirstOrDefaultAsync(v => v.Id == vehicleId && v.CompanyId == companyId);
+            // Get vehicle model with catalog info
+            var vehicleModel = await _dbContext.VehicleModels
+                .Include(vm => vm.Model)
+                .Include(vm => vm.Company)
+                .FirstOrDefaultAsync(vm => vm.Id == vehicleModelId && vm.CompanyId == companyId);
 
-            if (vehicle == null)
+            if (vehicleModel == null)
             {
-                _logger.LogWarning("Auto-publish failed: vehicle {VehicleId} not found", vehicleId);
+                _logger.LogWarning("Auto-publish failed: vehicle model {VehicleModelId} not found", vehicleModelId);
                 return;
             }
 
-            // Check if has image
-            var imageUrl = vehicle.ImageUrl ?? vehicle.VehicleModel?.ImageUrl;
+            // Get image from one of the vehicles with this model, or use a default
+            var imageUrl = await _dbContext.Vehicles
+                .Where(v => v.VehicleModelId == vehicleModelId && !string.IsNullOrEmpty(v.ImageUrl))
+                .Select(v => v.ImageUrl)
+                .FirstOrDefaultAsync();
+
             if (string.IsNullOrEmpty(imageUrl))
             {
-                _logger.LogDebug("Auto-publish skipped: vehicle {VehicleId} has no image", vehicleId);
+                _logger.LogDebug("Auto-publish skipped: model {VehicleModelId} has no image", vehicleModelId);
                 return;
             }
 
@@ -119,8 +122,8 @@ public class AutoPublishService : IAutoPublishService
                 catch { /* ignore */ }
             }
 
-            // Build caption
-            var caption = BuildCaption(vehicle, credentials.AutoPublishIncludePrice, hashtags);
+            // Build caption for model
+            var caption = BuildModelCaption(vehicleModel, credentials.AutoPublishIncludePrice, hashtags);
 
             // Publish to Facebook
             if (credentials.AutoPublishFacebook && !string.IsNullOrEmpty(credentials.PageId) && !string.IsNullOrEmpty(credentials.PageAccessToken))
@@ -133,21 +136,22 @@ public class AutoPublishService : IAutoPublishService
                     {
                         Id = Guid.NewGuid(),
                         CompanyId = companyId,
-                        VehicleId = vehicleId,
+                        VehicleModelId = vehicleModelId,
                         Platform = SocialPlatform.Facebook,
                         PostId = postId,
                         Caption = caption,
                         ImageUrl = imageUrl,
-                        DailyRate = vehicle.VehicleModel?.DailyRate,
+                        DailyRate = vehicleModel.DailyRate,
                         IsActive = true
                     };
                     await _postRepo.SaveAsync(post);
                     
-                    _logger.LogInformation("Auto-published vehicle {VehicleId} to Facebook: {PostId}", vehicleId, postId);
+                    _logger.LogInformation("Auto-published model {VehicleModelId} ({Make} {Model}) to Facebook: {PostId}", 
+                        vehicleModelId, vehicleModel.Model?.Make, vehicleModel.Model?.ModelName, postId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Auto-publish to Facebook failed for vehicle {VehicleId}", vehicleId);
+                    _logger.LogError(ex, "Auto-publish to Facebook failed for model {VehicleModelId}", vehicleModelId);
                 }
             }
 
@@ -162,27 +166,28 @@ public class AutoPublishService : IAutoPublishService
                     {
                         Id = Guid.NewGuid(),
                         CompanyId = companyId,
-                        VehicleId = vehicleId,
+                        VehicleModelId = vehicleModelId,
                         Platform = SocialPlatform.Instagram,
                         PostId = postId,
                         Caption = caption,
                         ImageUrl = imageUrl,
-                        DailyRate = vehicle.VehicleModel?.DailyRate,
+                        DailyRate = vehicleModel.DailyRate,
                         IsActive = true
                     };
                     await _postRepo.SaveAsync(post);
                     
-                    _logger.LogInformation("Auto-published vehicle {VehicleId} to Instagram: {PostId}", vehicleId, postId);
+                    _logger.LogInformation("Auto-published model {VehicleModelId} ({Make} {Model}) to Instagram: {PostId}", 
+                        vehicleModelId, vehicleModel.Model?.Make, vehicleModel.Model?.ModelName, postId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Auto-publish to Instagram failed for vehicle {VehicleId}", vehicleId);
+                    _logger.LogError(ex, "Auto-publish to Instagram failed for model {VehicleModelId}", vehicleModelId);
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Auto-publish failed for vehicle {VehicleId}", vehicleId);
+            _logger.LogError(ex, "Auto-publish failed for model {VehicleModelId}", vehicleModelId);
         }
     }
 
@@ -235,44 +240,46 @@ public class AutoPublishService : IAutoPublishService
         };
     }
 
-    private string BuildCaption(Vehicle vehicle, bool includePrice, List<string>? hashtags)
+    private string BuildModelCaption(VehicleModel vehicleModel, bool includePrice, List<string>? hashtags)
     {
-        var vehicleModel = vehicle.VehicleModel;
-        var catalogModel = vehicleModel?.Model;
+        var catalogModel = vehicleModel.Model;
         var parts = new List<string>();
 
-        // Vehicle name
-        var vehicleName = catalogModel != null
-            ? $"{catalogModel.Year} {catalogModel.Make} {catalogModel.ModelName}"
-            : $"Vehicle {vehicle.LicensePlate}";
-        parts.Add($"🚗 {vehicleName}");
+        // Model name (Make + Model, without Year)
+        var modelName = catalogModel != null
+            ? $"{catalogModel.Make} {catalogModel.ModelName}"
+            : "New Vehicle Available";
+        parts.Add($"🚗 {modelName}");
 
-        // Features
-        var features = new List<string>();
-        if (!string.IsNullOrEmpty(vehicle.Transmission))
-            features.Add(vehicle.Transmission);
-        if (vehicle.Seats.HasValue)
-            features.Add($"{vehicle.Seats} seats");
-        if (!string.IsNullOrEmpty(vehicle.Color))
-            features.Add(vehicle.Color);
+        // Features from catalog model
+        if (catalogModel != null)
+        {
+            var features = new List<string>();
+            if (!string.IsNullOrEmpty(catalogModel.Transmission))
+                features.Add(catalogModel.Transmission);
+            if (catalogModel.Seats.HasValue)
+                features.Add($"{catalogModel.Seats} seats");
+            if (!string.IsNullOrEmpty(catalogModel.FuelType))
+                features.Add(catalogModel.FuelType);
 
-        if (features.Count > 0)
-            parts.Add(string.Join(" • ", features));
+            if (features.Count > 0)
+                parts.Add(string.Join(" • ", features));
+        }
 
         // Price
-        if (includePrice && vehicleModel?.DailyRate > 0)
+        if (includePrice && vehicleModel.DailyRate > 0)
         {
             parts.Add($"💰 ${vehicleModel.DailyRate}/day");
         }
 
         // Company info
-        if (vehicle.Company != null)
+        if (vehicleModel.Company != null)
         {
-            parts.Add($"📍 {vehicle.Company.CompanyName}");
+            parts.Add($"📍 {vehicleModel.Company.CompanyName}");
         }
 
         // Booking URL
-        var bookingUrl = GetBookingUrl(vehicle);
+        var bookingUrl = GetModelBookingUrl(vehicleModel);
         if (!string.IsNullOrEmpty(bookingUrl))
         {
             parts.Add($"🔗 Book now: {bookingUrl}");
@@ -299,13 +306,13 @@ public class AutoPublishService : IAutoPublishService
         return string.Join("\n\n", parts);
     }
 
-    private string? GetBookingUrl(Vehicle vehicle)
+    private string? GetModelBookingUrl(VehicleModel vehicleModel)
     {
-        if (vehicle.Company == null || vehicle.VehicleModel?.Model == null)
+        if (vehicleModel.Company == null || vehicleModel.Model == null)
             return null;
 
-        var catalogModel = vehicle.VehicleModel.Model;
-        var subdomain = vehicle.Company.Subdomain;
+        var catalogModel = vehicleModel.Model;
+        var subdomain = vehicleModel.Company.Subdomain;
         var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
         
         // Build query parameters
@@ -320,7 +327,7 @@ public class AutoPublishService : IAutoPublishService
         if (!string.IsNullOrEmpty(catalogModel.ModelName))
             queryParams.Add($"model={Uri.EscapeDataString(catalogModel.ModelName)}");
         
-        queryParams.Add($"companyId={vehicle.CompanyId}");
+        queryParams.Add($"companyId={vehicleModel.CompanyId}");
         queryParams.Add($"startDate={today}");
         queryParams.Add($"endDate={today}");
         

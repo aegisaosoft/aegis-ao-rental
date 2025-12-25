@@ -1146,7 +1146,8 @@ public class CarRentalDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
-            entity.Property(e => e.VehicleId).HasColumnName("vehicle_id").IsRequired();
+            entity.Property(e => e.VehicleId).HasColumnName("vehicle_id"); // Nullable for model posts
+            entity.Property(e => e.VehicleModelId).HasColumnName("vehicle_model_id"); // For model posts
             entity.Property(e => e.Platform).HasColumnName("platform").HasColumnType("social_platform").IsRequired();
             entity.Property(e => e.PostId).HasColumnName("post_id").HasMaxLength(100).IsRequired();
             entity.Property(e => e.Permalink).HasColumnName("permalink").HasMaxLength(500);
@@ -1159,8 +1160,10 @@ public class CarRentalDbContext : DbContext
             
             // Indexes
             entity.HasIndex(e => new { e.CompanyId, e.VehicleId });
+            entity.HasIndex(e => new { e.CompanyId, e.VehicleModelId });
             entity.HasIndex(e => new { e.CompanyId, e.Platform }).HasFilter("is_active = true");
             entity.HasIndex(e => new { e.VehicleId, e.Platform }).HasFilter("is_active = true");
+            entity.HasIndex(e => new { e.VehicleModelId, e.Platform }).HasFilter("is_active = true");
             
             entity.HasOne(e => e.Company)
                 .WithMany()
@@ -1170,6 +1173,11 @@ public class CarRentalDbContext : DbContext
             entity.HasOne(e => e.Vehicle)
                 .WithMany()
                 .HasForeignKey(e => e.VehicleId)
+                .OnDelete(DeleteBehavior.Cascade);
+                
+            entity.HasOne(e => e.Model)
+                .WithMany()
+                .HasForeignKey(e => e.VehicleModelId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

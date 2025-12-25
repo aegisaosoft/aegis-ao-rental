@@ -14,7 +14,7 @@
 namespace CarRental.Api.Models;
 
 /// <summary>
-/// Tracks vehicles posted to social media platforms (Facebook/Instagram)
+/// Tracks vehicles/models posted to social media platforms (Facebook/Instagram)
 /// </summary>
 public class VehicleSocialPost
 {
@@ -26,9 +26,14 @@ public class VehicleSocialPost
     public Guid CompanyId { get; set; }
 
     /// <summary>
-    /// Reference to the vehicle
+    /// Reference to the vehicle (for individual vehicle posts)
     /// </summary>
-    public Guid VehicleId { get; set; }
+    public Guid? VehicleId { get; set; }
+
+    /// <summary>
+    /// Reference to the vehicle model (for model posts - Make/Model/Year)
+    /// </summary>
+    public Guid? VehicleModelId { get; set; }
 
     /// <summary>
     /// Social platform (Facebook or Instagram)
@@ -78,6 +83,7 @@ public class VehicleSocialPost
     // Navigation properties
     public Company? Company { get; set; }
     public Vehicle? Vehicle { get; set; }
+    public VehicleModel? Model { get; set; }
 }
 
 /// <summary>

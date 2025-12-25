@@ -626,7 +626,7 @@ public class SocialPostController : ControllerBase
             {
                 id = v.Id,
                 name = v.VehicleModel?.Model != null 
-                    ? $"{v.VehicleModel.Model.Make} {v.VehicleModel.Model.ModelName} {v.VehicleModel.Model.Year}"
+                    ? $"{v.VehicleModel.Model.Make} {v.VehicleModel.Model.ModelName}"
                     : v.LicensePlate,
                 licensePlate = v.LicensePlate,
                 imageUrl = v.ImageUrl,
@@ -653,11 +653,11 @@ public class SocialPostController : ControllerBase
         var catalogModel = vehicleModel?.Model;
         var parts = new List<string>();
 
-        // Vehicle name
-        var vehicleName = catalogModel != null
-            ? $"{catalogModel.Year} {catalogModel.Make} {catalogModel.ModelName}"
+        // Model name (Make + Model, without Year)
+        var modelName = catalogModel != null
+            ? $"{catalogModel.Make} {catalogModel.ModelName}"
             : $"Vehicle {vehicle.LicensePlate}";
-        parts.Add($"🚗 {vehicleName}");
+        parts.Add($"🚗 {modelName}");
 
         // Features
         var features = new List<string>();

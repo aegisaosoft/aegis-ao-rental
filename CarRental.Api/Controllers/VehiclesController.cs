@@ -626,6 +626,9 @@ public class VehiclesController : ControllerBase
             // Find or create vehicle_model catalog entry
             var vehicleModel = await _context.VehicleModels
                 .FirstOrDefaultAsync(vm => vm.ModelId == model.Id && vm.CompanyId == createVehicleDto.CompanyId);
+            
+            bool isNewModel = vehicleModel == null;
+            
             if (vehicleModel == null)
             {
                 vehicleModel = new VehicleModel
@@ -695,23 +698,26 @@ public class VehiclesController : ControllerBase
                 UpdatedAt = vehicle.UpdatedAt
             };
 
-            // Auto-publish to social media if enabled (fire and forget)
-            _ = Task.Run(async () =>
+            // Auto-publish NEW MODEL to social media (fire and forget)
+            if (isNewModel)
             {
-                try
+                _ = Task.Run(async () =>
                 {
-                    using var scope = HttpContext.RequestServices.CreateScope();
-                    var autoPublishService = scope.ServiceProvider.GetService<IAutoPublishService>();
-                    if (autoPublishService != null)
+                    try
                     {
-                        await autoPublishService.PublishVehicleAsync(vehicle.CompanyId, vehicle.Id);
+                        using var scope = HttpContext.RequestServices.CreateScope();
+                        var autoPublishService = scope.ServiceProvider.GetService<IAutoPublishService>();
+                        if (autoPublishService != null)
+                        {
+                            await autoPublishService.PublishModelAsync(vehicleModel.CompanyId, vehicleModel.Id);
+                        }
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Auto-publish failed for vehicle {VehicleId}", vehicle.Id);
-                }
-            });
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Auto-publish failed for model {VehicleModelId}", vehicleModel.Id);
+                    }
+                });
+            }
 
             return CreatedAtAction(nameof(GetVehicle), new { id = vehicle.Id }, vehicleDto);
         }
@@ -1647,6 +1653,8 @@ public class VehiclesController : ControllerBase
                         var vehicleModel = await _context.VehicleModels
                             .FirstOrDefaultAsync(vm => vm.ModelId == model.Id && vm.CompanyId == parsedCompanyId);
 
+                        bool isNewVehicleModel = vehicleModel == null;
+                        
                         if (vehicleModel == null)
                         {
                             var dailyRate = dailyRateIndex != -1 && values.Length > dailyRateIndex && decimal.TryParse(values[dailyRateIndex], out var rate) ? rate : 0m;
@@ -1662,6 +1670,28 @@ public class VehiclesController : ControllerBase
                             await _context.SaveChangesAsync();
                             _logger.LogInformation("[Import] Line {LineNumber}: Created vehicle_model entry with ID: {VehicleModelId}, ModelId: {ModelId}, CompanyId: {CompanyId}, DailyRate: {DailyRate}", 
                                 lineNumber, vehicleModel.Id, model.Id, parsedCompanyId, dailyRate);
+                            
+                            // Auto-publish new model (fire and forget)
+                            var modelId = vehicleModel.Id;
+                            var companyId = vehicleModel.CompanyId;
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    // Wait a bit for the image to be available
+                                    await Task.Delay(5000);
+                                    using var scope = HttpContext.RequestServices.CreateScope();
+                                    var autoPublishService = scope.ServiceProvider.GetService<IAutoPublishService>();
+                                    if (autoPublishService != null)
+                                    {
+                                        await autoPublishService.PublishModelAsync(companyId, modelId);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Auto-publish failed for imported model {VehicleModelId}", modelId);
+                                }
+                            });
                         }
                         else
                         {
