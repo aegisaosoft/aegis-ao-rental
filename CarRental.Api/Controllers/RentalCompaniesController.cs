@@ -43,6 +43,7 @@ public class RentalCompaniesController : ControllerBase
     private readonly IAzureDnsService? _azureDnsService;
     private readonly IWebHostEnvironment _environment;
     private readonly IEmailService _emailService;
+    private readonly IAzureBlobStorageService _blobStorageService;
 
     public RentalCompaniesController(
         CarRentalDbContext context, 
@@ -52,6 +53,7 @@ public class RentalCompaniesController : ControllerBase
         IStripeConnectService stripeConnectService,
         IWebHostEnvironment environment,
         IEmailService emailService,
+        IAzureBlobStorageService blobStorageService,
         IAzureDnsService? azureDnsService = null)
     {
         _context = context;
@@ -61,6 +63,7 @@ public class RentalCompaniesController : ControllerBase
         _stripeConnectService = stripeConnectService;
         _environment = environment;
         _emailService = emailService;
+        _blobStorageService = blobStorageService;
         _azureDnsService = azureDnsService;
     }
 
@@ -1972,30 +1975,38 @@ public class RentalCompaniesController : ControllerBase
                     return null;
                 }
 
-                var targetDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString());
-                Directory.CreateDirectory(targetDirectory);
-
-                foreach (var existing in Directory.EnumerateFiles(targetDirectory, $"{assetName}.*"))
+                // Check if Azure Blob Storage is configured
+                if (!await _blobStorageService.IsConfiguredAsync())
                 {
-                    try
-                    {
-                        System.IO.File.Delete(existing);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete existing {AssetName} file {File} for company {CompanyId}", assetName, existing, companyId);
-                    }
+                    _logger.LogError("Azure Blob Storage is not configured. Cannot save {AssetName} for company {CompanyId}", assetName, companyId);
+                    throw new InvalidOperationException("Azure Blob Storage is not configured. Please configure it in Settings > Azure Blob Storage.");
                 }
 
                 var fileName = $"{assetName}.{extension}";
-                var filePath = Path.Combine(targetDirectory, fileName);
+                var blobPath = $"{companyId}/{fileName}";
+                const string containerName = "companies";
 
-                await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+                // Delete existing files with same asset name but different extension
+                var existingFiles = await _blobStorageService.ListFilesAsync(containerName, $"{companyId}/{assetName}.");
+                foreach (var existingFile in existingFiles)
+                {
+                    await _blobStorageService.DeleteFileAsync(containerName, existingFile);
+                }
 
-                var relativePath = $"/public/{companyId}/{fileName}".Replace("\\", "/");
-                return CombineWithBase(publicBaseUrl, relativePath);
+                // Upload new file to Azure Blob Storage
+                using var stream = new MemoryStream(fileBytes);
+                var blobUrl = await _blobStorageService.UploadFileAsync(stream, containerName, blobPath, mimeType);
+                _logger.LogInformation("Uploaded {AssetName} to blob storage: {BlobUrl}", assetName, blobUrl);
+                return blobUrl;
             }
 
+            // Check if it's already a blob storage URL - return as-is
+            if (rawValue.Contains("blob.core.windows.net"))
+            {
+                return rawValue;
+            }
+
+            // For legacy local URLs, return as-is (they will still work until migrated)
             if (rawValue.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
             {
                 return CombineWithBase(publicBaseUrl, rawValue.Replace("\\", "/"));
@@ -2011,7 +2022,7 @@ public class RentalCompaniesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process {AssetName} for company {CompanyId}", assetName, companyId);
-            return null;
+            throw;
         }
     }
 
