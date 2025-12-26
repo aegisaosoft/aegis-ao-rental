@@ -83,6 +83,21 @@ namespace CarRental.Api.Services
             if (parts.Length > 0)
             {
                 var subdomain = parts[0];
+                
+                // Skip reserved subdomains - these are not company subdomains
+                // www.aegis-rental.com, aegis-rental.com, admin.aegis-rental.com, api.aegis-rental.com
+                var reservedSubdomains = new HashSet<string> 
+                { 
+                    "www", "aegis-rental", "admin", "api", "app", "mail", "smtp", 
+                    "ftp", "cdn", "static", "assets", "images", "media" 
+                };
+                
+                if (reservedSubdomains.Contains(subdomain))
+                {
+                    _logger.LogDebug("Skipping reserved subdomain: {Subdomain}", subdomain);
+                    return null;
+                }
+                
                 return await GetCompanyBySubdomainAsync(subdomain);
             }
             
