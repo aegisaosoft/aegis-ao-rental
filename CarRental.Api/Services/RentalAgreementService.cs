@@ -8,7 +8,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Hosting;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
@@ -64,16 +63,16 @@ public class RentalAgreementService : IRentalAgreementService
 {
     private readonly CarRentalDbContext _db;
     private readonly ILogger<RentalAgreementService> _logger;
-    private readonly IWebHostEnvironment _environment;
+    private readonly IAzureBlobStorageService _blobStorageService;
 
     public RentalAgreementService(
         CarRentalDbContext db,
         ILogger<RentalAgreementService> logger,
-        IWebHostEnvironment environment)
+        IAzureBlobStorageService blobStorageService)
     {
         _db = db;
         _logger = logger;
-        _environment = environment;
+        _blobStorageService = blobStorageService;
     }
 
     public async Task<RentalAgreementEntity> CreateAgreementAsync(CreateAgreementRequest request, CancellationToken ct = default)
@@ -265,45 +264,42 @@ public class RentalAgreementService : IRentalAgreementService
             CardAuthorizationText = agreement.CardAuthorizationText,
         });
         
-        // Save PDF to company agreements folder (existing location)
-        var agreementsFolder = Path.Combine(_environment.ContentRootPath, "wwwroot", "agreements", agreement.CompanyId.ToString());
-        Directory.CreateDirectory(agreementsFolder);
+        // Check if Azure Blob Storage is configured
+        if (!await _blobStorageService.IsConfiguredAsync())
+        {
+            throw new InvalidOperationException("Azure Blob Storage is not configured. Cannot save rental agreement PDF.");
+        }
         
         var fileName = $"{agreement.AgreementNumber}.pdf";
-        var companyFilePath = Path.Combine(agreementsFolder, fileName);
+        const string containerName = "agreements";
         
-        await System.IO.File.WriteAllBytesAsync(companyFilePath, pdfBytes, ct);
+        // Save PDF to company folder in blob storage: agreements/{companyId}/{fileName}
+        var companyBlobPath = $"{agreement.CompanyId}/{fileName}";
+        string pdfUrl;
+        
+        using (var stream = new MemoryStream(pdfBytes))
+        {
+            pdfUrl = await _blobStorageService.UploadFileAsync(stream, containerName, companyBlobPath, "application/pdf");
+        }
+        
+        _logger.LogInformation("Uploaded agreement PDF to blob storage: {PdfUrl}", pdfUrl);
         
         // Additionally store under customers/{customerId}/agreements/{YYYY-MM-DD}/
-        // to satisfy per-customer archival and static serving from /customers path
         try
         {
             var dateFolder = DateTime.UtcNow.ToString("yyyy-MM-dd");
-            var customerAgreementsFolder = Path.Combine(
-                _environment.ContentRootPath,
-                "wwwroot",
-                "customers",
-                agreement.CustomerId.ToString(),
-                "agreements",
-                dateFolder
-            );
-            Directory.CreateDirectory(customerAgreementsFolder);
-            var customerFilePath = Path.Combine(customerAgreementsFolder, fileName);
-            await System.IO.File.WriteAllBytesAsync(customerFilePath, pdfBytes, ct);
+            var customerBlobPath = $"{agreement.CustomerId}/agreements/{dateFolder}/{fileName}";
             
-            _logger.LogInformation(
-                "Stored agreement PDF for customer at {CustomerFilePath}",
-                customerFilePath
-            );
+            using var customerStream = new MemoryStream(pdfBytes);
+            var customerPdfUrl = await _blobStorageService.UploadFileAsync(customerStream, containerName, customerBlobPath, "application/pdf");
+            
+            _logger.LogInformation("Stored agreement PDF for customer at {CustomerPdfUrl}", customerPdfUrl);
         }
         catch (Exception copyEx)
         {
             // Don't fail overall generation if copy fails; log and continue
             _logger.LogWarning(copyEx, "Failed to copy agreement PDF to customer folder for Agreement {AgreementNumber}", agreement.AgreementNumber);
         }
-        
-        // Generate URL path (existing URL kept for compatibility)
-        var pdfUrl = $"/agreements/{agreement.CompanyId}/{fileName}";
         
         // Update agreement with PDF URL
         agreement.PdfUrl = pdfUrl;
