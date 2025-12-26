@@ -202,19 +202,11 @@ builder.Services.AddScoped<ISettingsService, SettingsService>();
 // Add Azure DNS Service (mandatory - requires Azure configuration)
 builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
 
-// Add Azure Blob Storage Service (or local fallback)
-// Check if Azure Storage is configured
-var azureStorageConnectionString = builder.Configuration["AzureStorage:ConnectionString"];
-if (!string.IsNullOrEmpty(azureStorageConnectionString))
-{
-    Console.WriteLine("✅ Azure Blob Storage configured - using AzureBlobStorageService");
-    builder.Services.AddSingleton<IAzureBlobStorageService, AzureBlobStorageService>();
-}
-else
-{
-    Console.WriteLine("⚠️ Azure Blob Storage NOT configured - using LocalFileStorageService (files will NOT persist on Azure App Service!)");
-    builder.Services.AddSingleton<IAzureBlobStorageService, LocalFileStorageService>();
-}
+// Add Azure Blob Storage Service
+// Now reads connection string from database settings (via SettingsService) with fallback to configuration
+// Registered as Scoped because it depends on ISettingsService which is scoped
+Console.WriteLine("✅ Azure Blob Storage Service registered - reads settings from database");
+builder.Services.AddScoped<IAzureBlobStorageService, AzureBlobStorageService>();
 
 // Add Translation Service
 builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
@@ -254,7 +246,7 @@ builder.Services.AddHostedService<SecurityDepositCollectionService>();
 builder.Services.AddHostedService<MetaTokenRefreshBackgroundService>();
 
 // Add Meta OAuth Integration Services
-builder.Services.Configure<CarRental.Api.Models.MetaOAuthSettings>(builder.Configuration.GetSection("MetaOAuth"));
+// Now reads settings from database (via SettingsService) with fallback to configuration
 builder.Services.AddScoped<IMetaOAuthService, MetaOAuthService>();
 builder.Services.AddScoped<ICompanyMetaCredentialsRepository, CompanyMetaCredentialsRepository>();
 builder.Services.AddScoped<IVehicleSocialPostRepository, VehicleSocialPostRepository>();

@@ -21,6 +21,14 @@ public class SettingsController : ControllerBase
     private const string ClaudeApiKeySetting = "claude.apiKey";
     private const string OpenAIApiKeySetting = "openai.apiKey";
     private const string GoogleTranslateApiKeySetting = "google.translate.key";
+    
+    private const string AzureStorageConnectionStringSetting = "azure.storage.connectionString";
+    private const string AzureStorageContainerNameSetting = "azure.storage.containerName";
+    
+    private const string MetaAppIdSetting = "meta.appId";
+    private const string MetaAppSecretSetting = "meta.appSecret";
+    private const string MetaRedirectUriSetting = "meta.redirectUri";
+    private const string MetaFrontendRedirectUrlSetting = "meta.frontendRedirectUrl";
 
     public SettingsController(ISettingsService settingsService, ILogger<SettingsController> logger)
     {
@@ -190,6 +198,232 @@ public class SettingsController : ControllerBase
         {
             _logger.LogError(ex, "Failed to update Google Translate settings");
             return StatusCode(500, new { error = "Failed to update Google Translate settings." });
+        }
+    }
+
+    [HttpGet("azure-blob-storage")]
+    public async Task<ActionResult<AzureBlobStorageSettingsResponseDto>> GetAzureBlobStorageSettings()
+    {
+        var connectionString = await _settingsService.GetValueAsync(AzureStorageConnectionStringSetting);
+        var containerName = await _settingsService.GetValueAsync(AzureStorageContainerNameSetting);
+        
+        string? storageAccountUrl = null;
+        bool isConfigured = false;
+        
+        if (!string.IsNullOrWhiteSpace(connectionString))
+        {
+            try
+            {
+                var blobServiceClient = new Azure.Storage.Blobs.BlobServiceClient(connectionString);
+                storageAccountUrl = blobServiceClient.Uri.ToString().TrimEnd('/');
+                isConfigured = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to validate Azure Blob Storage connection string");
+            }
+        }
+
+        var response = new AzureBlobStorageSettingsResponseDto
+        {
+            HasConnectionString = !string.IsNullOrWhiteSpace(connectionString),
+            ConnectionStringPreview = MaskSecret(connectionString),
+            ConnectionString = connectionString,
+            ContainerName = containerName ?? "vehicle-media",
+            IsConfigured = isConfigured,
+            StorageAccountUrl = storageAccountUrl
+        };
+
+        return Ok(response);
+    }
+
+    [HttpPut("azure-blob-storage")]
+    public async Task<IActionResult> UpdateAzureBlobStorageSettings([FromBody] UpdateAzureBlobStorageSettingsRequestDto request)
+    {
+        try
+        {
+            if (request.RemoveConnectionString)
+            {
+                await _settingsService.SetValueAsync(AzureStorageConnectionStringSetting, null);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.ConnectionString))
+            {
+                // Validate connection string before saving
+                try
+                {
+                    var blobServiceClient = new Azure.Storage.Blobs.BlobServiceClient(request.ConnectionString.Trim());
+                    _ = blobServiceClient.Uri;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Invalid Azure Blob Storage connection string provided");
+                    return BadRequest(new { error = "Invalid Azure Blob Storage connection string." });
+                }
+                
+                await _settingsService.SetValueAsync(AzureStorageConnectionStringSetting, request.ConnectionString.Trim());
+            }
+
+            if (request.RemoveContainerName)
+            {
+                await _settingsService.SetValueAsync(AzureStorageContainerNameSetting, null);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.ContainerName))
+            {
+                await _settingsService.SetValueAsync(AzureStorageContainerNameSetting, request.ContainerName.Trim().ToLowerInvariant());
+            }
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update Azure Blob Storage settings");
+            return StatusCode(500, new { error = "Failed to update Azure Blob Storage settings." });
+        }
+    }
+
+    [HttpGet("azure-blob-storage/test")]
+    public async Task<ActionResult> TestAzureBlobStorageConnection()
+    {
+        try
+        {
+            var connectionString = await _settingsService.GetValueAsync(AzureStorageConnectionStringSetting);
+            var containerName = await _settingsService.GetValueAsync(AzureStorageContainerNameSetting) ?? "vehicle-media";
+            
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                return BadRequest(new { success = false, error = "Azure Blob Storage connection string is not configured." });
+            }
+
+            var blobServiceClient = new Azure.Storage.Blobs.BlobServiceClient(connectionString);
+            var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
+            
+            // Try to check if container exists or can be created
+            var exists = await containerClient.ExistsAsync();
+            
+            return Ok(new 
+            { 
+                success = true, 
+                message = exists.Value ? $"Successfully connected. Container '{containerName}' exists." : $"Successfully connected. Container '{containerName}' does not exist yet but will be created on first upload.",
+                storageAccountUrl = blobServiceClient.Uri.ToString().TrimEnd('/'),
+                containerName = containerName
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to test Azure Blob Storage connection");
+            return BadRequest(new { success = false, error = $"Connection failed: {ex.Message}" });
+        }
+    }
+
+    [HttpGet("meta-oauth")]
+    public async Task<ActionResult<MetaOAuthSettingsResponseDto>> GetMetaOAuthSettings()
+    {
+        var appId = await _settingsService.GetValueAsync(MetaAppIdSetting);
+        var appSecret = await _settingsService.GetValueAsync(MetaAppSecretSetting);
+        var redirectUri = await _settingsService.GetValueAsync(MetaRedirectUriSetting);
+        var frontendRedirectUrl = await _settingsService.GetValueAsync(MetaFrontendRedirectUrlSetting);
+
+        var response = new MetaOAuthSettingsResponseDto
+        {
+            HasAppId = !string.IsNullOrWhiteSpace(appId),
+            AppId = appId,
+            HasAppSecret = !string.IsNullOrWhiteSpace(appSecret),
+            AppSecretPreview = MaskSecret(appSecret),
+            AppSecret = appSecret,
+            RedirectUri = redirectUri,
+            FrontendRedirectUrl = frontendRedirectUrl,
+            IsConfigured = !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(appSecret)
+        };
+
+        return Ok(response);
+    }
+
+    [HttpPut("meta-oauth")]
+    public async Task<IActionResult> UpdateMetaOAuthSettings([FromBody] UpdateMetaOAuthSettingsRequestDto request)
+    {
+        try
+        {
+            if (request.RemoveAppId)
+            {
+                await _settingsService.SetValueAsync(MetaAppIdSetting, null);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.AppId))
+            {
+                await _settingsService.SetValueAsync(MetaAppIdSetting, request.AppId.Trim());
+            }
+
+            if (request.RemoveAppSecret)
+            {
+                await _settingsService.SetValueAsync(MetaAppSecretSetting, null);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.AppSecret))
+            {
+                await _settingsService.SetValueAsync(MetaAppSecretSetting, request.AppSecret.Trim());
+            }
+
+            if (request.RemoveRedirectUri)
+            {
+                await _settingsService.SetValueAsync(MetaRedirectUriSetting, null);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.RedirectUri))
+            {
+                await _settingsService.SetValueAsync(MetaRedirectUriSetting, request.RedirectUri.Trim());
+            }
+
+            if (request.RemoveFrontendRedirectUrl)
+            {
+                await _settingsService.SetValueAsync(MetaFrontendRedirectUrlSetting, null);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.FrontendRedirectUrl))
+            {
+                await _settingsService.SetValueAsync(MetaFrontendRedirectUrlSetting, request.FrontendRedirectUrl.Trim());
+            }
+
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update Meta OAuth settings");
+            return StatusCode(500, new { error = "Failed to update Meta OAuth settings." });
+        }
+    }
+
+    [HttpGet("meta-oauth/test")]
+    public async Task<ActionResult> TestMetaOAuthConnection()
+    {
+        try
+        {
+            var appId = await _settingsService.GetValueAsync(MetaAppIdSetting);
+            var appSecret = await _settingsService.GetValueAsync(MetaAppSecretSetting);
+            
+            if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(appSecret))
+            {
+                return BadRequest(new { success = false, error = "Meta OAuth App ID and App Secret are required." });
+            }
+
+            // Test the app credentials by getting an app access token
+            using var httpClient = new HttpClient();
+            var url = $"https://graph.facebook.com/v19.0/oauth/access_token?client_id={appId}&client_secret={appSecret}&grant_type=client_credentials";
+            
+            var response = await httpClient.GetAsync(url);
+            var content = await response.Content.ReadAsStringAsync();
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                return BadRequest(new { success = false, error = $"Meta API returned an error. Please verify your App ID and App Secret." });
+            }
+            
+            return Ok(new 
+            { 
+                success = true, 
+                message = "Successfully connected to Meta Graph API. App credentials are valid.",
+                appId = appId
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to test Meta OAuth connection");
+            return BadRequest(new { success = false, error = $"Connection failed: {ex.Message}" });
         }
     }
 

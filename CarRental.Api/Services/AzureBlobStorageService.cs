@@ -26,46 +26,87 @@ public interface IAzureBlobStorageService
     Task<bool> FileExistsAsync(string containerName, string blobPath);
     Task<IEnumerable<string>> ListFilesAsync(string containerName, string prefix);
     string GetBlobUrl(string containerName, string blobPath);
+    Task<bool> IsConfiguredAsync();
 }
 
 public class AzureBlobStorageService : IAzureBlobStorageService
 {
-    private readonly BlobServiceClient _blobServiceClient;
+    private readonly ISettingsService _settingsService;
     private readonly ILogger<AzureBlobStorageService> _logger;
-    private readonly string _storageAccountUrl;
+    private readonly IConfiguration _configuration;
+    
+    private const string ConnectionStringSettingKey = "azure.storage.connectionString";
+    private const string ContainerNameSettingKey = "azure.storage.containerName";
 
-    public AzureBlobStorageService(IConfiguration configuration, ILogger<AzureBlobStorageService> logger)
+    private BlobServiceClient? _cachedClient;
+    private string? _cachedConnectionString;
+    private string? _cachedStorageAccountUrl;
+
+    public AzureBlobStorageService(
+        ISettingsService settingsService,
+        IConfiguration configuration, 
+        ILogger<AzureBlobStorageService> logger)
     {
+        _settingsService = settingsService;
+        _configuration = configuration;
         _logger = logger;
+    }
+
+    private async Task<(BlobServiceClient? client, string? storageUrl)> GetBlobClientAsync()
+    {
+        // First try to get from database settings
+        var connectionString = await _settingsService.GetValueAsync(ConnectionStringSettingKey);
         
-        var connectionString = configuration["AzureStorage:ConnectionString"];
+        // Fallback to configuration if not in database
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            connectionString = _configuration["AzureStorage:ConnectionString"];
+        }
         
         if (string.IsNullOrEmpty(connectionString))
         {
-            _logger.LogWarning("AzureStorage:ConnectionString not configured. Using local file storage fallback.");
-            _blobServiceClient = null!;
-            _storageAccountUrl = "";
+            return (null, null);
         }
-        else
-        {
-            _blobServiceClient = new BlobServiceClient(connectionString);
-            _storageAccountUrl = _blobServiceClient.Uri.ToString().TrimEnd('/');
-            _logger.LogInformation("Azure Blob Storage initialized: {Url}", _storageAccountUrl);
-        }
-    }
 
-    public bool IsConfigured => _blobServiceClient != null;
-
-    public async Task<string> UploadFileAsync(Stream fileStream, string containerName, string blobPath, string contentType)
-    {
-        if (!IsConfigured)
+        // Check if we need to create a new client (connection string changed)
+        if (_cachedClient != null && _cachedConnectionString == connectionString)
         {
-            throw new InvalidOperationException("Azure Blob Storage is not configured");
+            return (_cachedClient, _cachedStorageAccountUrl);
         }
 
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            _cachedClient = new BlobServiceClient(connectionString);
+            _cachedStorageAccountUrl = _cachedClient.Uri.ToString().TrimEnd('/');
+            _cachedConnectionString = connectionString;
+            _logger.LogInformation("Azure Blob Storage client initialized: {Url}", _cachedStorageAccountUrl);
+            return (_cachedClient, _cachedStorageAccountUrl);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create Azure Blob Storage client");
+            return (null, null);
+        }
+    }
+
+    public async Task<bool> IsConfiguredAsync()
+    {
+        var (client, _) = await GetBlobClientAsync();
+        return client != null;
+    }
+
+    public async Task<string> UploadFileAsync(Stream fileStream, string containerName, string blobPath, string contentType)
+    {
+        var (client, _) = await GetBlobClientAsync();
+        
+        if (client == null)
+        {
+            throw new InvalidOperationException("Azure Blob Storage is not configured. Please configure it in Settings > Azure Blob Storage.");
+        }
+
+        try
+        {
+            var containerClient = client.GetBlobContainerClient(containerName);
             await containerClient.CreateIfNotExistsAsync(PublicAccessType.Blob);
 
             var blobClient = containerClient.GetBlobClient(blobPath);
@@ -94,14 +135,16 @@ public class AzureBlobStorageService : IAzureBlobStorageService
 
     public async Task<Stream?> DownloadFileAsync(string containerName, string blobPath)
     {
-        if (!IsConfigured)
+        var (client, _) = await GetBlobClientAsync();
+        
+        if (client == null)
         {
             return null;
         }
 
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            var containerClient = client.GetBlobContainerClient(containerName);
             
             // Check if container exists first
             if (!await containerClient.ExistsAsync())
@@ -130,14 +173,16 @@ public class AzureBlobStorageService : IAzureBlobStorageService
 
     public async Task<bool> DeleteFileAsync(string containerName, string blobPath)
     {
-        if (!IsConfigured)
+        var (client, _) = await GetBlobClientAsync();
+        
+        if (client == null)
         {
             return false;
         }
 
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            var containerClient = client.GetBlobContainerClient(containerName);
             var blobClient = containerClient.GetBlobClient(blobPath);
 
             var response = await blobClient.DeleteIfExistsAsync();
@@ -154,14 +199,16 @@ public class AzureBlobStorageService : IAzureBlobStorageService
 
     public async Task<bool> FileExistsAsync(string containerName, string blobPath)
     {
-        if (!IsConfigured)
+        var (client, _) = await GetBlobClientAsync();
+        
+        if (client == null)
         {
             return false;
         }
 
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            var containerClient = client.GetBlobContainerClient(containerName);
             
             // Check if container exists first
             if (!await containerClient.ExistsAsync())
@@ -182,14 +229,16 @@ public class AzureBlobStorageService : IAzureBlobStorageService
 
     public async Task<IEnumerable<string>> ListFilesAsync(string containerName, string prefix)
     {
-        if (!IsConfigured)
+        var (client, _) = await GetBlobClientAsync();
+        
+        if (client == null)
         {
             return Enumerable.Empty<string>();
         }
 
         try
         {
-            var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+            var containerClient = client.GetBlobContainerClient(containerName);
             
             // Check if container exists first
             if (!await containerClient.ExistsAsync())
@@ -216,12 +265,13 @@ public class AzureBlobStorageService : IAzureBlobStorageService
 
     public string GetBlobUrl(string containerName, string blobPath)
     {
-        if (!IsConfigured)
+        // This is synchronous, so we use cached values if available
+        if (string.IsNullOrEmpty(_cachedStorageAccountUrl))
         {
             return string.Empty;
         }
 
-        return $"{_storageAccountUrl}/{containerName}/{blobPath}";
+        return $"{_cachedStorageAccountUrl}/{containerName}/{blobPath}";
     }
 }
 
@@ -244,6 +294,8 @@ public class LocalFileStorageService : IAzureBlobStorageService
         _baseUrl = configuration["ApiBaseUrl"] ?? "";
         _logger.LogWarning("Using local file storage. Files will NOT persist on Azure App Service!");
     }
+
+    public Task<bool> IsConfiguredAsync() => Task.FromResult(true);
 
     public async Task<string> UploadFileAsync(Stream fileStream, string containerName, string blobPath, string contentType)
     {

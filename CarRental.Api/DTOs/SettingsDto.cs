@@ -60,3 +60,45 @@ public class UpdateGoogleTranslateSettingsRequestDto
     public string? ApiKey { get; set; }
     public bool RemoveApiKey { get; set; }
 }
+
+public class AzureBlobStorageSettingsResponseDto
+{
+    public bool HasConnectionString { get; set; }
+    public string? ConnectionStringPreview { get; set; }
+    public string? ConnectionString { get; set; }
+    public string? ContainerName { get; set; }
+    public bool IsConfigured { get; set; }
+    public string? StorageAccountUrl { get; set; }
+}
+
+public class UpdateAzureBlobStorageSettingsRequestDto
+{
+    public string? ConnectionString { get; set; }
+    public string? ContainerName { get; set; }
+    public bool RemoveConnectionString { get; set; }
+    public bool RemoveContainerName { get; set; }
+}
+
+public class MetaOAuthSettingsResponseDto
+{
+    public bool HasAppId { get; set; }
+    public string? AppId { get; set; }
+    public bool HasAppSecret { get; set; }
+    public string? AppSecretPreview { get; set; }
+    public string? AppSecret { get; set; }
+    public string? RedirectUri { get; set; }
+    public string? FrontendRedirectUrl { get; set; }
+    public bool IsConfigured { get; set; }
+}
+
+public class UpdateMetaOAuthSettingsRequestDto
+{
+    public string? AppId { get; set; }
+    public string? AppSecret { get; set; }
+    public string? RedirectUri { get; set; }
+    public string? FrontendRedirectUrl { get; set; }
+    public bool RemoveAppId { get; set; }
+    public bool RemoveAppSecret { get; set; }
+    public bool RemoveRedirectUri { get; set; }
+    public bool RemoveFrontendRedirectUrl { get; set; }
+}

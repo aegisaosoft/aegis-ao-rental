@@ -18,7 +18,9 @@ public class SettingsService : ISettingsService
         "stripe.secretKey",
         "stripe.publishableKey",
         "stripe.webhookSecret",
-        "azure.clientSecret"
+        "azure.clientSecret",
+        "azure.storage.connectionString",
+        "meta.appSecret"
     };
 
     private readonly CarRentalDbContext _context;

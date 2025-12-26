@@ -27,22 +27,29 @@ public interface IMetaOAuthService
 {
     string GenerateState(Guid companyId);
     Guid? ValidateAndExtractCompanyId(string state);
-    string GetAuthorizationUrl(string state);
+    Task<string> GetAuthorizationUrlAsync(string state);
     Task<OAuthExchangeResult> ExchangeCodeAsync(string code, Guid companyId);
     Task<IEnumerable<FacebookPage>> GetUserPagesAsync(string userAccessToken);
     Task SelectPageForCompanyAsync(Guid companyId, string pageId);
     Task RevokeAccessAsync(Guid companyId);
     Task<string> RefreshLongLivedTokenAsync(Guid companyId);
+    Task<MetaOAuthSettings> GetSettingsAsync();
 }
 
 public class MetaOAuthService : IMetaOAuthService
 {
     private readonly HttpClient _httpClient;
-    private readonly MetaOAuthSettings _settings;
+    private readonly ISettingsService _settingsService;
+    private readonly IConfiguration _configuration;
     private readonly ICompanyMetaCredentialsRepository _credentialsRepo;
     private readonly IMemoryCache _stateCache;
     private readonly ILogger<MetaOAuthService> _logger;
     private const string GraphApiBaseUrl = "https://graph.facebook.com/v19.0";
+    
+    private const string MetaAppIdSetting = "meta.appId";
+    private const string MetaAppSecretSetting = "meta.appSecret";
+    private const string MetaRedirectUriSetting = "meta.redirectUri";
+    private const string MetaFrontendRedirectUrlSetting = "meta.frontendRedirectUrl";
 
     // Required permissions for rental company management
     private readonly string[] _requiredScopes =
@@ -70,16 +77,41 @@ public class MetaOAuthService : IMetaOAuthService
 
     public MetaOAuthService(
         HttpClient httpClient,
-        IOptions<MetaOAuthSettings> settings,
+        ISettingsService settingsService,
+        IConfiguration configuration,
         ICompanyMetaCredentialsRepository credentialsRepo,
         IMemoryCache stateCache,
         ILogger<MetaOAuthService> logger)
     {
         _httpClient = httpClient;
-        _settings = settings.Value;
+        _settingsService = settingsService;
+        _configuration = configuration;
         _credentialsRepo = credentialsRepo;
         _stateCache = stateCache;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Gets Meta OAuth settings from database with fallback to configuration
+    /// </summary>
+    public async Task<MetaOAuthSettings> GetSettingsAsync()
+    {
+        // Try to get from database first
+        var appId = await _settingsService.GetValueAsync(MetaAppIdSetting);
+        var appSecret = await _settingsService.GetValueAsync(MetaAppSecretSetting);
+        var redirectUri = await _settingsService.GetValueAsync(MetaRedirectUriSetting);
+        var frontendRedirectUrl = await _settingsService.GetValueAsync(MetaFrontendRedirectUrlSetting);
+        
+        // Fallback to configuration if not in database
+        var configSection = _configuration.GetSection("MetaOAuth");
+        
+        return new MetaOAuthSettings
+        {
+            AppId = appId ?? configSection["AppId"] ?? "",
+            AppSecret = appSecret ?? configSection["AppSecret"] ?? "",
+            RedirectUri = redirectUri ?? configSection["RedirectUri"] ?? "",
+            FrontendRedirectUrl = frontendRedirectUrl ?? configSection["FrontendRedirectUrl"] ?? ""
+        };
     }
 
     /// <summary>
@@ -127,14 +159,15 @@ public class MetaOAuthService : IMetaOAuthService
     /// <summary>
     /// Builds Facebook OAuth authorization URL
     /// </summary>
-    public string GetAuthorizationUrl(string state)
+    public async Task<string> GetAuthorizationUrlAsync(string state)
     {
+        var settings = await GetSettingsAsync();
         var scopes = string.Join(",", _requiredScopes);
 
         var queryParams = new Dictionary<string, string>
         {
-            ["client_id"] = _settings.AppId,
-            ["redirect_uri"] = _settings.RedirectUri,
+            ["client_id"] = settings.AppId,
+            ["redirect_uri"] = settings.RedirectUri,
             ["state"] = state,
             ["scope"] = scopes,
             ["response_type"] = "code"
@@ -325,12 +358,13 @@ public class MetaOAuthService : IMetaOAuthService
 
     private async Task<ShortLivedTokenResponse> GetShortLivedTokenAsync(string code)
     {
+        var settings = await GetSettingsAsync();
         var url = $"{GraphApiBaseUrl}/oauth/access_token";
         var queryParams = new Dictionary<string, string>
         {
-            ["client_id"] = _settings.AppId,
-            ["client_secret"] = _settings.AppSecret,
-            ["redirect_uri"] = _settings.RedirectUri,
+            ["client_id"] = settings.AppId,
+            ["client_secret"] = settings.AppSecret,
+            ["redirect_uri"] = settings.RedirectUri,
             ["code"] = code
         };
 
@@ -351,12 +385,13 @@ public class MetaOAuthService : IMetaOAuthService
 
     private async Task<LongLivedTokenResponse> GetLongLivedTokenAsync(string shortLivedToken)
     {
+        var settings = await GetSettingsAsync();
         var url = $"{GraphApiBaseUrl}/oauth/access_token";
         var queryParams = new Dictionary<string, string>
         {
             ["grant_type"] = "fb_exchange_token",
-            ["client_id"] = _settings.AppId,
-            ["client_secret"] = _settings.AppSecret,
+            ["client_id"] = settings.AppId,
+            ["client_secret"] = settings.AppSecret,
             ["fb_exchange_token"] = shortLivedToken
         };
 

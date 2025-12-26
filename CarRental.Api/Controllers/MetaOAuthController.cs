@@ -14,7 +14,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Options;
 using System.Web;
 using System.Text.Json;
 using CarRental.Api.Models;
@@ -29,19 +28,16 @@ public class MetaOAuthController : ControllerBase
     private readonly IMetaOAuthService _oauthService;
     private readonly ICompanyMetaCredentialsRepository _credentialsRepo;
     private readonly ILogger<MetaOAuthController> _logger;
-    private readonly MetaOAuthSettings _settings;
     private readonly IMemoryCache _cache;
 
     public MetaOAuthController(
         IMetaOAuthService oauthService,
         ICompanyMetaCredentialsRepository credentialsRepo,
-        IOptions<MetaOAuthSettings> settings,
         IMemoryCache cache,
         ILogger<MetaOAuthController> logger)
     {
         _oauthService = oauthService;
         _credentialsRepo = credentialsRepo;
-        _settings = settings.Value;
         _cache = cache;
         _logger = logger;
     }
@@ -51,7 +47,7 @@ public class MetaOAuthController : ControllerBase
     /// </summary>
     [HttpGet("connect/{companyId}")]
     [AllowAnonymous]
-    public IActionResult Connect(Guid companyId, [FromQuery] string? lang)
+    public async Task<IActionResult> Connect(Guid companyId, [FromQuery] string? lang)
     {
         var origin = GetOriginFromRequest();
         var language = lang ?? GetLanguageFromRequest() ?? "en";
@@ -76,7 +72,7 @@ public class MetaOAuthController : ControllerBase
             "Stored OAuth origin for company {CompanyId}: {Origin}, lang: {Language}",
             companyId, origin, language);
 
-        var authUrl = _oauthService.GetAuthorizationUrl(state);
+        var authUrl = await _oauthService.GetAuthorizationUrlAsync(state);
 
         _logger.LogInformation(
             "Initiating Meta OAuth for company {CompanyId}",
@@ -96,7 +92,7 @@ public class MetaOAuthController : ControllerBase
         [FromQuery] string? error,
         [FromQuery] string? error_description)
     {
-        var redirectUrl = GetRedirectUrl(state);
+        var redirectUrl = await GetRedirectUrlAsync(state);
         var language = GetCachedLanguage(state);
 
         string BuildRedirect(string baseUrl, string queryParams)
@@ -458,7 +454,7 @@ public class MetaOAuthController : ControllerBase
         return null;
     }
 
-    private string GetRedirectUrl(string? state)
+    private async Task<string> GetRedirectUrlAsync(string? state)
     {
         if (!string.IsNullOrEmpty(state))
         {
@@ -470,7 +466,8 @@ public class MetaOAuthController : ControllerBase
             }
         }
 
-        return _settings.FrontendRedirectUrl;
+        var settings = await _oauthService.GetSettingsAsync();
+        return settings.FrontendRedirectUrl;
     }
 
     private string? GetCachedLanguage(string? state)
