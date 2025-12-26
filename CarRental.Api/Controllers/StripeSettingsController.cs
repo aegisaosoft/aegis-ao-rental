@@ -220,6 +220,93 @@ public class StripeSettingsController : ControllerBase
     }
 
     /// <summary>
+    /// Test connection to Stripe using the specified settings
+    /// </summary>
+    [HttpPost("{id}/test-connection")]
+    public async Task<IActionResult> TestStripeConnection(Guid id)
+    {
+        try
+        {
+            var setting = await _context.StripeSettings
+                .FirstOrDefaultAsync(s => s.Id == id);
+
+            if (setting == null)
+                return NotFound(new { success = false, error = "Stripe setting not found" });
+
+            if (string.IsNullOrEmpty(setting.SecretKey))
+                return BadRequest(new { success = false, error = "Secret key is not configured" });
+
+            // Decrypt the secret key
+            string secretKey;
+            try
+            {
+                var encryptionService = HttpContext.RequestServices.GetRequiredService<IEncryptionService>();
+                secretKey = encryptionService.Decrypt(setting.SecretKey);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to decrypt secret key for setting {Id}, trying as plaintext", id);
+                secretKey = setting.SecretKey;
+            }
+
+            // Validate key format
+            if (!secretKey.StartsWith("sk_"))
+            {
+                return BadRequest(new { 
+                    success = false, 
+                    error = "Invalid secret key format. Key should start with 'sk_'" 
+                });
+            }
+
+            // Determine environment from key
+            var isTestMode = secretKey.StartsWith("sk_test_");
+            var isLiveMode = secretKey.StartsWith("sk_live_");
+
+            // Test connection by retrieving account balance
+            try
+            {
+                var requestOptions = new Stripe.RequestOptions { ApiKey = secretKey };
+                var balanceService = new Stripe.BalanceService();
+                var balance = await balanceService.GetAsync(requestOptions: requestOptions);
+
+                // Connection successful
+                return Ok(new { 
+                    success = true, 
+                    message = "Connection successful",
+                    environment = isTestMode ? "test" : (isLiveMode ? "live" : "unknown"),
+                    settingsName = setting.Name,
+                    availableBalance = balance.Available?.FirstOrDefault()?.Amount ?? 0,
+                    currency = balance.Available?.FirstOrDefault()?.Currency ?? "usd"
+                });
+            }
+            catch (Stripe.StripeException stripeEx)
+            {
+                _logger.LogWarning(stripeEx, "Stripe connection test failed for setting {Id}: {Message}", id, stripeEx.Message);
+                
+                string errorMessage = stripeEx.StripeError?.Code switch
+                {
+                    "api_key_expired" => "API key has expired",
+                    "invalid_api_key" => "Invalid API key",
+                    "rate_limit" => "Rate limit exceeded, please try again later",
+                    _ => stripeEx.StripeError?.Message ?? stripeEx.Message
+                };
+
+                return Ok(new { 
+                    success = false, 
+                    error = errorMessage,
+                    stripeErrorCode = stripeEx.StripeError?.Code,
+                    environment = isTestMode ? "test" : (isLiveMode ? "live" : "unknown")
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error testing Stripe connection for setting {Id}", id);
+            return StatusCode(500, new { success = false, error = "Failed to test Stripe connection" });
+        }
+    }
+
+    /// <summary>
     /// Delete a Stripe setting
     /// </summary>
     [HttpDelete("{id}")]
