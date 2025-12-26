@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Add these entries to your existing Info.plist -->
+    
+    <!-- Camera permission -->
+    <key>NSCameraUsageDescription</key>
+    <string>We need camera access to scan driver's licenses for vehicle rental verification.</string>
+    
+    <!-- Microphone (required by Vision Camera even if not using it) -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>This app does not use the microphone.</string>
+</dict>
+</plist>

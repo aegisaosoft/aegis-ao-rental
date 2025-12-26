@@ -33,10 +33,8 @@ public class AzureBlobStorageService : IAzureBlobStorageService
 {
     private readonly ISettingsService _settingsService;
     private readonly ILogger<AzureBlobStorageService> _logger;
-    private readonly IConfiguration _configuration;
     
     private const string ConnectionStringSettingKey = "azure.storage.connectionString";
-    private const string ContainerNameSettingKey = "azure.storage.containerName";
 
     private BlobServiceClient? _cachedClient;
     private string? _cachedConnectionString;
@@ -44,27 +42,20 @@ public class AzureBlobStorageService : IAzureBlobStorageService
 
     public AzureBlobStorageService(
         ISettingsService settingsService,
-        IConfiguration configuration, 
         ILogger<AzureBlobStorageService> logger)
     {
         _settingsService = settingsService;
-        _configuration = configuration;
         _logger = logger;
     }
 
     private async Task<(BlobServiceClient? client, string? storageUrl)> GetBlobClientAsync()
     {
-        // First try to get from database settings
+        // Get connection string from database settings
         var connectionString = await _settingsService.GetValueAsync(ConnectionStringSettingKey);
         
-        // Fallback to configuration if not in database
         if (string.IsNullOrEmpty(connectionString))
         {
-            connectionString = _configuration["AzureStorage:ConnectionString"];
-        }
-        
-        if (string.IsNullOrEmpty(connectionString))
-        {
+            _logger.LogWarning("Azure Blob Storage connection string not found in database settings (key: {Key})", ConnectionStringSettingKey);
             return (null, null);
         }
 
