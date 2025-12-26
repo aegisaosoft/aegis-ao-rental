@@ -122,8 +122,8 @@ public class AutoPublishService : IAutoPublishService
                 catch { /* ignore */ }
             }
 
-            // Build caption for model
-            var caption = BuildModelCaption(vehicleModel, credentials.AutoPublishIncludePrice, hashtags);
+            // Build caption for model with Deep Link support
+            var caption = BuildModelCaption(vehicleModel, credentials.AutoPublishIncludePrice, hashtags, credentials);
 
             // Publish to Facebook
             if (credentials.AutoPublishFacebook && !string.IsNullOrEmpty(credentials.PageId) && !string.IsNullOrEmpty(credentials.PageAccessToken))
@@ -240,7 +240,7 @@ public class AutoPublishService : IAutoPublishService
         };
     }
 
-    private string BuildModelCaption(VehicleModel vehicleModel, bool includePrice, List<string>? hashtags)
+    private string BuildModelCaption(VehicleModel vehicleModel, bool includePrice, List<string>? hashtags, CompanyMetaCredentials? credentials = null)
     {
         var catalogModel = vehicleModel.Model;
         var parts = new List<string>();
@@ -278,8 +278,8 @@ public class AutoPublishService : IAutoPublishService
             parts.Add($"📍 {vehicleModel.Company.CompanyName}");
         }
 
-        // Booking URL
-        var bookingUrl = GetModelBookingUrl(vehicleModel);
+        // Booking URL with Deep Link support
+        var bookingUrl = GetModelBookingUrl(vehicleModel, credentials);
         if (!string.IsNullOrEmpty(bookingUrl))
         {
             parts.Add($"🔗 Book now: {bookingUrl}");
@@ -306,41 +306,46 @@ public class AutoPublishService : IAutoPublishService
         return string.Join("\n\n", parts);
     }
 
-    private string? GetModelBookingUrl(VehicleModel vehicleModel)
+    private string? GetModelBookingUrl(VehicleModel vehicleModel, CompanyMetaCredentials? credentials = null)
     {
         if (vehicleModel.Company == null || vehicleModel.Model == null)
             return null;
 
         var catalogModel = vehicleModel.Model;
-        var subdomain = vehicleModel.Company.Subdomain;
-        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var company = vehicleModel.Company;
         
-        // Build query parameters
-        var queryParams = new List<string>();
-        
-        if (catalogModel.CategoryId != null)
-            queryParams.Add($"category={catalogModel.CategoryId}");
-        
-        if (!string.IsNullOrEmpty(catalogModel.Make))
-            queryParams.Add($"make={Uri.EscapeDataString(catalogModel.Make)}");
-        
-        if (!string.IsNullOrEmpty(catalogModel.ModelName))
-            queryParams.Add($"model={Uri.EscapeDataString(catalogModel.ModelName)}");
-        
-        queryParams.Add($"companyId={vehicleModel.CompanyId}");
-        queryParams.Add($"startDate={today}");
-        queryParams.Add($"endDate={today}");
-        
-        var query = string.Join("&", queryParams);
-        
-        // Use company subdomain if available
-        if (!string.IsNullOrEmpty(subdomain))
+        // Determine base URL
+        string baseUrl;
+        if (!string.IsNullOrEmpty(credentials?.DeepLinkBaseUrl))
         {
-            return $"https://{subdomain}.aegis-rental.com/book?{query}";
+            baseUrl = credentials.DeepLinkBaseUrl.TrimEnd('/');
         }
-
-        // Fallback to main site
-        return $"https://aegis-rental.com/book?{query}";
+        else if (!string.IsNullOrEmpty(company.Subdomain))
+        {
+            baseUrl = $"https://{company.Subdomain}.aegis-rental.com";
+        }
+        else
+        {
+            baseUrl = "https://aegis-rental.com";
+        }
+        
+        // Determine URL pattern
+        string urlPattern = credentials?.DeepLinkVehiclePattern ?? "/book?modelId={modelId}";
+        
+        // Replace placeholders
+        var url = urlPattern
+            .Replace("{modelId}", vehicleModel.Id.ToString())
+            .Replace("{vehicleId}", vehicleModel.Id.ToString())
+            .Replace("{make}", Uri.EscapeDataString(catalogModel.Make ?? ""))
+            .Replace("{model}", Uri.EscapeDataString(catalogModel.ModelName ?? ""))
+            .Replace("{companyId}", vehicleModel.CompanyId.ToString())
+            .Replace("{category}", catalogModel.CategoryId?.ToString() ?? "");
+        
+        // Clean up empty query params
+        url = System.Text.RegularExpressions.Regex.Replace(url, @"[&?][^=]+=(?=&|$)", "");
+        url = url.TrimEnd('&', '?');
+        
+        return $"{baseUrl}{url}";
     }
 
     private string NormalizeImageUrl(string imageUrl)

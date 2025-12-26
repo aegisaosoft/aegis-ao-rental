@@ -417,6 +417,113 @@ public class MetaOAuthController : ControllerBase
         return Ok(new { message = "Auto-publish settings updated" });
     }
 
+    /// <summary>
+    /// Get deep link settings for company
+    /// </summary>
+    [HttpGet("deep-links/{companyId}")]
+    [Authorize]
+    public async Task<IActionResult> GetDeepLinkSettings(Guid companyId)
+    {
+        var credentials = await _credentialsRepo.GetByCompanyIdAsync(companyId);
+        if (credentials == null)
+        {
+            return NotFound(new { error = "Company not connected to Meta" });
+        }
+
+        return Ok(new DeepLinkSettingsResponse
+        {
+            BaseUrl = credentials.DeepLinkBaseUrl,
+            VehiclePattern = credentials.DeepLinkVehiclePattern ?? "/book?modelId={modelId}",
+            BookingPattern = credentials.DeepLinkBookingPattern ?? "/booking/{bookingId}",
+            PreviewUrl = GeneratePreviewUrl(credentials, companyId)
+        });
+    }
+
+    /// <summary>
+    /// Update deep link settings for company
+    /// </summary>
+    [HttpPost("deep-links/{companyId}")]
+    [Authorize]
+    public async Task<IActionResult> UpdateDeepLinkSettings(Guid companyId, [FromBody] UpdateDeepLinkSettingsRequest request)
+    {
+        var credentials = await _credentialsRepo.GetByCompanyIdAsync(companyId);
+        if (credentials == null)
+        {
+            return NotFound(new { error = "Company not connected to Meta" });
+        }
+
+        // Validate base URL format
+        if (!string.IsNullOrEmpty(request.BaseUrl))
+        {
+            if (!Uri.TryCreate(request.BaseUrl, UriKind.Absolute, out var uri) || 
+                (uri.Scheme != "http" && uri.Scheme != "https"))
+            {
+                return BadRequest(new { error = "Invalid base URL format. Must be a valid HTTP/HTTPS URL." });
+            }
+            credentials.DeepLinkBaseUrl = request.BaseUrl.TrimEnd('/');
+        }
+        else
+        {
+            credentials.DeepLinkBaseUrl = null;
+        }
+
+        // Validate vehicle pattern has required placeholder
+        if (!string.IsNullOrEmpty(request.VehiclePattern))
+        {
+            if (!request.VehiclePattern.StartsWith("/"))
+            {
+                return BadRequest(new { error = "Vehicle pattern must start with /" });
+            }
+            credentials.DeepLinkVehiclePattern = request.VehiclePattern;
+        }
+        else
+        {
+            credentials.DeepLinkVehiclePattern = null;
+        }
+
+        // Validate booking pattern
+        if (!string.IsNullOrEmpty(request.BookingPattern))
+        {
+            if (!request.BookingPattern.StartsWith("/"))
+            {
+                return BadRequest(new { error = "Booking pattern must start with /" });
+            }
+            credentials.DeepLinkBookingPattern = request.BookingPattern;
+        }
+        else
+        {
+            credentials.DeepLinkBookingPattern = null;
+        }
+
+        await _credentialsRepo.UpdateAsync(credentials);
+
+        _logger.LogInformation(
+            "Updated deep link settings for company {CompanyId}: BaseUrl={BaseUrl}",
+            companyId, credentials.DeepLinkBaseUrl);
+
+        return Ok(new { 
+            message = "Deep link settings updated",
+            previewUrl = GeneratePreviewUrl(credentials, companyId)
+        });
+    }
+
+    private string GeneratePreviewUrl(CompanyMetaCredentials credentials, Guid companyId)
+    {
+        var baseUrl = credentials.DeepLinkBaseUrl ?? "https://{subdomain}.aegis-rental.com";
+        var pattern = credentials.DeepLinkVehiclePattern ?? "/book?modelId={modelId}";
+        
+        // Replace placeholders with example values
+        var exampleUrl = pattern
+            .Replace("{modelId}", "example-model-id")
+            .Replace("{vehicleId}", "example-vehicle-id")
+            .Replace("{make}", "Toyota")
+            .Replace("{model}", "Camry")
+            .Replace("{companyId}", companyId.ToString())
+            .Replace("{category}", "sedan");
+        
+        return $"{baseUrl}{exampleUrl}";
+    }
+
     #region Private Helper Methods
 
     private string? GetOriginFromRequest()
@@ -553,4 +660,52 @@ public class InstagramAccountInfo
 
     [System.Text.Json.Serialization.JsonPropertyName("media_count")]
     public int? MediaCount { get; set; }
+}
+
+public class DeepLinkSettingsResponse
+{
+    /// <summary>
+    /// Base URL for deep links (e.g., https://mycompany.aegis-rental.com)
+    /// </summary>
+    public string? BaseUrl { get; set; }
+    
+    /// <summary>
+    /// URL pattern for vehicle/model pages
+    /// Available placeholders: {modelId}, {vehicleId}, {make}, {model}, {companyId}, {category}
+    /// </summary>
+    public string VehiclePattern { get; set; } = "/book?modelId={modelId}";
+    
+    /// <summary>
+    /// URL pattern for booking pages
+    /// Available placeholders: {bookingId}, {companyId}
+    /// </summary>
+    public string BookingPattern { get; set; } = "/booking/{bookingId}";
+    
+    /// <summary>
+    /// Preview URL showing how the deep link will look
+    /// </summary>
+    public string? PreviewUrl { get; set; }
+}
+
+public class UpdateDeepLinkSettingsRequest
+{
+    /// <summary>
+    /// Base URL for deep links. Leave empty to use default subdomain URL.
+    /// Example: https://mycompany.aegis-rental.com or https://custom-domain.com
+    /// </summary>
+    public string? BaseUrl { get; set; }
+    
+    /// <summary>
+    /// URL pattern for vehicle pages. Must start with /
+    /// Available placeholders: {modelId}, {vehicleId}, {make}, {model}, {companyId}, {category}
+    /// Example: /book?modelId={modelId}&make={make}
+    /// </summary>
+    public string? VehiclePattern { get; set; }
+    
+    /// <summary>
+    /// URL pattern for booking pages. Must start with /
+    /// Available placeholders: {bookingId}, {companyId}
+    /// Example: /booking/{bookingId}
+    /// </summary>
+    public string? BookingPattern { get; set; }
 }

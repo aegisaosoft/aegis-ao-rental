@@ -11,6 +11,7 @@
  *
  */
 
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -120,6 +121,31 @@ public class CompanyMetaCredentials
     /// Custom hashtags for auto-published posts (JSON array)
     /// </summary>
     public string? AutoPublishHashtags { get; set; }
+
+    /// <summary>
+    /// Deep Link base URL for social media posts
+    /// Example: https://mycompany.aegis-rental.com or https://custom-domain.com
+    /// If empty, uses subdomain.aegis-rental.com
+    /// </summary>
+    [MaxLength(500)]
+    public string? DeepLinkBaseUrl { get; set; }
+
+    /// <summary>
+    /// Deep Link URL pattern for vehicle/model pages
+    /// Placeholders: {modelId}, {vehicleId}, {make}, {model}, {companyId}, {category}
+    /// Example: /book?modelId={modelId}&make={make}
+    /// Default: /book?model={modelId}
+    /// </summary>
+    [MaxLength(500)]
+    public string? DeepLinkVehiclePattern { get; set; }
+
+    /// <summary>
+    /// Deep Link URL pattern for booking pages
+    /// Placeholders: {bookingId}, {companyId}
+    /// Example: /booking/{bookingId}
+    /// </summary>
+    [MaxLength(500)]
+    public string? DeepLinkBookingPattern { get; set; }
 
     // Navigation property
     public Company? Company { get; set; }
