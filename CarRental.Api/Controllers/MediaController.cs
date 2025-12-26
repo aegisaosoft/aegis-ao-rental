@@ -79,24 +79,25 @@ public class MediaController : ControllerBase
                 await DeleteVideoFile(company.VideoLink);
             }
 
-            // Create folder structure: /public/<company id>/videos
-            var folderPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString(), "videos");
-            
-            // Create directory if it doesn't exist
-            Directory.CreateDirectory(folderPath);
+            // Determine content type
+            var contentType = fileExtension switch
+            {
+                ".mp4" => "video/mp4",
+                ".webm" => "video/webm",
+                ".mov" => "video/quicktime",
+                ".avi" => "video/x-msvideo",
+                _ => "application/octet-stream"
+            };
 
             // Generate unique filename
             var uniqueFileName = $"{Guid.NewGuid()}{fileExtension}";
-            var filePath = Path.Combine(folderPath, uniqueFileName);
+            var blobPath = $"{companyId}/videos/{uniqueFileName}";
 
-            // Save file
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await video.CopyToAsync(stream);
-            }
-
-            // Generate URL path
-            var videoUrl = $"/public/{companyId}/videos/{uniqueFileName}";
+            // Upload to blob storage
+            using var stream = video.OpenReadStream();
+            var videoUrl = await _blobStorage.UploadFileAsync(stream, "companies", blobPath, contentType);
+            
+            _logger.LogInformation("Video uploaded to blob storage: {VideoUrl}", videoUrl);
 
             // Update company with video link
             company.VideoLink = videoUrl;
@@ -186,20 +187,24 @@ public class MediaController : ControllerBase
                 await DeleteImageFile(company.BannerLink);
             }
 
-            // Create folder structure
-            var date = DateTime.UtcNow.ToString("yyyy-MM-dd");
-            var folderPath = Path.Combine(_environment.WebRootPath, "uploads", date, companyId.ToString(), "banners");
-            Directory.CreateDirectory(folderPath);
-
-            var uniqueFileName = $"{Guid.NewGuid()}{fileExtension}";
-            var filePath = Path.Combine(folderPath, uniqueFileName);
-
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            // Determine content type
+            var contentType = fileExtension switch
             {
-                await banner.CopyToAsync(stream);
-            }
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream"
+            };
 
-            var bannerUrl = $"/uploads/{date}/{companyId}/banners/{uniqueFileName}";
+            var uniqueFileName = $"banner{fileExtension}";
+            var blobPath = $"{companyId}/{uniqueFileName}";
+
+            // Upload to blob storage
+            using var stream = banner.OpenReadStream();
+            var bannerUrl = await _blobStorage.UploadFileAsync(stream, "companies", blobPath, contentType);
+            
+            _logger.LogInformation("Banner uploaded to blob storage: {BannerUrl}", bannerUrl);
 
             company.BannerLink = bannerUrl;
             company.UpdatedAt = DateTime.UtcNow;
@@ -254,20 +259,24 @@ public class MediaController : ControllerBase
                 await DeleteImageFile(company.LogoLink);
             }
 
-            // Create folder structure
-            var date = DateTime.UtcNow.ToString("yyyy-MM-dd");
-            var folderPath = Path.Combine(_environment.WebRootPath, "uploads", date, companyId.ToString(), "logos");
-            Directory.CreateDirectory(folderPath);
-
-            var uniqueFileName = $"{Guid.NewGuid()}{fileExtension}";
-            var filePath = Path.Combine(folderPath, uniqueFileName);
-
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            // Determine content type
+            var contentType = fileExtension switch
             {
-                await logo.CopyToAsync(stream);
-            }
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".svg" => "image/svg+xml",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream"
+            };
 
-            var logoUrl = $"/uploads/{date}/{companyId}/logos/{uniqueFileName}";
+            var uniqueFileName = $"logo{fileExtension}";
+            var blobPath = $"{companyId}/{uniqueFileName}";
+
+            // Upload to blob storage
+            using var stream = logo.OpenReadStream();
+            var logoUrl = await _blobStorage.UploadFileAsync(stream, "companies", blobPath, contentType);
+            
+            _logger.LogInformation("Logo uploaded to blob storage: {LogoUrl}", logoUrl);
 
             company.LogoLink = logoUrl;
             company.UpdatedAt = DateTime.UtcNow;
@@ -461,44 +470,20 @@ public class MediaController : ControllerBase
 
             _logger.LogInformation("License image uploaded successfully: {ImageUrl}", imageUrl);
 
-            // Also save locally as backup/cache for development
-            try
-            {
-                var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
-                var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
-                Directory.CreateDirectory(folderPath);
-                
-                var localFilePath = Path.Combine(folderPath, fileName);
-                
-                // Reset stream position and save locally
-                stream.Position = 0;
-                using (var fileStream = new FileStream(localFilePath, FileMode.Create))
-                {
-                    using var imageStream = image.OpenReadStream();
-                    await imageStream.CopyToAsync(fileStream);
-                }
-                _logger.LogInformation("License image also saved locally: {LocalPath}", localFilePath);
-            }
-            catch (Exception localEx)
-            {
-                _logger.LogWarning(localEx, "Failed to save local backup of license image (not critical on Azure)");
-            }
-
-            // Save URL to database
-            var relativeUrl = $"/customers/{customerId}/licenses/{fileName}";
+            // Save blob URL to database
             try
             {
                 var license = await _context.CustomerLicenses.FirstOrDefaultAsync(l => l.CustomerId == customerId);
                 if (license != null)
                 {
                     if (side == "front")
-                        license.FrontImageUrl = relativeUrl;
+                        license.FrontImageUrl = imageUrl;
                     else
-                        license.BackImageUrl = relativeUrl;
+                        license.BackImageUrl = imageUrl;
                     
                     license.UpdatedAt = DateTime.UtcNow;
                     await _context.SaveChangesAsync();
-                    _logger.LogInformation("Saved {Side} image URL to database for customer {CustomerId}", side, customerId);
+                    _logger.LogInformation("Saved {Side} image URL to database for customer {CustomerId}: {ImageUrl}", side, customerId, imageUrl);
                 }
                 else
                 {
@@ -512,8 +497,7 @@ public class MediaController : ControllerBase
 
             return Ok(new
             {
-                imageUrl = relativeUrl,
-                blobUrl = imageUrl,
+                imageUrl,
                 fileName,
                 fileSize = image.Length,
                 side,
@@ -651,14 +635,14 @@ public class MediaController : ControllerBase
                         if (fileName.StartsWith("front", StringComparison.OrdinalIgnoreCase))
                         {
                             frontFile = fileName;
-                            frontUrl = $"/customers/{customerId}/licenses/{fileName}";
-                            _logger.LogInformation("Found front image in blob storage: {FileName}", fileName);
+                            frontUrl = _blobStorage.GetBlobUrl(CustomerLicensesContainer, blobPath);
+                            _logger.LogInformation("Found front image in blob storage: {FileName}, URL: {Url}", fileName, frontUrl);
                         }
                         else if (fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase))
                         {
                             backFile = fileName;
-                            backUrl = $"/customers/{customerId}/licenses/{fileName}";
-                            _logger.LogInformation("Found back image in blob storage: {FileName}", fileName);
+                            backUrl = _blobStorage.GetBlobUrl(CustomerLicensesContainer, blobPath);
+                            _logger.LogInformation("Found back image in blob storage: {FileName}, URL: {Url}", fileName, backUrl);
                         }
                     }
                 }
@@ -730,7 +714,7 @@ public class MediaController : ControllerBase
     /// Delete driver license image (front or back) for a customer
     /// </summary>
     [HttpDelete("customers/{customerId}/licenses/{side}")]
-    public Task<IActionResult> DeleteCustomerLicenseImage(Guid customerId, string side)
+    public async Task<IActionResult> DeleteCustomerLicenseImage(Guid customerId, string side)
     {
         try
         {
@@ -739,47 +723,58 @@ public class MediaController : ControllerBase
             if (side != "front" && side != "back")
             {
                 _logger.LogWarning("Invalid side parameter: {Side}", side);
-                return Task.FromResult<IActionResult>(BadRequest("Side must be 'front' or 'back'"));
+                return BadRequest("Side must be 'front' or 'back'");
             }
 
-            // Use ContentRootPath/wwwroot/customers to match static file serving and upload paths
-            var customersPath = Path.Combine(_environment.ContentRootPath, "wwwroot", "customers");
-            var folderPath = Path.Combine(customersPath, customerId.ToString(), "licenses");
-            
             var possibleExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
             bool fileDeleted = false;
             
+            // Delete from blob storage
             foreach (var ext in possibleExtensions)
             {
                 var fileName = $"{side}{ext}";
-                var filePath = Path.Combine(folderPath, fileName);
+                var blobPath = $"{customerId}/licenses/{fileName}";
                 
-                if (System.IO.File.Exists(filePath))
+                if (await _blobStorage.FileExistsAsync(CustomerLicensesContainer, blobPath))
                 {
-                    System.IO.File.Delete(filePath);
-                    _logger.LogInformation("Deleted customer license {Side} image: {FilePath}", side, filePath);
+                    await _blobStorage.DeleteFileAsync(CustomerLicensesContainer, blobPath);
+                    _logger.LogInformation("Deleted customer license {Side} image from blob: {BlobPath}", side, blobPath);
                     fileDeleted = true;
                     break;
                 }
             }
 
+            // Also clear from database
+            var license = await _context.CustomerLicenses.FirstOrDefaultAsync(l => l.CustomerId == customerId);
+            if (license != null)
+            {
+                if (side == "front")
+                    license.FrontImageUrl = null;
+                else
+                    license.BackImageUrl = null;
+                
+                license.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Cleared {Side} image URL from database for customer {CustomerId}", side, customerId);
+            }
+
             if (!fileDeleted)
             {
                 _logger.LogWarning("Customer license {Side} image not found for customer {CustomerId}", side, customerId);
-                return Task.FromResult<IActionResult>(NotFound($"Customer license {side} image not found"));
+                return NotFound($"Customer license {side} image not found");
             }
 
-            return Task.FromResult<IActionResult>(Ok(new
+            return Ok(new
             {
                 message = $"Customer license {side} image deleted successfully",
                 customerId,
                 side
-            }));
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting customer license {Side} image for customer {CustomerId}", side, customerId);
-            return Task.FromResult<IActionResult>(StatusCode(500, $"Error deleting customer license {side} image"));
+            return StatusCode(500, $"Error deleting customer license {side} image");
         }
     }
 
@@ -831,10 +826,6 @@ public class MediaController : ControllerBase
             // Sanitize wizardId to prevent directory traversal
             var sanitizedWizardId = string.Join("_", wizardId.Split(Path.GetInvalidFileNameChars()));
 
-            // Create folder structure: /wizard/{wizardId}/licenses
-            var folderPath = Path.Combine(_environment.WebRootPath, "wizard", sanitizedWizardId, "licenses");
-            Directory.CreateDirectory(folderPath);
-
             // Determine file extension based on image format
             var imageExtension = fileExtension; // Use original extension
             if (string.IsNullOrEmpty(imageExtension))
@@ -851,25 +842,31 @@ public class MediaController : ControllerBase
                 };
             }
 
+            // Determine content type
+            var contentType = imageExtension switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream"
+            };
+
             // Use fixed filename: front.jpg or back.jpg (or appropriate extension)
             var fileName = $"{side}{imageExtension}";
-            var filePath = Path.Combine(folderPath, fileName);
+            var blobPath = $"wizard/{sanitizedWizardId}/licenses/{fileName}";
 
             // Delete old file if exists
-            if (System.IO.File.Exists(filePath))
+            if (await _blobStorage.FileExistsAsync(CustomerLicensesContainer, blobPath))
             {
-                System.IO.File.Delete(filePath);
+                await _blobStorage.DeleteFileAsync(CustomerLicensesContainer, blobPath);
             }
 
-            // Save file
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await image.CopyToAsync(stream);
-            }
-
-            // Generate URL path
-            var imageUrl = $"/wizard/{sanitizedWizardId}/licenses/{fileName}";
-
+            // Upload to blob storage
+            using var stream = image.OpenReadStream();
+            var imageUrl = await _blobStorage.UploadFileAsync(stream, CustomerLicensesContainer, blobPath, contentType);
+            
+            _logger.LogInformation("Wizard license image uploaded to blob storage: {ImageUrl}", imageUrl);
 
             return Ok(new
             {
@@ -893,7 +890,7 @@ public class MediaController : ControllerBase
     /// Delete driver license image (front or back) for a wizard
     /// </summary>
     [HttpDelete("wizard/{wizardId}/licenses/{side}")]
-    public Task<IActionResult> DeleteWizardLicenseImage(string wizardId, string side)
+    public async Task<IActionResult> DeleteWizardLicenseImage(string wizardId, string side)
     {
         try
         {
@@ -903,22 +900,19 @@ public class MediaController : ControllerBase
             if (string.IsNullOrWhiteSpace(wizardId))
             {
                 _logger.LogWarning("Wizard ID is required but was null or empty");
-                return Task.FromResult<IActionResult>(BadRequest("Wizard ID is required"));
+                return BadRequest("Wizard ID is required");
             }
 
             // Validate side parameter
             if (side != "front" && side != "back")
             {
                 _logger.LogWarning("Invalid side parameter: {Side}", side);
-                return Task.FromResult<IActionResult>(BadRequest("Side must be 'front' or 'back'"));
+                return BadRequest("Side must be 'front' or 'back'");
             }
 
             // Sanitize wizardId to prevent directory traversal
             var sanitizedWizardId = string.Join("_", wizardId.Split(Path.GetInvalidFileNameChars()));
 
-            // Construct file path
-            var folderPath = Path.Combine(_environment.WebRootPath, "wizard", sanitizedWizardId, "licenses");
-            
             // Try different file extensions
             var possibleExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
             bool fileDeleted = false;
@@ -926,12 +920,12 @@ public class MediaController : ControllerBase
             foreach (var ext in possibleExtensions)
             {
                 var fileName = $"{side}{ext}";
-                var filePath = Path.Combine(folderPath, fileName);
+                var blobPath = $"wizard/{sanitizedWizardId}/licenses/{fileName}";
                 
-                if (System.IO.File.Exists(filePath))
+                if (await _blobStorage.FileExistsAsync(CustomerLicensesContainer, blobPath))
                 {
-                    System.IO.File.Delete(filePath);
-                    _logger.LogInformation("Deleted wizard license {Side} image: {FilePath}", side, filePath);
+                    await _blobStorage.DeleteFileAsync(CustomerLicensesContainer, blobPath);
+                    _logger.LogInformation("Deleted wizard license {Side} image from blob: {BlobPath}", side, blobPath);
                     fileDeleted = true;
                     break;
                 }
@@ -940,21 +934,20 @@ public class MediaController : ControllerBase
             if (!fileDeleted)
             {
                 _logger.LogWarning("Wizard license {Side} image not found for wizard {WizardId}", side, wizardId);
-                return Task.FromResult<IActionResult>(NotFound($"Wizard license {side} image not found"));
+                return NotFound($"Wizard license {side} image not found");
             }
 
-            return Task.FromResult<IActionResult>(Ok(new
+            return Ok(new
             {
                 message = $"Wizard license {side} image deleted successfully",
                 wizardId,
                 side
-            }));
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error deleting wizard license {Side} image for wizard {WizardId}", side, wizardId);
-            return Task.FromResult<IActionResult>(StatusCode(500, $"Error deleting wizard license {side} image"));
+            return StatusCode(500, $"Error deleting wizard license {side} image");
         }
     }
 }
-

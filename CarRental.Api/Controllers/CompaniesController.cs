@@ -45,6 +45,7 @@ public class CompaniesController : ControllerBase
     private readonly IWebHostEnvironment _environment;
     private readonly IEncryptionService _encryptionService;
     private readonly IAzureDnsService? _azureDnsService;
+    private readonly IAzureBlobStorageService _blobStorage;
     private static readonly string[] SupportedLanguages = new[] { "en", "es", "pt", "fr", "de" };
     private static readonly HashSet<string> AllowedAiIntegrations = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -60,6 +61,7 @@ public class CompaniesController : ControllerBase
         ICompanyService companyService,
         IWebHostEnvironment environment,
         IEncryptionService encryptionService,
+        IAzureBlobStorageService blobStorage,
         IAzureDnsService? azureDnsService = null)
     {
         _context = context;
@@ -67,6 +69,7 @@ public class CompaniesController : ControllerBase
         _companyService = companyService;
         _environment = environment;
         _encryptionService = encryptionService;
+        _blobStorage = blobStorage;
         _azureDnsService = azureDnsService;
     }
 
@@ -2297,15 +2300,22 @@ public class CompaniesController : ControllerBase
                     _ => "png"
                 };
 
-                Directory.CreateDirectory(designDirectory);
-
+                // Upload to blob storage
+                const string containerName = "companies";
                 var fileName = $"note-{sectionIndex}-{noteIndex}-{DateTime.UtcNow:yyyyMMddHHmmssfff}.{extension}";
-                var filePath = Path.Combine(designDirectory, fileName);
+                var blobPath = $"{companyId}/design/{fileName}";
 
-                await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+                using var stream = new MemoryStream(fileBytes);
+                var blobUrl = await _blobStorage.UploadFileAsync(stream, containerName, blobPath, mimeType);
+                
+                _logger.LogInformation("Uploaded design picture to blob storage for company {CompanyId}: {BlobUrl}", companyId, blobUrl);
+                return blobUrl;
+            }
 
-                var relativePath = $"/public/{companyId}/design/{fileName}".Replace("\\", "/");
-                return CombineWithBase(publicBaseUrl, relativePath);
+            // If it's already a blob URL, return as-is
+            if (pictureUrl.Contains("blob.core.windows.net"))
+            {
+                return pictureUrl;
             }
 
             if (pictureUrl.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
@@ -2370,26 +2380,37 @@ public class CompaniesController : ControllerBase
                     _ => "png"
                 };
 
-                Directory.CreateDirectory(sectionsDirectory);
+                // Upload to blob storage
+                const string containerName = "companies";
+                var fileName = $"section{sectionIndex + 1}.{extension}";
+                var blobPath = $"{companyId}/sections/{fileName}";
 
-                foreach (var existing in Directory.EnumerateFiles(sectionsDirectory, $"section{sectionIndex + 1}.*"))
+                // Delete existing section backgrounds with different extensions
+                try
                 {
-                    try
+                    var existingFiles = await _blobStorage.ListFilesAsync(containerName, $"{companyId}/sections/section{sectionIndex + 1}.");
+                    foreach (var existingFile in existingFiles)
                     {
-                        System.IO.File.Delete(existing);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete existing background image for section {SectionIndex} company {CompanyId}", sectionIndex, companyId);
+                        await _blobStorage.DeleteFileAsync(containerName, existingFile);
+                        _logger.LogInformation("Deleted existing section background {File} for company {CompanyId}", existingFile, companyId);
                     }
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete existing background image for section {SectionIndex} company {CompanyId}", sectionIndex, companyId);
+                }
 
-                var fileName = $"section{sectionIndex + 1}.{extension}";
-                var filePath = Path.Combine(sectionsDirectory, fileName);
-                await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+                using var stream = new MemoryStream(fileBytes);
+                var blobUrl = await _blobStorage.UploadFileAsync(stream, containerName, blobPath, mimeType);
+                
+                _logger.LogInformation("Uploaded section background to blob storage for company {CompanyId}: {BlobUrl}", companyId, blobUrl);
+                return blobUrl;
+            }
 
-                var relativePath = $"/public/{companyId}/sections/{fileName}".Replace("\\", "/");
-                return CombineWithBase(publicBaseUrl, relativePath);
+            // If it's already a blob URL, return as-is
+            if (backgroundUrl.Contains("blob.core.windows.net"))
+            {
+                return backgroundUrl;
             }
 
             if (backgroundUrl.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
@@ -2456,30 +2477,47 @@ public class CompaniesController : ControllerBase
                     return null;
                 }
 
-                var targetDirectory = Path.Combine(_environment.ContentRootPath, "wwwroot", "public", companyId.ToString());
-                Directory.CreateDirectory(targetDirectory);
-
-                foreach (var existing in Directory.EnumerateFiles(targetDirectory, $"{assetName}.*"))
+                // Check if blob storage is configured
+                if (!await _blobStorage.IsConfiguredAsync())
                 {
-                    try
-                    {
-                        System.IO.File.Delete(existing);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete existing {AssetName} file {File} for company {CompanyId}", assetName, existing, companyId);
-                    }
+                    _logger.LogError("Azure Blob Storage is not configured. Cannot save asset {AssetName} for company {CompanyId}", assetName, companyId);
+                    return null;
                 }
 
+                const string containerName = "companies";
                 var fileName = $"{assetName}.{extension}";
-                var filePath = Path.Combine(targetDirectory, fileName);
+                var blobPath = $"{companyId}/{fileName}";
 
-                await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+                // Delete existing files with same asset name but different extension
+                try
+                {
+                    var existingFiles = await _blobStorage.ListFilesAsync(containerName, $"{companyId}/{assetName}.");
+                    foreach (var existingFile in existingFiles)
+                    {
+                        await _blobStorage.DeleteFileAsync(containerName, existingFile);
+                        _logger.LogInformation("Deleted existing {AssetName} file {File} for company {CompanyId}", assetName, existingFile, companyId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete existing {AssetName} files for company {CompanyId}", assetName, companyId);
+                }
 
-                var relativePath = $"/public/{companyId}/{fileName}".Replace("\\", "/");
-                return CombineWithBase(publicBaseUrl, relativePath);
+                // Upload to blob storage
+                using var stream = new MemoryStream(fileBytes);
+                var blobUrl = await _blobStorage.UploadFileAsync(stream, containerName, blobPath, mimeType);
+                
+                _logger.LogInformation("Uploaded {AssetName} to blob storage for company {CompanyId}: {BlobUrl}", assetName, companyId, blobUrl);
+                return blobUrl;
             }
 
+            // If it's already a blob URL, return as-is
+            if (rawValue.Contains("blob.core.windows.net"))
+            {
+                return rawValue;
+            }
+
+            // Legacy local paths - return as-is for backward compatibility
             if (rawValue.StartsWith("/public/", StringComparison.OrdinalIgnoreCase))
             {
                 return CombineWithBase(publicBaseUrl, rawValue.Replace("\\", "/"));

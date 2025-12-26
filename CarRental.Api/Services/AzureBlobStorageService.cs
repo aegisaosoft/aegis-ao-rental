@@ -98,7 +98,10 @@ public class AzureBlobStorageService : IAzureBlobStorageService
         try
         {
             var containerClient = client.GetBlobContainerClient(containerName);
-            await containerClient.CreateIfNotExistsAsync(PublicAccessType.Blob);
+            // Use None for private access - public access must be enabled on storage account level in Azure Portal
+            // For public containers (companies, models), enable "Allow Blob public access" on storage account
+            // then set container access level to "Blob" in Azure Portal
+            await containerClient.CreateIfNotExistsAsync(PublicAccessType.None);
 
             var blobClient = containerClient.GetBlobClient(blobPath);
             
