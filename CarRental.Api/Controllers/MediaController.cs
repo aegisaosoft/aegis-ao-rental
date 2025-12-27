@@ -784,7 +784,7 @@ public class MediaController : ControllerBase
     [HttpPost("wizard/{wizardId}/licenses/{side}")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(10_485_760)] // 10 MB limit for images
-    public async Task<ActionResult<object>> UploadWizardLicenseImage(string wizardId, string side, [FromForm] IFormFile image)
+    public async Task<ActionResult<object>> UploadWizardLicenseImage(string wizardId, string side, IFormFile image)
     {
         try
         {

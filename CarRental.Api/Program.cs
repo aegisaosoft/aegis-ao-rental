@@ -113,6 +113,22 @@ builder.Services.AddSwaggerGen(c =>
             }
         });
         
+        // Ignore schema errors that might prevent Swagger from generating
+        c.IgnoreObsoleteActions();
+        c.IgnoreObsoleteProperties();
+        c.CustomSchemaIds(type => type.FullName ?? type.Name);
+        
+        // Handle errors during schema generation
+        c.UseAllOfToExtendReferenceSchemas();
+        c.UseOneOfForPolymorphism();
+        c.UseAllOfForInheritance();
+        
+        // Add error handling filter
+        c.SchemaFilter<CarRental.Api.Filters.SwaggerErrorHandlingFilter>();
+        
+        // Map types that might cause issues to simple object types
+        c.MapType<object>(() => new Microsoft.OpenApi.Models.OpenApiSchema { Type = "object" });
+        
         // No longer need SwaggerFileOperationFilter since we use [FromForm] attributes
     });
 
@@ -557,28 +573,56 @@ app.UseAuthorization();
 startupLogger.LogInformation("Adding company middleware...");
 app.UseCompanyMiddleware();
 
-// 7. Swagger (enabled only in Development environment for security)
-if (app.Environment.IsDevelopment())
+// 7. Swagger (enabled for all environments for debugging)
+try
 {
-    try
+    startupLogger.LogInformation("Configuring Swagger (Environment: {Environment})...", app.Environment.EnvironmentName);
+    
+    // Add middleware to catch Swagger generation errors
+    app.Use(async (context, next) =>
     {
-        startupLogger.LogInformation("Configuring Swagger (Development only)...");
-        app.UseSwagger();
-        app.UseSwaggerUI(c =>
+        if (context.Request.Path.StartsWithSegments("/swagger/v1/swagger.json"))
         {
-            c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
-            c.RoutePrefix = "swagger"; // Access at /swagger
-            c.DocumentTitle = "Car Rental API Documentation";
-        });
-    }
-    catch (Exception ex)
+            try
+            {
+                await next();
+            }
+            catch (Exception ex)
+            {
+                var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+                logger.LogError(ex, "Error generating Swagger JSON: {Message}", ex.Message);
+                logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
+                
+                context.Response.StatusCode = 500;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    error = "Failed to generate Swagger document",
+                    message = ex.Message,
+                    details = app.Environment.IsDevelopment() ? ex.ToString() : "See server logs for details"
+                }));
+            }
+        }
+        else
+        {
+            await next();
+        }
+    });
+    
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
     {
-        startupLogger.LogWarning(ex, "Swagger failed to initialize");
-    }
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Car Rental API v1");
+        c.RoutePrefix = "swagger"; // Access at /swagger
+        c.DocumentTitle = "Car Rental API Documentation";
+    });
+    startupLogger.LogInformation("Swagger configured successfully");
 }
-else
+catch (Exception ex)
 {
-    startupLogger.LogInformation("Swagger is disabled in {Environment} environment", app.Environment.EnvironmentName);
+    startupLogger.LogError(ex, "Swagger failed to initialize: {Message}", ex.Message);
+    startupLogger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
+    // Don't throw - allow app to continue without Swagger
 }
 
 // 8. Health Checks (before controllers, for Azure probes)
