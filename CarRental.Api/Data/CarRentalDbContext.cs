@@ -1129,6 +1129,11 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.AutoPublishIncludePrice).HasColumnName("auto_publish_include_price").HasDefaultValue(true);
             entity.Property(e => e.AutoPublishHashtags).HasColumnName("auto_publish_hashtags");
             
+            // Deep Link settings
+            entity.Property(e => e.DeepLinkBaseUrl).HasColumnName("deep_link_base_url").HasMaxLength(500);
+            entity.Property(e => e.DeepLinkVehiclePattern).HasColumnName("deep_link_vehicle_pattern").HasMaxLength(500);
+            entity.Property(e => e.DeepLinkBookingPattern).HasColumnName("deep_link_booking_pattern").HasMaxLength(500);
+            
             // Indexes
             entity.HasIndex(e => e.CompanyId).IsUnique();
             entity.HasIndex(e => e.Status).HasDatabaseName("idx_company_meta_credentials_status");
