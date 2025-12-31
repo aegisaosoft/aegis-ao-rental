@@ -50,9 +50,17 @@ public class Booking
     [Column("pickup_date")]
     public DateTime PickupDate { get; set; }
 
+    [MaxLength(5)]
+    [Column("pickup_time")]
+    public string? PickupTime { get; set; } = "10:00";
+
     [Required]
     [Column("return_date")]
     public DateTime ReturnDate { get; set; }
+
+    [MaxLength(5)]
+    [Column("return_time")]
+    public string? ReturnTime { get; set; } = "22:00";
 
     [MaxLength(255)]
     [Column("pickup_location")]

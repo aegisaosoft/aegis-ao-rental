@@ -34,8 +34,14 @@ public class BookingDto
     [Required]
     public DateTime PickupDate { get; set; }
 
+    [MaxLength(5)]
+    public string? PickupTime { get; set; } = "10:00";
+
     [Required]
     public DateTime ReturnDate { get; set; }
+
+    [MaxLength(5)]
+    public string? ReturnTime { get; set; } = "22:00";
 
     [MaxLength(255)]
     public string? PickupLocation { get; set; }
@@ -131,8 +137,14 @@ public class CreateBookingDto
     [Required]
     public DateTime PickupDate { get; set; }
 
+    [MaxLength(5)]
+    public string? PickupTime { get; set; } = "10:00";
+
     [Required]
     public DateTime ReturnDate { get; set; }
+
+    [MaxLength(5)]
+    public string? ReturnTime { get; set; } = "22:00";
 
     [MaxLength(255)]
     public string? PickupLocation { get; set; }
@@ -150,6 +162,9 @@ public class CreateBookingDto
     public decimal? SecurityDeposit { get; set; }
 
     public string? Notes { get; set; }
+    
+    // Location ID for availability check
+    public Guid? LocationId { get; set; }
     
     // Rental agreement data (optional)
     public AgreementDataDto? AgreementData { get; set; }
@@ -327,9 +342,15 @@ public class BookingDataDto
 {
     [Required]
     public DateTime PickupDate { get; set; }
+
+    [MaxLength(5)]
+    public string? PickupTime { get; set; } = "10:00";
     
     [Required]
     public DateTime ReturnDate { get; set; }
+
+    [MaxLength(5)]
+    public string? ReturnTime { get; set; } = "22:00";
     
     public string? PickupLocation { get; set; }
     public string? ReturnLocation { get; set; }

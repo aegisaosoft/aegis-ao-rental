@@ -52,13 +52,17 @@ public class ModelsController : ControllerBase
     /// <param name="locationId">Optional location ID to filter models by vehicles at specific location</param>
     /// <param name="pickupDate">Pickup date for availability check</param>
     /// <param name="returnDate">Return date for availability check</param>
+    /// <param name="pickupTime">Pickup time (HH:mm format) for availability check</param>
+    /// <param name="returnTime">Return time (HH:mm format) for availability check</param>
     [HttpGet("grouped-by-category")]
     [ProducesResponseType(typeof(IEnumerable<ModelsGroupedByCategoryDto>), 200)]
     public async Task<IActionResult> GetModelsGroupedByCategory(
         [FromQuery] Guid? companyId = null, 
         [FromQuery] Guid? locationId = null,
         [FromQuery] DateTime? pickupDate = null,
-        [FromQuery] DateTime? returnDate = null)
+        [FromQuery] DateTime? returnDate = null,
+        [FromQuery] string? pickupTime = null,
+        [FromQuery] string? returnTime = null)
     {
         try
         {
@@ -82,8 +86,30 @@ public class ModelsController : ControllerBase
                 returnDate = pickupDate.Value.AddDays(7);
             }
             
-            _logger.LogInformation("GetModelsGroupedByCategory called with companyId={CompanyId}, locationId={LocationId}, pickupDate={PickupDate}, returnDate={ReturnDate}", 
-                companyId, locationId, pickupDate, returnDate);
+            // Combine date and time for precise availability check
+            DateTime pickupDateTime = pickupDate.Value.Date;
+            DateTime returnDateTime = returnDate.Value.Date;
+            
+            if (!string.IsNullOrEmpty(pickupTime) && TimeSpan.TryParse(pickupTime, out var pickupTimeSpan))
+            {
+                pickupDateTime = pickupDateTime.Add(pickupTimeSpan);
+            }
+            else
+            {
+                pickupDateTime = pickupDateTime.AddHours(10); // Default 10:00 AM
+            }
+            
+            if (!string.IsNullOrEmpty(returnTime) && TimeSpan.TryParse(returnTime, out var returnTimeSpan))
+            {
+                returnDateTime = returnDateTime.Add(returnTimeSpan);
+            }
+            else
+            {
+                returnDateTime = returnDateTime.AddHours(22); // Default 10:00 PM
+            }
+            
+            _logger.LogInformation("GetModelsGroupedByCategory called with companyId={CompanyId}, locationId={LocationId}, pickupDateTime={PickupDateTime}, returnDateTime={ReturnDateTime}", 
+                companyId, locationId, pickupDateTime, returnDateTime);
             
             // Early return if no company ID
             if (!companyId.HasValue)
@@ -102,15 +128,15 @@ public class ModelsController : ControllerBase
                 _logger.LogInformation("No locationId specified - searching all locations for company {CompanyId}", companyId.Value);
             }
 
-            // Call stored procedure to get available vehicles
+            // Call stored procedure to get available vehicles with datetime (includes time)
             // Note: If locationId is NULL, the stored procedure will return vehicles from all company locations
             var sql = @"SELECT * FROM get_available_vehicles_by_company(@p0, @p1, @p2, @p3)";
             
             var availableVehicles = await _context.Database
                 .SqlQueryRaw<AvailableVehicleDto>(sql, 
                     companyId.Value, 
-                    pickupDate.Value, 
-                    returnDate.Value, 
+                    pickupDateTime, 
+                    returnDateTime, 
                     locationId.HasValue ? (object)locationId.Value : DBNull.Value)
                 .ToListAsync();
 
