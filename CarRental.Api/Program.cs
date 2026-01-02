@@ -158,16 +158,11 @@ builder.Services.AddDbContext<CarRentalDbContext>((serviceProvider, options) =>
             connStr.Split(';').FirstOrDefault(s => s.StartsWith("Port="))?.Replace("Port=", "") ?? "Unknown",
             connStr.Split(';').FirstOrDefault(s => s.StartsWith("SSL Mode="))?.Replace("SSL Mode=", "") ?? "Unknown");
 
-        // Build NpgsqlDataSource with PostgreSQL enum mapping
-        // Only for actual PostgreSQL enum types (meta_credential_status, social_platform)
-        // scheduled_post_type and scheduled_post_status are int4 in database, not enums
-        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-        // Map PostgreSQL enum types - labels match C# enum names (PascalCase)
-        dataSourceBuilder.MapEnum<MetaCredentialStatus>("meta_credential_status");
-        dataSourceBuilder.MapEnum<SocialPlatform>("social_platform");
-        var dataSource = dataSourceBuilder.Build();
-
-        options.UseNpgsql(dataSource, npgsqlOptions =>
+        // Note: MetaCredentialStatus and SocialPlatform enums are stored as strings (VARCHAR)
+        // using HasConversion<string>() in DbContext, same pattern as CustomerType.
+        // No PostgreSQL native enum types are used, so no MapEnum needed.
+        
+        options.UseNpgsql(connectionString, npgsqlOptions =>
         {
             npgsqlOptions.CommandTimeout(dbSettings.CommandTimeout);
             npgsqlOptions.EnableRetryOnFailure(

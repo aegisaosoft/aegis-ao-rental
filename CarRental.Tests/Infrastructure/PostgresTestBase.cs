@@ -10,7 +10,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using CarRental.Api.Data;
 using CarRental.Api.Models;
-using Npgsql;
 using Xunit;
 
 namespace CarRental.Tests.Infrastructure;
@@ -22,10 +21,6 @@ namespace CarRental.Tests.Infrastructure;
 public abstract class PostgresTestBase : IAsyncLifetime
 {
     protected CarRentalDbContext Context { get; private set; } = null!;
-    
-    // Static DataSource - singleton for all tests to ensure enum mapping works
-    private static NpgsqlDataSource? _sharedDataSource;
-    private static readonly object _lock = new object();
     
     // Track all created entities for cleanup
     private readonly List<Guid> _createdBookingIds = new();
@@ -39,27 +34,6 @@ public abstract class PostgresTestBase : IAsyncLifetime
     private readonly List<Guid> _createdStripeSettingsIds = new();
     private readonly List<Guid> _createdPaymentMethodIds = new();
 
-    private static NpgsqlDataSource GetOrCreateDataSource(string connectionString)
-    {
-        if (_sharedDataSource != null)
-            return _sharedDataSource;
-            
-        lock (_lock)
-        {
-            if (_sharedDataSource != null)
-                return _sharedDataSource;
-                
-            // Build NpgsqlDataSource with PostgreSQL enum mapping (same as Program.cs)
-            var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-            // Map PostgreSQL enum types - labels match C# enum names (PascalCase)
-            dataSourceBuilder.MapEnum<MetaCredentialStatus>("meta_credential_status");
-            dataSourceBuilder.MapEnum<SocialPlatform>("social_platform");
-            _sharedDataSource = dataSourceBuilder.Build();
-            
-            return _sharedDataSource;
-        }
-    }
-
     public async Task InitializeAsync()
     {
         var connectionString = GetConnectionString();
@@ -71,10 +45,10 @@ public abstract class PostgresTestBase : IAsyncLifetime
                 "Set TEST_DATABASE_CONNECTION_STRING environment variable or configure appsettings.Test.json");
         }
 
-        var dataSource = GetOrCreateDataSource(connectionString);
-
+        // Simple connection - no NpgsqlDataSource needed
+        // Enums are stored as strings using HasConversion<string>()
         var options = new DbContextOptionsBuilder<CarRentalDbContext>()
-            .UseNpgsql(dataSource)
+            .UseNpgsql(connectionString)
             .Options;
 
         Context = new CarRentalDbContext(options);
@@ -88,7 +62,6 @@ public abstract class PostgresTestBase : IAsyncLifetime
         // Clean up ALL tracked test data in correct order (foreign key constraints)
         await CleanupTrackedDataAsync();
         await Context.DisposeAsync();
-        // Don't dispose shared DataSource - it's reused across tests
     }
 
     private static string? GetConnectionString()

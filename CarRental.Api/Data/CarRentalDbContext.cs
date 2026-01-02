@@ -98,9 +98,9 @@ public class CarRentalDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Register PostgreSQL enum types - labels match C# enum names (PascalCase)
-        modelBuilder.HasPostgresEnum<MetaCredentialStatus>("meta_credential_status");
-        modelBuilder.HasPostgresEnum<SocialPlatform>("social_platform");
+        // Note: MetaCredentialStatus and SocialPlatform enums are stored as strings (VARCHAR)
+        // using HasConversion<string>(), same pattern as CustomerType and other enums.
+        // No PostgreSQL native enum types are used.
 
         // Configure UUID generation
         modelBuilder.Entity<Company>()
@@ -1117,11 +1117,11 @@ public class CarRentalDbContext : DbContext
                     v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
                     v => v == null || string.IsNullOrWhiteSpace(v) ? null : System.Text.Json.JsonDocument.Parse(v, default(System.Text.Json.JsonDocumentOptions)));
             
-            // Map enum to PostgreSQL native enum type
-            // Uses NpgsqlParameter with NpgsqlDbType.Unknown for proper enum handling
+            // Map enum to string (same pattern as CustomerType, VehicleStatus, etc.)
             entity.Property(e => e.Status)
                 .HasColumnName("status")
-                .HasColumnType("meta_credential_status")
+                .HasConversion<string>()
+                .HasMaxLength(50)
                 .IsRequired();
             
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
@@ -1158,11 +1158,11 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
             entity.Property(e => e.VehicleId).HasColumnName("vehicle_id"); // Nullable for model posts
             entity.Property(e => e.VehicleModelId).HasColumnName("vehicle_model_id"); // For model posts
-            // Map enum to PostgreSQL native enum type
-            // Uses NpgsqlParameter with NpgsqlDbType.Unknown for proper enum handling
+            // Map enum to string (same pattern as CustomerType, VehicleStatus, etc.)
             entity.Property(e => e.Platform)
                 .HasColumnName("platform")
-                .HasColumnType("social_platform")
+                .HasConversion<string>()
+                .HasMaxLength(50)
                 .IsRequired();
             entity.Property(e => e.PostId).HasColumnName("post_id").HasMaxLength(100).IsRequired();
             entity.Property(e => e.Permalink).HasColumnName("permalink").HasMaxLength(500);
