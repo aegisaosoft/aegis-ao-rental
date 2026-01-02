@@ -18,8 +18,12 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CarRental.Api.Models;
 
+/// <summary>
+/// Junction table linking companies to their available additional services.
+/// Renamed from CompanyService to avoid conflict with CarRental.Api.Services.CompanyService
+/// </summary>
 [Table("company_services")]
-public class CompanyService
+public class CompanyServiceLink
 {
     [Required]
     [Column("company_id")]

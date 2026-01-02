@@ -25,12 +25,14 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Npgsql;
 using CarRental.Api.Data;
 using CarRental.Api.Services;
 using CarRental.Api.Filters;
 using CarRental.Api.Middleware;
 using CarRental.Api.Extensions;
 using CarRental.Api.HostedServices;
+using CarRental.Api.Models;
 
 // Enable legacy timestamp behavior for Npgsql to handle DateTimes
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -156,7 +158,16 @@ builder.Services.AddDbContext<CarRentalDbContext>((serviceProvider, options) =>
             connStr.Split(';').FirstOrDefault(s => s.StartsWith("Port="))?.Replace("Port=", "") ?? "Unknown",
             connStr.Split(';').FirstOrDefault(s => s.StartsWith("SSL Mode="))?.Replace("SSL Mode=", "") ?? "Unknown");
 
-        options.UseNpgsql(connectionString, npgsqlOptions =>
+        // Build NpgsqlDataSource with PostgreSQL enum mapping
+        // Only for actual PostgreSQL enum types (meta_credential_status, social_platform)
+        // scheduled_post_type and scheduled_post_status are int4 in database, not enums
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+        // Map PostgreSQL enum types - labels match C# enum names (PascalCase)
+        dataSourceBuilder.MapEnum<MetaCredentialStatus>("meta_credential_status");
+        dataSourceBuilder.MapEnum<SocialPlatform>("social_platform");
+        var dataSource = dataSourceBuilder.Build();
+
+        options.UseNpgsql(dataSource, npgsqlOptions =>
         {
             npgsqlOptions.CommandTimeout(dbSettings.CommandTimeout);
             npgsqlOptions.EnableRetryOnFailure(
@@ -231,7 +242,7 @@ builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
 builder.Services.AddScoped<ICompanyManagementService, CompanyManagementService>();
 
 // Add Company Service for domain-based multi-tenancy
-builder.Services.AddScoped<ICompanyService, CompanyService>();
+builder.Services.AddScoped<ICompanyService, CarRental.Api.Services.CompanyService>();
 
 // Add Rental Agreement Service
 builder.Services.AddScoped<IRentalAgreementService, RentalAgreementService>();

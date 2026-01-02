@@ -33,6 +33,7 @@ public class Company
     [Required]
     [MaxLength(255)]
     [EmailAddress]
+    [RegularExpression(@"^[^\s@]+@[^\s@]+\.[^\s@]+$", ErrorMessage = "Email cannot contain spaces and must be valid")]
     [Column("email")]
     public string Email { get; set; } = string.Empty;
 

@@ -213,7 +213,7 @@ public class CompanyServicesController : ControllerBase
             if (existingRelation)
                 return Conflict("This service is already added to the company");
 
-            var companyService = new CompanyService
+            var companyService = new CompanyServiceLink
             {
                 CompanyId = createDto.CompanyId,
                 AdditionalServiceId = createDto.AdditionalServiceId,

@@ -43,7 +43,7 @@ public class CarRentalDbContext : DbContext
     public DbSet<BookingConfirmation> BookingConfirmations { get; set; }
     public DbSet<CompanyEmailStyle> CompanyEmailStyles { get; set; }
     public DbSet<AdditionalService> AdditionalServices { get; set; }
-    public DbSet<CompanyService> CompanyServices { get; set; }
+    public DbSet<CompanyServiceLink> CompanyServices { get; set; }
     public DbSet<BookingService> BookingServices { get; set; }
     public DbSet<CustomerLicense> CustomerLicenses { get; set; }
     public DbSet<Model> Models { get; set; }
@@ -97,6 +97,10 @@ public class CarRentalDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // Register PostgreSQL enum types - labels match C# enum names (PascalCase)
+        modelBuilder.HasPostgresEnum<MetaCredentialStatus>("meta_credential_status");
+        modelBuilder.HasPostgresEnum<SocialPlatform>("social_platform");
 
         // Configure UUID generation
         modelBuilder.Entity<Company>()
@@ -723,8 +727,9 @@ public class CarRentalDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        // Configure CompanyService entity (junction table)
-        modelBuilder.Entity<CompanyService>(entity =>
+        // Configure CompanyServiceLink entity (junction table)
+        // Renamed from CompanyService to avoid conflict with CarRental.Api.Services.CompanyService
+        modelBuilder.Entity<CompanyServiceLink>(entity =>
         {
             entity.HasKey(e => new { e.CompanyId, e.AdditionalServiceId });
             entity.Property(e => e.Price).HasPrecision(10, 2);
@@ -1112,10 +1117,10 @@ public class CarRentalDbContext : DbContext
                     v => v == null ? null : System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
                     v => v == null || string.IsNullOrWhiteSpace(v) ? null : System.Text.Json.JsonDocument.Parse(v, default(System.Text.Json.JsonDocumentOptions)));
             
-            // Map enum to string (using PostgreSQL enum type)
+            // Map enum to PostgreSQL native enum type
+            // Uses NpgsqlParameter with NpgsqlDbType.Unknown for proper enum handling
             entity.Property(e => e.Status)
                 .HasColumnName("status")
-                .HasConversion<string>()
                 .HasColumnType("meta_credential_status")
                 .IsRequired();
             
@@ -1153,7 +1158,12 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
             entity.Property(e => e.VehicleId).HasColumnName("vehicle_id"); // Nullable for model posts
             entity.Property(e => e.VehicleModelId).HasColumnName("vehicle_model_id"); // For model posts
-            entity.Property(e => e.Platform).HasColumnName("platform").HasColumnType("social_platform").IsRequired();
+            // Map enum to PostgreSQL native enum type
+            // Uses NpgsqlParameter with NpgsqlDbType.Unknown for proper enum handling
+            entity.Property(e => e.Platform)
+                .HasColumnName("platform")
+                .HasColumnType("social_platform")
+                .IsRequired();
             entity.Property(e => e.PostId).HasColumnName("post_id").HasMaxLength(100).IsRequired();
             entity.Property(e => e.Permalink).HasColumnName("permalink").HasMaxLength(500);
             entity.Property(e => e.Caption).HasColumnName("caption");
@@ -1183,7 +1193,7 @@ public class CarRentalDbContext : DbContext
             entity.HasOne(e => e.Model)
                 .WithMany()
                 .HasForeignKey(e => e.VehicleModelId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Configure ScheduledPost
@@ -1196,7 +1206,7 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.VehicleId).HasColumnName("vehicle_id");
             entity.Property(e => e.VehicleIds).HasColumnName("vehicle_ids").HasColumnType("uuid[]");
             entity.Property(e => e.PostType).HasColumnName("post_type").IsRequired();
-            entity.Property(e => e.Platform).HasColumnName("platform").IsRequired();
+            entity.Property(e => e.Platform).HasColumnName("platform").HasConversion<int>().IsRequired(); // int4 in database
             entity.Property(e => e.Caption).HasColumnName("caption");
             entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for").IsRequired();
             entity.Property(e => e.IncludePrice).HasColumnName("include_price");
@@ -1294,7 +1304,7 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
             entity.Property(e => e.SocialPostId).HasColumnName("social_post_id").IsRequired();
             entity.Property(e => e.PostId).HasColumnName("post_id").HasMaxLength(100).IsRequired();
-            entity.Property(e => e.Platform).HasColumnName("platform").IsRequired();
+            entity.Property(e => e.Platform).HasColumnName("platform").HasConversion<int>().IsRequired(); // int4 in database
             entity.Property(e => e.Impressions).HasColumnName("impressions").HasDefaultValue(0);
             entity.Property(e => e.Reach).HasColumnName("reach").HasDefaultValue(0);
             entity.Property(e => e.Engagement).HasColumnName("engagement").HasDefaultValue(0);
