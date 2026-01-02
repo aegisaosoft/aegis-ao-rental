@@ -709,3 +709,6 @@ public class UpdateDeepLinkSettingsRequest
     /// </summary>
     public string? BookingPattern { get; set; }
 }
+
+// Note: MetaStatusResponse, AutoPublishSettingsResponse, and MetaPageInfo 
+// are defined in CompanyMetaController.cs
