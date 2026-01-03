@@ -33,6 +33,14 @@ public abstract class PostgresTestBase : IAsyncLifetime
     private readonly List<Guid> _createdStripeCompanyIds = new();
     private readonly List<Guid> _createdStripeSettingsIds = new();
     private readonly List<Guid> _createdPaymentMethodIds = new();
+    
+    // Meta/Social integration entities
+    private readonly List<int> _createdMetaCredentialIds = new();
+    private readonly List<Guid> _createdAutoPostSettingsIds = new();
+    private readonly List<Guid> _createdScheduledPostIds = new();
+    private readonly List<Guid> _createdSocialPostTemplateIds = new();
+    private readonly List<Guid> _createdSocialPostAnalyticsIds = new();
+    private readonly List<Guid> _createdVehicleSocialPostIds = new();
 
     public async Task InitializeAsync()
     {
@@ -97,6 +105,90 @@ public abstract class PostgresTestBase : IAsyncLifetime
     {
         try
         {
+            // 0a. Delete Social Post Analytics (references VehicleSocialPosts)
+            if (_createdSocialPostAnalyticsIds.Count > 0)
+            {
+                var analyticsToDelete = await Context.SocialPostAnalytics
+                    .Where(a => _createdSocialPostAnalyticsIds.Contains(a.Id))
+                    .ToListAsync();
+                
+                if (analyticsToDelete.Count > 0)
+                {
+                    Context.SocialPostAnalytics.RemoveRange(analyticsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
+            // 0b. Delete Vehicle Social Posts (references Vehicles, Companies)
+            if (_createdVehicleSocialPostIds.Count > 0)
+            {
+                var socialPostsToDelete = await Context.VehicleSocialPosts
+                    .Where(p => _createdVehicleSocialPostIds.Contains(p.Id))
+                    .ToListAsync();
+                
+                if (socialPostsToDelete.Count > 0)
+                {
+                    Context.VehicleSocialPosts.RemoveRange(socialPostsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
+            // 0c. Delete Scheduled Posts (references Companies, Vehicles)
+            if (_createdScheduledPostIds.Count > 0)
+            {
+                var scheduledPostsToDelete = await Context.ScheduledPosts
+                    .Where(p => _createdScheduledPostIds.Contains(p.Id))
+                    .ToListAsync();
+                
+                if (scheduledPostsToDelete.Count > 0)
+                {
+                    Context.ScheduledPosts.RemoveRange(scheduledPostsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
+            // 0d. Delete Social Post Templates (references Companies)
+            if (_createdSocialPostTemplateIds.Count > 0)
+            {
+                var templatesToDelete = await Context.SocialPostTemplates
+                    .Where(t => _createdSocialPostTemplateIds.Contains(t.Id))
+                    .ToListAsync();
+                
+                if (templatesToDelete.Count > 0)
+                {
+                    Context.SocialPostTemplates.RemoveRange(templatesToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
+            // 0e. Delete Auto Post Settings (references Companies)
+            if (_createdAutoPostSettingsIds.Count > 0)
+            {
+                var autoPostSettingsToDelete = await Context.CompanyAutoPostSettings
+                    .Where(s => _createdAutoPostSettingsIds.Contains(s.Id))
+                    .ToListAsync();
+                
+                if (autoPostSettingsToDelete.Count > 0)
+                {
+                    Context.CompanyAutoPostSettings.RemoveRange(autoPostSettingsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
+            // 0f. Delete Meta Credentials (references Companies)
+            if (_createdMetaCredentialIds.Count > 0)
+            {
+                var metaCredentialsToDelete = await Context.CompanyMetaCredentials
+                    .Where(c => _createdMetaCredentialIds.Contains(c.Id))
+                    .ToListAsync();
+                
+                if (metaCredentialsToDelete.Count > 0)
+                {
+                    Context.CompanyMetaCredentials.RemoveRange(metaCredentialsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
             // 1. Delete Payments first (references Bookings, Customers, Companies)
             if (_createdPaymentIds.Count > 0)
             {
@@ -389,4 +481,12 @@ public abstract class PostgresTestBase : IAsyncLifetime
     protected void TrackForCleanup(StripeCompany stripeCompany) => _createdStripeCompanyIds.Add(stripeCompany.Id);
     protected void TrackForCleanup(StripeSettings stripeSettings) => _createdStripeSettingsIds.Add(stripeSettings.Id);
     protected void TrackForCleanup(CustomerPaymentMethod paymentMethod) => _createdPaymentMethodIds.Add(paymentMethod.Id);
+    
+    // Meta/Social integration tracking
+    protected void TrackForCleanup(CompanyMetaCredentials credentials) => _createdMetaCredentialIds.Add(credentials.Id);
+    protected void TrackForCleanup(CompanyAutoPostSettings settings) => _createdAutoPostSettingsIds.Add(settings.Id);
+    protected void TrackForCleanup(ScheduledPost scheduledPost) => _createdScheduledPostIds.Add(scheduledPost.Id);
+    protected void TrackForCleanup(SocialPostTemplate template) => _createdSocialPostTemplateIds.Add(template.Id);
+    protected void TrackForCleanup(SocialPostAnalytics analytics) => _createdSocialPostAnalyticsIds.Add(analytics.Id);
+    protected void TrackForCleanup(VehicleSocialPost socialPost) => _createdVehicleSocialPostIds.Add(socialPost.Id);
 }

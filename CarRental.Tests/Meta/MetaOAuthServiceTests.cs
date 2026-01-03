@@ -147,6 +147,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
         // Act
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -159,10 +160,6 @@ public class MetaOAuthServiceTests : PostgresTestBase
         saved.InstagramAccountId.Should().Be("17841400000000000");
         saved.InstagramUsername.Should().Be("testrentalco");
         saved.Status.Should().Be(MetaCredentialStatus.Active);
-        
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -184,6 +181,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
 
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Act - Simulate token refresh
         var loaded = await Context.Set<CompanyMetaCredentials>()
@@ -203,10 +201,6 @@ public class MetaOAuthServiceTests : PostgresTestBase
         updated.UserAccessToken.Should().Be("refreshed_token_abc");
         updated.TokenExpiresAt.Should().BeAfter(originalExpiry);
         updated.LastTokenRefresh.Should().NotBeNull();
-
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(updated);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -227,6 +221,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
 
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Act - Select page (simulating page selection)
         var loaded = await Context.Set<CompanyMetaCredentials>()
@@ -246,10 +241,6 @@ public class MetaOAuthServiceTests : PostgresTestBase
 
         updated.Status.Should().Be(MetaCredentialStatus.Active);
         updated.PageId.Should().Be("page_123");
-
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(updated);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -270,6 +261,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
 
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Act - Check expiration and update status
         var loaded = await Context.Set<CompanyMetaCredentials>()
@@ -289,10 +281,6 @@ public class MetaOAuthServiceTests : PostgresTestBase
             .FirstAsync(c => c.CompanyId == company.Id);
 
         updated.Status.Should().Be(MetaCredentialStatus.TokenExpired);
-
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(updated);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -313,6 +301,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
 
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        // Note: Not tracking for cleanup since we're testing deletion
 
         // Act - Revoke access
         var loaded = await Context.Set<CompanyMetaCredentials>()
@@ -360,6 +349,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
         // Act
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -368,10 +358,6 @@ public class MetaOAuthServiceTests : PostgresTestBase
 
         saved.InstagramAccountId.Should().Be("17841412345678901");
         saved.InstagramUsername.Should().Be("test_rental_company");
-
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -398,6 +384,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
         // Act
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -407,10 +394,6 @@ public class MetaOAuthServiceTests : PostgresTestBase
         saved.PageId.Should().Be("fb_page_only");
         saved.InstagramAccountId.Should().BeNull();
         saved.Status.Should().Be(MetaCredentialStatus.Active); // Still active for FB
-
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     #endregion
@@ -440,6 +423,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
         // Act
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -450,10 +434,6 @@ public class MetaOAuthServiceTests : PostgresTestBase
         saved.AutoPublishInstagram.Should().BeTrue();
         saved.AutoPublishIncludePrice.Should().BeFalse();
         saved.AutoPublishHashtags.Should().Contain("#carrental");
-
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -478,6 +458,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
         // Act
         Context.Set<CompanyMetaCredentials>().Add(credentials);
         await Context.SaveChangesAsync();
+        TrackForCleanup(credentials);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -487,12 +468,7 @@ public class MetaOAuthServiceTests : PostgresTestBase
         saved.DeepLinkBaseUrl.Should().Be("https://mycompany.aegis-rental.com");
         saved.DeepLinkVehiclePattern.Should().Contain("{modelId}");
         saved.DeepLinkBookingPattern.Should().Contain("{bookingId}");
-
-        // Cleanup
-        Context.Set<CompanyMetaCredentials>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     #endregion
 }
-

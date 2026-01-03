@@ -347,6 +347,7 @@ public class InstagramCampaignTests : PostgresTestBase
         // Act
         Context.Set<ScheduledPost>().Add(scheduledPost);
         await Context.SaveChangesAsync();
+        TrackForCleanup(scheduledPost);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -358,10 +359,6 @@ public class InstagramCampaignTests : PostgresTestBase
         saved.Platform.Should().Be(SocialPlatform.Instagram);
         saved.ScheduledFor.Should().BeCloseTo(scheduledFor, TimeSpan.FromSeconds(1));
         saved.Caption.Should().Contain("amazing car");
-
-        // Cleanup
-        Context.Set<ScheduledPost>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -398,6 +395,7 @@ public class InstagramCampaignTests : PostgresTestBase
 
         Context.Set<ScheduledPost>().Add(scheduledPost);
         await Context.SaveChangesAsync();
+        TrackForCleanup(scheduledPost);
 
         // Act - Cancel
         var loaded = await Context.Set<ScheduledPost>()
@@ -412,10 +410,6 @@ public class InstagramCampaignTests : PostgresTestBase
             .FirstAsync(p => p.Id == scheduledPost.Id);
 
         cancelled.Status.Should().Be(ScheduledPostStatus.Cancelled);
-
-        // Cleanup
-        Context.Set<ScheduledPost>().Remove(cancelled);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -455,6 +449,8 @@ public class InstagramCampaignTests : PostgresTestBase
 
         Context.Set<ScheduledPost>().AddRange(pendingPost, publishedPost);
         await Context.SaveChangesAsync();
+        TrackForCleanup(pendingPost);
+        TrackForCleanup(publishedPost);
 
         // Act
         var pendingPosts = await Context.Set<ScheduledPost>()
@@ -464,10 +460,6 @@ public class InstagramCampaignTests : PostgresTestBase
         // Assert
         pendingPosts.Should().HaveCount(1);
         pendingPosts[0].Caption.Should().Be("Pending post");
-
-        // Cleanup
-        Context.Set<ScheduledPost>().RemoveRange(pendingPost, publishedPost);
-        await Context.SaveChangesAsync();
     }
 
     #endregion
@@ -504,6 +496,7 @@ public class InstagramCampaignTests : PostgresTestBase
         // Act
         Context.Set<VehicleSocialPost>().Add(post);
         await Context.SaveChangesAsync();
+        TrackForCleanup(post);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -514,10 +507,6 @@ public class InstagramCampaignTests : PostgresTestBase
         saved!.Platform.Should().Be(SocialPlatform.Instagram);
         saved.PostId.Should().Be("17841234567890123");
         saved.Permalink.Should().Contain("instagram.com");
-
-        // Cleanup
-        Context.Set<VehicleSocialPost>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     [Fact]
@@ -557,6 +546,8 @@ public class InstagramCampaignTests : PostgresTestBase
 
         Context.Set<VehicleSocialPost>().AddRange(post1, post2);
         await Context.SaveChangesAsync();
+        TrackForCleanup(post1);
+        TrackForCleanup(post2);
 
         // Act
         var company1Posts = await Context.Set<VehicleSocialPost>()
@@ -566,10 +557,6 @@ public class InstagramCampaignTests : PostgresTestBase
         // Assert
         company1Posts.Should().HaveCount(1);
         company1Posts[0].PostId.Should().Be("post_company1");
-
-        // Cleanup
-        Context.Set<VehicleSocialPost>().RemoveRange(post1, post2);
-        await Context.SaveChangesAsync();
     }
 
     #endregion
@@ -713,6 +700,7 @@ public class InstagramCampaignTests : PostgresTestBase
         // Act
         Context.Set<CompanyAutoPostSettings>().Add(settings);
         await Context.SaveChangesAsync();
+        TrackForCleanup(settings);
 
         // Assert
         Context.ChangeTracker.Clear();
@@ -723,10 +711,6 @@ public class InstagramCampaignTests : PostgresTestBase
         saved!.IsEnabled.Should().BeTrue();
         saved.PostOnVehicleAdded.Should().BeTrue();
         saved.PostOnVehicleUpdated.Should().BeFalse();
-
-        // Cleanup
-        Context.Set<CompanyAutoPostSettings>().Remove(saved);
-        await Context.SaveChangesAsync();
     }
 
     [Theory]
@@ -891,4 +875,3 @@ public class InstagramCampaignTests : PostgresTestBase
 
     #endregion
 }
-
