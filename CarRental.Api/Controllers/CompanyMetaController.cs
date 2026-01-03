@@ -418,6 +418,87 @@ public class CompanyMetaController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Get Facebook domain verification code for a company
+    /// GET /api/companies/{companyId}/meta/domain-verification
+    /// This endpoint is also accessible without auth for proxy to inject meta-tag
+    /// </summary>
+    [HttpGet("domain-verification")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetDomainVerification(Guid companyId)
+    {
+        try
+        {
+            var credentials = await _context.CompanyMetaCredentials
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId);
+
+            return Ok(new { code = credentials?.FacebookDomainVerificationCode });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting domain verification for company {CompanyId}", companyId);
+            return Ok(new { code = (string?)null });
+        }
+    }
+
+    /// <summary>
+    /// Save Facebook domain verification code for a company
+    /// POST /api/companies/{companyId}/meta/domain-verification
+    /// Tenant gets this code from: Facebook Business Settings > Brand Safety > Domains
+    /// Creates a minimal credentials record if one doesn't exist yet.
+    /// </summary>
+    [HttpPost("domain-verification")]
+    public async Task<IActionResult> SaveDomainVerification(Guid companyId, [FromBody] SaveDomainVerificationRequest request)
+    {
+        _logger.LogInformation("SaveDomainVerification called for company {CompanyId}", companyId);
+
+        try
+        {
+            var credentials = await _context.CompanyMetaCredentials
+                .FirstOrDefaultAsync(c => c.CompanyId == companyId);
+
+            // Create a minimal credentials record if one doesn't exist
+            // This allows domain verification before full Meta connection
+            if (credentials == null)
+            {
+                credentials = new CompanyMetaCredentials
+                {
+                    CompanyId = companyId,
+                    UserAccessToken = "", // Will be populated during OAuth
+                    TokenExpiresAt = DateTime.MinValue,
+                    Status = MetaCredentialStatus.PendingPageSelection,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _context.CompanyMetaCredentials.Add(credentials);
+                await _context.SaveChangesAsync();
+                _logger.LogInformation(
+                    "Created minimal credentials record for domain verification - company {CompanyId}", 
+                    companyId);
+            }
+
+            credentials.FacebookDomainVerificationCode = request.Code?.Trim();
+            credentials.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Saved Facebook domain verification code for company {CompanyId}", 
+                companyId);
+
+            return Ok(new { 
+                success = true, 
+                message = "Domain verification code saved. The meta tag will be automatically added to your site pages.",
+                code = credentials.FacebookDomainVerificationCode
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error saving domain verification for company {CompanyId}", companyId);
+            return StatusCode(500, new { error = "Failed to save domain verification code" });
+        }
+    }
+
     #region Helper Methods
 
     private static List<MetaPageInfo>? ParseAvailablePages(JsonDocument? availablePages)
@@ -486,4 +567,12 @@ public class MetaPageInfo
     
     [System.Text.Json.Serialization.JsonPropertyName("instagramUsername")]
     public string? InstagramUsername { get; set; }
+}
+
+/// <summary>
+/// Request DTO for saving Facebook domain verification code
+/// </summary>
+public class SaveDomainVerificationRequest
+{
+    public string? Code { get; set; }
 }

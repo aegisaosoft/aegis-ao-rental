@@ -277,6 +277,10 @@ builder.Services.AddScoped<IAutoPublishService, AutoPublishService>();
 // Add Instagram Campaign Service
 builder.Services.AddScoped<IInstagramCampaignService, InstagramCampaignService>();
 
+// Add Instagram DM Booking Assistant Services
+builder.Services.AddScoped<IInstagramMessagingService, InstagramMessagingService>();
+builder.Services.AddScoped<IBookingAssistantService, BookingAssistantService>();
+
 // Add Social Media Scheduler Background Service (for scheduled posts)
 builder.Services.AddHostedService<SocialMediaSchedulerService>();
 

@@ -88,6 +88,10 @@ public class CarRentalDbContext : DbContext
     public DbSet<CompanyMetaCredentials> CompanyMetaCredentials { get; set; }
     public DbSet<VehicleSocialPost> VehicleSocialPosts { get; set; }
     
+    // Instagram DM Booking Assistant Tables
+    public DbSet<InstagramConversation> InstagramConversations { get; set; }
+    public DbSet<InstagramMessage> InstagramMessages { get; set; }
+    
     // Instagram Campaign Tables
     public DbSet<ScheduledPost> ScheduledPosts { get; set; }
     public DbSet<CompanyAutoPostSettings> CompanyAutoPostSettings { get; set; }
@@ -1194,6 +1198,70 @@ public class CarRentalDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.VehicleModelId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // Configure InstagramConversation
+        modelBuilder.Entity<InstagramConversation>(entity =>
+        {
+            entity.ToTable("instagram_conversations");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").UseIdentityAlwaysColumn();
+            entity.Property(e => e.CompanyId).HasColumnName("company_id").IsRequired();
+            entity.Property(e => e.InstagramUserId).HasColumnName("instagram_user_id").HasMaxLength(100).IsRequired();
+            entity.Property(e => e.InstagramUsername).HasColumnName("instagram_username").HasMaxLength(100);
+            entity.Property(e => e.State).HasColumnName("state").HasConversion<int>().IsRequired();
+            entity.Property(e => e.PickupDate).HasColumnName("pickup_date");
+            entity.Property(e => e.ReturnDate).HasColumnName("return_date");
+            entity.Property(e => e.PickupLocation).HasColumnName("pickup_location").HasMaxLength(200);
+            entity.Property(e => e.SelectedModelId).HasColumnName("selected_model_id");
+            entity.Property(e => e.BookingId).HasColumnName("booking_id");
+            entity.Property(e => e.Language).HasColumnName("language").HasMaxLength(10).HasDefaultValue("en");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+            entity.Property(e => e.LastActivityAt).HasColumnName("last_activity_at").IsRequired();
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at").IsRequired();
+
+            entity.HasIndex(e => new { e.CompanyId, e.InstagramUserId });
+            entity.HasIndex(e => e.ExpiresAt);
+
+            entity.HasOne(e => e.Company)
+                .WithMany()
+                .HasForeignKey(e => e.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.SelectedModel)
+                .WithMany()
+                .HasForeignKey(e => e.SelectedModelId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.Booking)
+                .WithMany()
+                .HasForeignKey(e => e.BookingId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // Configure InstagramMessage
+        modelBuilder.Entity<InstagramMessage>(entity =>
+        {
+            entity.ToTable("instagram_messages");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").UseIdentityAlwaysColumn();
+            entity.Property(e => e.ConversationId).HasColumnName("conversation_id").IsRequired();
+            entity.Property(e => e.InstagramMessageId).HasColumnName("instagram_message_id").HasMaxLength(100);
+            entity.Property(e => e.Sender).HasColumnName("sender").HasConversion<int>().IsRequired();
+            entity.Property(e => e.Content).HasColumnName("content").IsRequired();
+            entity.Property(e => e.MessageType).HasColumnName("message_type").HasMaxLength(50).HasDefaultValue("text");
+            entity.Property(e => e.QuickReplyPayload).HasColumnName("quick_reply_payload").HasMaxLength(500);
+            entity.Property(e => e.Timestamp).HasColumnName("timestamp").IsRequired();
+            entity.Property(e => e.Delivered).HasColumnName("delivered");
+            entity.Property(e => e.DeliveryError).HasColumnName("delivery_error");
+
+            entity.HasIndex(e => e.ConversationId);
+            entity.HasIndex(e => e.InstagramMessageId);
+
+            entity.HasOne(e => e.Conversation)
+                .WithMany(c => c.Messages)
+                .HasForeignKey(e => e.ConversationId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // Configure ScheduledPost

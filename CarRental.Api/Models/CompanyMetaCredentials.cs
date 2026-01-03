@@ -147,6 +147,13 @@ public class CompanyMetaCredentials
     [MaxLength(500)]
     public string? DeepLinkBookingPattern { get; set; }
 
+    /// <summary>
+    /// Facebook Domain Verification Code for Instagram Shopping
+    /// This code is obtained from Meta Business Settings → Domains
+    /// </summary>
+    [MaxLength(100)]
+    public string? FacebookDomainVerificationCode { get; set; }
+
     // Navigation property
     public Company? Company { get; set; }
 }
