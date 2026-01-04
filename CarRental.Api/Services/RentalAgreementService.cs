@@ -280,7 +280,7 @@ public class RentalAgreementService : IRentalAgreementService
             .FirstOrDefaultAsync(b => b.Id == agreement.BookingId, ct);
         
         // Load additional services from agreement's JSON snapshot (preferred)
-        // or fallback to booking_services table
+        // or fallback to booking's JSON, or booking_services table
         List<AdditionalServiceItem> additionalServices = new();
         decimal servicesTotal = 0;
         
@@ -303,7 +303,33 @@ public class RentalAgreementService : IRentalAgreementService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not deserialize additional services from JSON");
+                _logger.LogWarning(ex, "Could not deserialize additional services from agreement JSON");
+            }
+        }
+        else if (booking != null && !string.IsNullOrEmpty(booking.AdditionalServicesJson))
+        {
+            // Fallback: try to load from booking's JSON
+            try
+            {
+                var bookingServicesJson = JsonSerializer.Deserialize<List<AgreementServiceItem>>(booking.AdditionalServicesJson);
+                if (bookingServicesJson != null)
+                {
+                    additionalServices = bookingServicesJson.Select(s => new AdditionalServiceItem
+                    {
+                        Name = s.Name,
+                        DailyRate = s.DailyRate,
+                        Days = s.Days,
+                        Total = s.Total
+                    }).ToList();
+                    servicesTotal = additionalServices.Sum(s => s.Total);
+                    
+                    _logger.LogInformation("Loaded {Count} services from booking JSON for agreement {AgreementId}", 
+                        additionalServices.Count, agreementId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not deserialize additional services from booking JSON");
             }
         }
         else

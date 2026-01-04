@@ -176,6 +176,9 @@ public class Booking
 
     [Column("notes")]
     public string? Notes { get; set; }
+    
+    [Column("additional_services_json")]
+    public string? AdditionalServicesJson { get; set; }
 
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

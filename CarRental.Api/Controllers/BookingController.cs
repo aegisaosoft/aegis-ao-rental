@@ -1311,6 +1311,13 @@ public class BookingController : ControllerBase
                 SecurityDeposit = reservation.SecurityDeposit,
                 Status = reservation.Status,
                 Notes = reservation.Notes,
+                // Additional services from JSON
+                Services = !string.IsNullOrEmpty(reservation.AdditionalServicesJson)
+                    ? System.Text.Json.JsonSerializer.Deserialize<List<AgreementServiceDto>>(reservation.AdditionalServicesJson)
+                    : null,
+                ServicesTotal = !string.IsNullOrEmpty(reservation.AdditionalServicesJson)
+                    ? (System.Text.Json.JsonSerializer.Deserialize<List<AgreementServiceDto>>(reservation.AdditionalServicesJson)?.Sum(s => s.Total) ?? 0)
+                    : 0,
                 CreatedAt = reservation.CreatedAt,
                 UpdatedAt = reservation.UpdatedAt,
                 // Payment information
@@ -1518,7 +1525,13 @@ public class BookingController : ControllerBase
                 TotalAmount = totalAmount,
                 SecurityDeposit = createReservationDto.SecurityDeposit ?? 0m,
                 Currency = company.Currency ?? "USD",
-                Notes = createReservationDto.Notes
+                Notes = createReservationDto.Notes,
+                // Save additional services as JSON
+                AdditionalServicesJson = createReservationDto.AdditionalServices != null && createReservationDto.AdditionalServices.Any()
+                    ? System.Text.Json.JsonSerializer.Serialize(createReservationDto.AdditionalServices)
+                    : (createReservationDto.AgreementData?.AdditionalServices != null && createReservationDto.AgreementData.AdditionalServices.Any()
+                        ? System.Text.Json.JsonSerializer.Serialize(createReservationDto.AgreementData.AdditionalServices)
+                        : null)
             };
 
             _context.Bookings.Add(reservation);

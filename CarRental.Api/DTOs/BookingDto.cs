@@ -72,6 +72,11 @@ public class BookingDto
     public string Status { get; set; } = "Pending";
 
     public string? Notes { get; set; }
+    
+    // Additional services
+    public List<AgreementServiceDto>? Services { get; set; }
+    public decimal ServicesTotal { get; set; }
+    
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
@@ -165,6 +170,9 @@ public class CreateBookingDto
     
     // Location ID for availability check
     public Guid? LocationId { get; set; }
+    
+    // Selected additional services (stored as JSON in booking)
+    public List<AgreementServiceDto>? AdditionalServices { get; set; }
     
     // Rental agreement data (optional)
     public AgreementDataDto? AgreementData { get; set; }
