@@ -34,6 +34,10 @@ public abstract class PostgresTestBase : IAsyncLifetime
     private readonly List<Guid> _createdStripeSettingsIds = new();
     private readonly List<Guid> _createdPaymentMethodIds = new();
     
+    // Rental Agreement entities
+    private readonly List<Guid> _createdRentalAgreementIds = new();
+    private readonly List<Guid> _createdRentalAgreementAuditLogIds = new();
+    
     // Meta/Social integration entities
     private readonly List<int> _createdMetaCredentialIds = new();
     private readonly List<Guid> _createdAutoPostSettingsIds = new();
@@ -81,7 +85,46 @@ public abstract class PostgresTestBase : IAsyncLifetime
             return envConnectionString;
         }
 
-        // Then try appsettings.Test.json
+        // Then try main project's appsettings.json
+        try
+        {
+            // Find the CarRental.Api project directory
+            var currentDir = Directory.GetCurrentDirectory();
+            var apiProjectPath = FindApiProjectPath(currentDir);
+            
+            if (!string.IsNullOrEmpty(apiProjectPath))
+            {
+                var configuration = new ConfigurationBuilder()
+                    .SetBasePath(apiProjectPath)
+                    .AddJsonFile("appsettings.json", optional: false)
+                    .AddJsonFile("appsettings.Development.json", optional: true)
+                    .AddEnvironmentVariables()
+                    .Build();
+
+                // Build connection string from Database section
+                var dbSection = configuration.GetSection("Database");
+                if (dbSection.Exists())
+                {
+                    var host = dbSection["Host"];
+                    var port = dbSection["Port"] ?? "5432";
+                    var database = dbSection["Database"];
+                    var username = dbSection["Username"];
+                    var password = dbSection["Password"];
+                    var sslMode = dbSection["SSLMode"] ?? "Require";
+                    
+                    if (!string.IsNullOrEmpty(host) && !string.IsNullOrEmpty(database))
+                    {
+                        return $"Host={host};Port={port};Database={database};Username={username};Password={password};SSL Mode={sslMode}";
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore and try fallback
+        }
+
+        // Fallback to appsettings.Test.json in current directory
         try
         {
             var configuration = new ConfigurationBuilder()
@@ -96,6 +139,27 @@ public abstract class PostgresTestBase : IAsyncLifetime
         {
             return null;
         }
+    }
+
+    private static string? FindApiProjectPath(string startPath)
+    {
+        var dir = new DirectoryInfo(startPath);
+        
+        // Walk up the directory tree
+        while (dir != null)
+        {
+            // Check if CarRental.Api exists in this directory or its subdirectories
+            var apiPath = Path.Combine(dir.FullName, "CarRental.Api");
+            if (Directory.Exists(apiPath) && File.Exists(Path.Combine(apiPath, "appsettings.json")))
+            {
+                return apiPath;
+            }
+            
+            // Check parent
+            dir = dir.Parent;
+        }
+        
+        return null;
     }
 
     /// <summary>
@@ -241,6 +305,45 @@ public abstract class PostgresTestBase : IAsyncLifetime
                 if (methodsToDelete.Count > 0)
                 {
                     Context.CustomerPaymentMethods.RemoveRange(methodsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
+            // 4.5a. Delete Rental Agreement Audit Logs (references RentalAgreements)
+            if (_createdRentalAgreementAuditLogIds.Count > 0)
+            {
+                var logsToDelete = await Context.RentalAgreementAuditLogs
+                    .Where(l => _createdRentalAgreementAuditLogIds.Contains(l.Id))
+                    .ToListAsync();
+                
+                if (logsToDelete.Count > 0)
+                {
+                    Context.RentalAgreementAuditLogs.RemoveRange(logsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+            }
+
+            // 4.5b. Delete Rental Agreements (references Bookings, Customers, Vehicles, Companies)
+            if (_createdRentalAgreementIds.Count > 0)
+            {
+                // First delete any audit logs that reference these agreements
+                var auditLogsToDelete = await Context.RentalAgreementAuditLogs
+                    .Where(l => _createdRentalAgreementIds.Contains(l.AgreementId))
+                    .ToListAsync();
+                
+                if (auditLogsToDelete.Count > 0)
+                {
+                    Context.RentalAgreementAuditLogs.RemoveRange(auditLogsToDelete);
+                    await Context.SaveChangesAsync();
+                }
+
+                var agreementsToDelete = await Context.RentalAgreements
+                    .Where(a => _createdRentalAgreementIds.Contains(a.Id))
+                    .ToListAsync();
+                
+                if (agreementsToDelete.Count > 0)
+                {
+                    Context.RentalAgreements.RemoveRange(agreementsToDelete);
                     await Context.SaveChangesAsync();
                 }
             }
@@ -481,6 +584,70 @@ public abstract class PostgresTestBase : IAsyncLifetime
     protected void TrackForCleanup(StripeCompany stripeCompany) => _createdStripeCompanyIds.Add(stripeCompany.Id);
     protected void TrackForCleanup(StripeSettings stripeSettings) => _createdStripeSettingsIds.Add(stripeSettings.Id);
     protected void TrackForCleanup(CustomerPaymentMethod paymentMethod) => _createdPaymentMethodIds.Add(paymentMethod.Id);
+    
+    // Rental Agreement tracking
+    protected void TrackForCleanup(RentalAgreementEntity agreement) => _createdRentalAgreementIds.Add(agreement.Id);
+    protected void TrackForCleanup(RentalAgreementAuditLog auditLog) => _createdRentalAgreementAuditLogIds.Add(auditLog.Id);
+    
+    /// <summary>
+    /// Seeds the database with a test rental agreement (tracked for cleanup)
+    /// </summary>
+    protected async Task<RentalAgreementEntity> SeedRentalAgreementAsync(Booking booking, Customer customer, Vehicle vehicle, Company company)
+    {
+        var agreement = new RentalAgreementEntity
+        {
+            Id = Guid.NewGuid(),
+            AgreementNumber = $"AGR-TEST-{Guid.NewGuid():N}".Substring(0, 25),
+            BookingId = booking.Id,
+            CustomerId = customer.Id,
+            VehicleId = vehicle.Id,
+            CompanyId = company.Id,
+            Language = "en",
+            CustomerName = $"{customer.FirstName} {customer.LastName}",
+            CustomerEmail = customer.Email,
+            CustomerPhone = customer.Phone,
+            VehicleName = "Test Vehicle",
+            PickupDate = booking.PickupDate,
+            ReturnDate = booking.ReturnDate,
+            RentalAmount = booking.TotalAmount,
+            DepositAmount = booking.SecurityDeposit,
+            Currency = "USD",
+            SignatureImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+            SignatureHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            SignedAt = DateTime.UtcNow,
+            Status = "active",
+            // Required consent text fields
+            TermsText = "I agree to the rental terms and conditions.",
+            NonRefundableText = "I understand this booking is non-refundable.",
+            DamagePolicyText = "I am responsible for any damage to the vehicle.",
+            CardAuthorizationText = "I authorize charges to my card.",
+            // Consent timestamps
+            TermsAcceptedAt = DateTime.UtcNow,
+            NonRefundableAcceptedAt = DateTime.UtcNow,
+            DamagePolicyAcceptedAt = DateTime.UtcNow,
+            CardAuthorizationAcceptedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        Context.RentalAgreements.Add(agreement);
+        await Context.SaveChangesAsync();
+        
+        _createdRentalAgreementIds.Add(agreement.Id);
+        
+        return agreement;
+    }
+
+    /// <summary>
+    /// Seeds a complete scenario with rental agreement (all tracked for cleanup)
+    /// </summary>
+    protected async Task<(Company Company, Customer Customer, Vehicle Vehicle, Booking Booking, RentalAgreementEntity Agreement)> SeedCompleteScenarioWithAgreementAsync()
+    {
+        var (company, customer, vehicle, booking) = await SeedCompleteScenarioAsync();
+        var agreement = await SeedRentalAgreementAsync(booking, customer, vehicle, company);
+        return (company, customer, vehicle, booking, agreement);
+    }
+    
+    // Meta/Social tracking
     
     // Meta/Social integration tracking
     protected void TrackForCleanup(CompanyMetaCredentials credentials) => _createdMetaCredentialIds.Add(credentials.Id);

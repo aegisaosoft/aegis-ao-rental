@@ -330,4 +330,38 @@ public class BookingIntegrationTests : PostgresTestBase
         loadedCompany!.About.Should().Contain("About us in English");
         loadedCompany.TermsOfUse.Should().Contain("version");
     }
+
+    [Fact]
+    public async Task Booking_WithRentalAgreement_ShouldLoadAgreement()
+    {
+        // Arrange
+        var (company, customer, vehicle, booking, agreement) = await SeedCompleteScenarioWithAgreementAsync();
+
+        // Act - RentalAgreementEntity has no navigation properties, only foreign key IDs
+        var loadedAgreement = await Context.RentalAgreements
+            .FirstOrDefaultAsync(a => a.BookingId == booking.Id);
+
+        // Assert
+        loadedAgreement.Should().NotBeNull();
+        loadedAgreement!.BookingId.Should().Be(booking.Id);
+        loadedAgreement.CustomerId.Should().Be(customer.Id);
+        loadedAgreement.VehicleId.Should().Be(vehicle.Id);
+        loadedAgreement.CompanyId.Should().Be(company.Id);
+        loadedAgreement.Status.Should().Be("active");
+        loadedAgreement.SignatureImage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Booking_WithoutRentalAgreement_ShouldReturnNull()
+    {
+        // Arrange
+        var (_, _, _, booking) = await SeedCompleteScenarioAsync();
+
+        // Act
+        var agreement = await Context.RentalAgreements
+            .FirstOrDefaultAsync(a => a.BookingId == booking.Id);
+
+        // Assert
+        agreement.Should().BeNull("New booking should not have agreement");
+    }
 }
