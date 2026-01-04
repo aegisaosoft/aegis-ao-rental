@@ -247,6 +247,30 @@ public class AgreementDataDto
     /// Optional device info
     /// </summary>
     public Dictionary<string, object>? DeviceInfo { get; set; }
+    
+    /// <summary>
+    /// Selected additional services snapshot
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("additionalServices")]
+    public List<AgreementServiceDto>? AdditionalServices { get; set; }
+}
+
+/// <summary>
+/// Service item for rental agreement
+/// </summary>
+public class AgreementServiceDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+    
+    [System.Text.Json.Serialization.JsonPropertyName("dailyRate")]
+    public decimal DailyRate { get; set; }
+    
+    [System.Text.Json.Serialization.JsonPropertyName("days")]
+    public int Days { get; set; }
+    
+    [System.Text.Json.Serialization.JsonPropertyName("total")]
+    public decimal Total { get; set; }
 }
 
 /// <summary>

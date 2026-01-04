@@ -58,11 +58,30 @@ public class CreateAgreementRequest
     public decimal DepositAmount { get; set; }
     public string Currency { get; set; } = "USD";
     
+    // Additional services
+    public List<AgreementServiceItem>? AdditionalServices { get; set; }
+    
     // Agreement data from frontend
     public AgreementDataDto AgreementData { get; set; } = new();
     
     // Request context
     public string? IpAddress { get; set; }
+}
+
+// Service item for agreement
+public class AgreementServiceItem
+{
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+    
+    [System.Text.Json.Serialization.JsonPropertyName("dailyRate")]
+    public decimal DailyRate { get; set; }
+    
+    [System.Text.Json.Serialization.JsonPropertyName("days")]
+    public int Days { get; set; }
+    
+    [System.Text.Json.Serialization.JsonPropertyName("total")]
+    public decimal Total { get; set; }
 }
 
 public class RentalAgreementService : IRentalAgreementService
@@ -168,11 +187,24 @@ public class RentalAgreementService : IRentalAgreementService
             GeoLongitude = request.AgreementData.Geolocation?.Longitude,
             GeoAccuracy = request.AgreementData.Geolocation?.Accuracy,
             
+            // Additional services snapshot
+            AdditionalServicesJson = request.AdditionalServices != null && request.AdditionalServices.Any()
+                ? JsonSerializer.Serialize(request.AdditionalServices)
+                : null,
+            
             // Status
             Status = "active",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+        
+        // Log additional services for debugging
+        _logger.LogInformation(
+            "[RentalAgreement] Additional services for booking {BookingId}: Count={Count}, JSON={Json}",
+            request.BookingId,
+            request.AdditionalServices?.Count ?? 0,
+            agreement.AdditionalServicesJson ?? "null"
+        );
 
         try
         {
@@ -237,38 +269,169 @@ public class RentalAgreementService : IRentalAgreementService
         if (company == null)
             throw new InvalidOperationException($"Company {agreement.CompanyId} not found");
         
-        // Generate PDF using the PDF generator
-        var pdfGenerator = new RentalAgreementPdfGenerator();
-        var pdfBytes = pdfGenerator.Generate(new RentalAgreementPdfData
+        // Load booking with all related data
+        var booking = await _db.Bookings
+            .Include(b => b.Customer)
+                .ThenInclude(c => c.License)
+            .Include(b => b.Vehicle)
+                .ThenInclude(v => v.VehicleModel)
+                    .ThenInclude(vm => vm!.Model)
+                        .ThenInclude(m => m.Category)
+            .FirstOrDefaultAsync(b => b.Id == agreement.BookingId, ct);
+        
+        // Load additional services from agreement's JSON snapshot (preferred)
+        // or fallback to booking_services table
+        List<AdditionalServiceItem> additionalServices = new();
+        decimal servicesTotal = 0;
+        
+        if (!string.IsNullOrEmpty(agreement.AdditionalServicesJson))
         {
-            AgreementNumber = agreement.AgreementNumber,
-            Language = agreement.Language,
-            CompanyName = company.CompanyName,
-            CompanyAddress = GetCompanyAddress(company),
-            CompanyPhone = null, // Company model doesn't have Phone property
-            CompanyEmail = company.Email,
-            CustomerName = agreement.CustomerName,
-            CustomerEmail = agreement.CustomerEmail,
-            CustomerPhone = agreement.CustomerPhone,
-            CustomerAddress = agreement.CustomerAddress,
-            DriverLicenseNumber = agreement.DriverLicenseNumber,
-            DriverLicenseState = agreement.DriverLicenseState,
-            VehicleName = agreement.VehicleName,
-            VehiclePlate = agreement.VehiclePlate,
-            PickupDate = agreement.PickupDate,
-            PickupLocation = agreement.PickupLocation,
-            ReturnDate = agreement.ReturnDate,
-            ReturnLocation = agreement.ReturnLocation,
-            RentalAmount = agreement.RentalAmount,
-            DepositAmount = agreement.DepositAmount,
-            Currency = agreement.Currency,
-            SignatureImage = agreement.SignatureImage,
-            SignedAt = agreement.SignedAt,
-            TermsText = agreement.TermsText,
-            NonRefundableText = agreement.NonRefundableText,
-            DamagePolicyText = agreement.DamagePolicyText,
-            CardAuthorizationText = agreement.CardAuthorizationText,
-        });
+            try
+            {
+                var savedServices = JsonSerializer.Deserialize<List<AgreementServiceItem>>(agreement.AdditionalServicesJson);
+                if (savedServices != null)
+                {
+                    additionalServices = savedServices.Select(s => new AdditionalServiceItem
+                    {
+                        Name = s.Name,
+                        DailyRate = s.DailyRate,
+                        Days = s.Days,
+                        Total = s.Total
+                    }).ToList();
+                    servicesTotal = additionalServices.Sum(s => s.Total);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not deserialize additional services from JSON");
+            }
+        }
+        else
+        {
+            // Fallback: try to load from booking_services table
+            try
+            {
+                var bookingServices = await _db.BookingServices
+                    .Include(bs => bs.AdditionalService)
+                    .Where(bs => bs.BookingId == agreement.BookingId)
+                    .ToListAsync(ct);
+                    
+                additionalServices = bookingServices.Select(bs => new AdditionalServiceItem
+                {
+                    Name = bs.AdditionalService?.Name ?? "Service",
+                    DailyRate = bs.PriceAtBooking,
+                    Days = booking?.TotalDays ?? 1,
+                    Total = bs.Subtotal
+                }).ToList();
+                servicesTotal = bookingServices.Sum(bs => bs.Subtotal);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not load booking services from table, continuing without them");
+            }
+        }
+        
+        // Build vehicle info
+        var vehicle = booking?.Vehicle;
+        var vehicleModel = vehicle?.VehicleModel?.Model;
+        var vehicleName = vehicleModel != null 
+            ? $"{vehicleModel.Make} {vehicleModel.ModelName}".Trim()
+            : (agreement.VehicleName ?? "Vehicle");
+        var vehicleYear = vehicleModel?.Year;
+        var vehicleType = vehicleModel?.Category?.CategoryName ?? "";
+        
+        // Build customer info
+        var customer = booking?.Customer;
+        var license = customer?.License;
+        
+        // Parse customer name into parts if needed
+        var nameParts = agreement.CustomerName?.Split(' ', 2) ?? new[] { "", "" };
+        var customerFirstName = customer?.FirstName ?? (nameParts.Length > 0 ? nameParts[0] : "");
+        var customerLastName = customer?.LastName ?? (nameParts.Length > 1 ? nameParts[1] : "");
+        
+        // Build full address
+        var customerAddress = customer?.Address;
+        if (customer != null && !string.IsNullOrEmpty(customer.City))
+        {
+            var addressParts = new List<string>();
+            if (!string.IsNullOrEmpty(customer.Address)) addressParts.Add(customer.Address);
+            if (!string.IsNullOrEmpty(customer.City)) addressParts.Add(customer.City);
+            if (!string.IsNullOrEmpty(customer.State)) addressParts.Add(customer.State);
+            if (!string.IsNullOrEmpty(customer.PostalCode)) addressParts.Add(customer.PostalCode);
+            customerAddress = string.Join(", ", addressParts);
+        }
+        
+        // Calculate totals
+        var rentalDays = booking?.TotalDays ?? 1;
+        var dailyRate = booking?.DailyRate ?? 0;
+        var rentalAmount = dailyRate * rentalDays;
+        var subtotal = rentalAmount + servicesTotal;
+        var totalCharges = booking?.TotalAmount ?? agreement.RentalAmount;
+        
+            // Get full rules and terms based on language
+            var (rulesText, fullTermsText) = GetRulesAndTermsTexts(agreement.Language);
+            
+            // Generate PDF using the PDF generator
+            var pdfGenerator = new RentalAgreementPdfGenerator();
+            var pdfBytes = pdfGenerator.Generate(new RentalAgreementPdfData
+            {
+                AgreementNumber = agreement.AgreementNumber,
+                Language = agreement.Language,
+                CompanyName = company.CompanyName,
+                CompanyAddress = GetCompanyAddress(company),
+                CompanyPhone = null,
+                CompanyEmail = company.Email,
+                
+                // Customer / Primary Renter
+                CustomerName = agreement.CustomerName ?? "",
+                CustomerFirstName = customerFirstName ?? "",
+                CustomerMiddleName = license?.MiddleName,
+                CustomerLastName = customerLastName ?? "",
+                CustomerEmail = agreement.CustomerEmail ?? "",
+                CustomerPhone = agreement.CustomerPhone ?? customer?.Phone,
+                CustomerAddress = customerAddress ?? agreement.CustomerAddress,
+                CustomerDateOfBirth = customer?.DateOfBirth,
+                DriverLicenseNumber = license?.LicenseNumber ?? agreement.DriverLicenseNumber,
+                DriverLicenseState = license?.StateIssued ?? agreement.DriverLicenseState,
+                DriverLicenseExpiration = license?.ExpirationDate,
+                
+                // Vehicle
+                VehicleName = vehicleName ?? "Vehicle",
+                VehicleType = vehicleType,
+                VehicleYear = vehicleYear,
+                VehicleColor = vehicle?.Color,
+                VehiclePlate = vehicle?.LicensePlate ?? agreement.VehiclePlate,
+                VehicleVin = vehicle?.Vin,
+                OdometerStart = vehicle?.Mileage,
+                
+                // Rental Period
+                PickupDate = agreement.PickupDate,
+                PickupTime = booking?.PickupTime,
+                PickupLocation = agreement.PickupLocation ?? booking?.PickupLocation,
+                ReturnDate = agreement.ReturnDate,
+                ReturnTime = booking?.ReturnTime,
+                ReturnLocation = agreement.ReturnLocation ?? booking?.ReturnLocation,
+                
+                // Financial
+                RentalAmount = rentalAmount,
+                DailyRate = dailyRate,
+                RentalDays = rentalDays,
+                DepositAmount = booking?.SecurityDeposit ?? agreement.DepositAmount,
+                Currency = agreement.Currency,
+                AdditionalServices = additionalServices,
+                Subtotal = subtotal,
+                TotalCharges = totalCharges,
+                
+                // Signature
+                SignatureImage = agreement.SignatureImage,
+                SignedAt = agreement.SignedAt,
+                
+                // Full Terms (not the short consent texts)
+                RulesText = rulesText,
+                FullTermsText = fullTermsText, // Use FullTermsText for the full legal document
+                // Don't include short consent texts as they create empty sections
+                // TermsText, NonRefundableText, DamagePolicyText, CardAuthorizationText are left empty
+            });
         
         // Check if Azure Blob Storage is configured
         if (!await _blobStorageService.IsConfiguredAsync())
@@ -525,6 +688,168 @@ public class RentalAgreementService : IRentalAgreementService
         // Company model doesn't have address fields, return null or use company name
         // If you need company address, you may need to get it from CompanyLocation or another source
         return null;
+    }
+    
+    private static (string RulesText, string FullTermsText) GetRulesAndTermsTexts(string language)
+    {
+        return language?.ToLower() switch
+        {
+            "es" => (
+                RulesText: "REGLAS DE ACCIÓN\n\n" +
+                    "SOLO CONDUCTORES AUTORIZADOS pueden operar este vehículo.\n\n" +
+                    "PROHIBIDO ALCOHOL O NARCÓTICOS - Se prohíbe el uso de alcohol o narcóticos en el vehículo.\n\n" +
+                    "NO FUMAR - Tarifa de limpieza de $250 por fumar en el vehículo.\n\n" +
+                    "SIN MASCOTAS - No se permiten mascotas sin autorización previa.\n\n" +
+                    "MANTENER EL VEHÍCULO LIMPIO - Devolver el vehículo en condiciones de limpieza razonables.\n\n" +
+                    "INFORMAR DAÑOS INMEDIATAMENTE - Reportar cualquier daño o accidente de inmediato.\n\n" +
+                    "SEGUIR LAS LEYES DE TRÁFICO - Obedecer todas las leyes de tráfico y estacionamiento.\n\n" +
+                    "NO CONDUCIR FUERA DE CARRETERA - Solo uso en carretera a menos que se especifique.\n\n" +
+                    "DEVOLUCIÓN CON TANQUE LLENO - Devolver con el nivel de combustible original o se aplicará cargo.\n\n" +
+                    "NO SUBARRENDAR - No subarrendar ni prestar el vehículo.\n\n" +
+                    "KILOMETRAJE PERMITIDO - Se puede aplicar cargo por exceso de kilometraje.",
+                FullTermsText: GetFullTermsTextSpanish()
+            ),
+            _ => (
+                RulesText: "RULES OF ACTION\n\n" +
+                    "AUTHORIZED DRIVERS ONLY may operate this vehicle.\n\n" +
+                    "NO ALCOHOL OR NARCOTICS - Use of alcohol or narcotics in the vehicle is prohibited.\n\n" +
+                    "NO SMOKING - $250 cleaning fee for smoking in the vehicle.\n\n" +
+                    "NO PETS - Pets are not allowed without prior authorization.\n\n" +
+                    "KEEP VEHICLE CLEAN - Return the vehicle in reasonably clean condition.\n\n" +
+                    "REPORT DAMAGE IMMEDIATELY - Report any damage or accidents immediately.\n\n" +
+                    "FOLLOW TRAFFIC LAWS - Obey all traffic laws and parking regulations.\n\n" +
+                    "NO OFF-ROAD DRIVING - On-road use only unless otherwise specified.\n\n" +
+                    "RETURN WITH FULL TANK - Return with original fuel level or fuel charge applies.\n\n" +
+                    "NO SUBLETTING - Do not sublet or loan the vehicle to others.\n\n" +
+                    "MILEAGE ALLOWANCE - Excess mileage charges may apply.",
+                FullTermsText: GetFullTermsTextEnglish()
+            )
+        };
+    }
+
+    private static string GetFullTermsTextEnglish()
+    {
+        return @"1. DEFINITIONS
+""Agreement"" means this Rental Agreement and all terms and conditions herein. ""Company,"" ""We,"" ""Us,"" or ""Our"" refers to the rental company identified on the face of this Agreement. ""Renter,"" ""You,"" or ""Your"" refers to the person(s) identified as the renter on the face of this Agreement and any Authorized Driver. ""Authorized Driver"" means the Renter and any additional driver listed on this Agreement who has been approved by Us. ""Vehicle"" means the vehicle identified in this Agreement, including all its tires, tools, accessories, equipment, keys, and documents.
+
+2. RENTAL AND RETURN
+You agree to return the Vehicle to Our designated return location on the date and time specified in this Agreement. If You fail to return the Vehicle on time, You agree to pay: (a) an additional day's rental charge for each 24-hour period or portion thereof that the Vehicle is not returned; (b) all costs We incur in locating and recovering the Vehicle; and (c) any applicable late fees.
+
+3. CONDITION AND RETURN OF VEHICLE
+You acknowledge receiving the Vehicle in good operating condition, clean, with a full tank of fuel (unless otherwise noted), and with all accessories and equipment intact. You agree to return the Vehicle in the same condition. A cleaning fee will be charged if the Vehicle is returned excessively dirty. Fuel charges apply if the Vehicle is not returned with the same fuel level.
+
+4. VEHICLE USE RESTRICTIONS
+You agree NOT to use or permit the Vehicle to be used: (a) by anyone who is not an Authorized Driver; (b) by anyone under the influence of alcohol, drugs, or any substance that impairs driving ability; (c) for any illegal purpose; (d) to push or tow anything; (e) in any race, test, or contest; (f) to carry passengers for hire; (g) to transport hazardous materials; (h) outside the United States without Our prior written consent; (i) on unpaved roads or off-road; (j) to carry more passengers than the Vehicle has seat belts; (k) for smoking or transporting pets (unless pre-authorized).
+
+5. PROHIBITED USES
+The following uses are strictly prohibited and will void all liability coverage: (a) use by an unauthorized driver; (b) use while intoxicated; (c) use for illegal activities; (d) use in violation of the terms of this Agreement; (e) leaving the Vehicle unlocked or keys in the Vehicle; (f) failing to use reasonable care; (g) use during the commission of a crime.
+
+6. YOUR RESPONSIBILITY FOR DAMAGE OR LOSS
+You are responsible for all damage to, loss of, or theft of the Vehicle, regardless of fault, unless You have purchased and paid for optional damage waiver coverage (if available) and have complied with all terms of this Agreement. Your responsibility includes: (a) all physical damage; (b) loss due to theft; (c) vandalism; (d) acts of nature; (e) loss of use; (f) diminished value; (g) Our administrative fees.
+
+7. INSURANCE AND LIABILITY
+You are responsible for providing Your own automobile liability insurance. If You do not have insurance or Your insurance is insufficient, You are personally liable for all damages and claims. Any optional coverage We may offer is subject to the terms, conditions, and exclusions stated in the coverage documents.
+
+8. INDEMNIFICATION
+You agree to indemnify, defend, and hold Us harmless from all claims, liability, costs, and attorney fees arising from Your use of the Vehicle, Your breach of this Agreement, or any accident or incident involving the Vehicle during the rental period.
+
+9. PAYMENT
+You authorize Us to charge to Your credit/debit card: (a) all rental charges; (b) any optional services; (c) fees and surcharges; (d) applicable taxes; (e) fuel charges; (f) toll charges; (g) traffic/parking violations; (h) damage or loss not covered by insurance or waiver; (i) cleaning fees; (j) late return fees; (k) excess mileage charges; (l) administrative fees.
+
+10. SECURITY DEPOSIT
+A security deposit may be required and authorized on Your credit card at the time of rental. This deposit will be released within 7-14 business days after the Vehicle is returned, subject to inspection and final charges.
+
+11. TRAFFIC AND PARKING VIOLATIONS
+You are responsible for all traffic and parking violations, tolls, and related fees incurred during Your rental period. We may charge Your credit card for any violations We receive plus an administrative fee.
+
+12. ACCIDENT PROCEDURES
+In case of an accident: (a) report it immediately to the police and to Us; (b) do not admit fault or liability; (c) obtain names and contact information of all parties involved and witnesses; (d) take photographs if possible; (e) complete an accident report form.
+
+13. DISCLAIMERS
+WE MAKE NO WARRANTIES, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. WE ARE NOT RESPONSIBLE FOR ANY LOSS OF YOUR PERSONAL PROPERTY LEFT IN THE VEHICLE.
+
+14. ARBITRATION AGREEMENT
+Any dispute arising out of or relating to this Agreement shall be resolved through binding arbitration in accordance with the rules of the American Arbitration Association. You waive Your right to a jury trial and to participate in a class action lawsuit.
+
+15. GOVERNING LAW
+This Agreement shall be governed by the laws of the state where the rental originates.
+
+16. STATE-SPECIFIC PROVISIONS
+
+CALIFORNIA: The California Consumer Privacy Act (CCPA) notice is available upon request.
+
+ILLINOIS: The Illinois Consumer Fraud Act applies.
+
+INDIANA: Total rental charges are outlined on the rental document.
+
+NEVADA: Security deposit return timeframe is 30 days.
+
+NEW YORK: New York General Business Law provisions apply.
+
+WISCONSIN: This Agreement is subject to Wisconsin law.
+
+17. ENTIRE AGREEMENT
+This Agreement, including any addenda, constitutes the entire agreement between You and Us. No oral statements or representations modify this Agreement.
+
+18. ACCEPTANCE
+By signing this Agreement, You acknowledge that You have read, understand, and agree to be bound by all terms and conditions herein.";
+    }
+
+    private static string GetFullTermsTextSpanish()
+    {
+        return @"1. DEFINICIONES
+""Contrato"" significa este Contrato de Alquiler y todos los términos y condiciones aquí establecidos. ""Compañía,"" ""Nosotros,"" o ""Nuestro"" se refiere a la empresa de alquiler identificada en este Contrato. ""Arrendatario,"" ""Usted,"" o ""Su"" se refiere a la(s) persona(s) identificada(s) como arrendatario en este Contrato y cualquier Conductor Autorizado.
+
+2. ALQUILER Y DEVOLUCIÓN
+Usted acepta devolver el Vehículo en la ubicación designada en la fecha y hora especificadas. Si no devuelve el Vehículo a tiempo, acepta pagar cargos adicionales.
+
+3. CONDICIÓN Y DEVOLUCIÓN DEL VEHÍCULO
+Usted reconoce haber recibido el Vehículo en buenas condiciones de funcionamiento, limpio y con el tanque lleno de combustible.
+
+4. RESTRICCIONES DE USO DEL VEHÍCULO
+Usted acepta NO usar o permitir que el Vehículo sea usado por personas no autorizadas, bajo la influencia de alcohol o drogas, o para fines ilegales.
+
+5. USOS PROHIBIDOS
+Los siguientes usos están estrictamente prohibidos y anularán toda cobertura de responsabilidad.
+
+6. SU RESPONSABILIDAD POR DAÑOS O PÉRDIDAS
+Usted es responsable de todos los daños al Vehículo, pérdida o robo, independientemente de la culpa.
+
+7. SEGURO Y RESPONSABILIDAD
+Usted es responsable de proporcionar su propio seguro de responsabilidad civil automotriz.
+
+8. INDEMNIZACIÓN
+Usted acepta indemnizar y eximir de responsabilidad a la Compañía de todas las reclamaciones.
+
+9. PAGO
+Usted nos autoriza a cargar a su tarjeta de crédito/débito todos los cargos de alquiler.
+
+10. DEPÓSITO DE SEGURIDAD
+Se puede requerir un depósito de seguridad en el momento del alquiler.
+
+11. VIOLACIONES DE TRÁFICO Y ESTACIONAMIENTO
+Usted es responsable de todas las violaciones de tráfico y estacionamiento.
+
+12. PROCEDIMIENTOS EN CASO DE ACCIDENTE
+En caso de accidente, repórtelo inmediatamente a la policía y a nosotros.
+
+13. RENUNCIAS
+NO HACEMOS GARANTÍAS, EXPRESAS O IMPLÍCITAS.
+
+14. ACUERDO DE ARBITRAJE
+Cualquier disputa se resolverá mediante arbitraje vinculante.
+
+15. LEY APLICABLE
+Este Contrato se regirá por las leyes del estado donde se origina el alquiler.
+
+16. DISPOSICIONES ESPECÍFICAS POR ESTADO
+Se aplican las disposiciones específicas según el estado.
+
+17. ACUERDO COMPLETO
+Este Contrato constituye el acuerdo completo entre Usted y Nosotros.
+
+18. ACEPTACIÓN
+Al firmar este Contrato, Usted reconoce que ha leído, entendido y acepta estar obligado por todos los términos y condiciones aquí establecidos.";
     }
 }
 

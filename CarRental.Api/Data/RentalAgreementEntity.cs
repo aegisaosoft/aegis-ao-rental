@@ -110,6 +110,9 @@ public class RentalAgreementEntity
     public string? PdfUrl { get; set; }
     public DateTime? PdfGeneratedAt { get; set; }
     
+    // Additional services snapshot (JSON)
+    public string? AdditionalServicesJson { get; set; }
+    
     // Status
     [MaxLength(50)]
     public string Status { get; set; } = "active";
@@ -203,6 +206,7 @@ public class RentalAgreementConfiguration : IEntityTypeConfiguration<RentalAgree
         builder.Property(e => e.GeoAccuracy).HasColumnName("geo_accuracy").HasPrecision(10, 2);
         builder.Property(e => e.PdfUrl).HasColumnName("pdf_url");
         builder.Property(e => e.PdfGeneratedAt).HasColumnName("pdf_generated_at");
+        builder.Property(e => e.AdditionalServicesJson).HasColumnName("additional_services_json");
         builder.Property(e => e.Status).HasColumnName("status");
         builder.Property(e => e.VoidedAt).HasColumnName("voided_at");
         builder.Property(e => e.VoidedReason).HasColumnName("voided_reason");
