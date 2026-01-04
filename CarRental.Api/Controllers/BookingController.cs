@@ -2523,6 +2523,123 @@ public class BookingController : ControllerBase
     }
 
     /// <summary>
+    /// Sign an existing booking that doesn't have an agreement yet.
+    /// Creates the agreement and generates PDF.
+    /// </summary>
+    /// <param name="id">Booking ID</param>
+    /// <param name="agreementData">Agreement signature and consent data</param>
+    /// <returns>Created rental agreement</returns>
+    [HttpPost("bookings/{id}/sign-agreement")]
+    [Authorize]
+    [ProducesResponseType(typeof(RentalAgreementResponseDto), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(409)]
+    public async Task<IActionResult> SignExistingBooking(Guid id, [FromBody] AgreementDataDto agreementData)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "[Booking] SignExistingBooking called - BookingId: {BookingId}, HasSignature: {HasSignature}",
+                id,
+                !string.IsNullOrEmpty(agreementData?.SignatureImage)
+            );
+
+            if (agreementData == null || string.IsNullOrEmpty(agreementData.SignatureImage))
+            {
+                return BadRequest(new { message = "Signature is required" });
+            }
+
+            // Check if booking exists
+            var booking = await _context.Bookings.FindAsync(id);
+            if (booking == null)
+            {
+                return NotFound(new { message = "Booking not found" });
+            }
+
+            // Get IP address
+            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+            // Sign the booking
+            var agreement = await _rentalAgreementService.SignExistingBookingAsync(id, agreementData, ipAddress);
+
+            // Return agreement details
+            var response = new RentalAgreementResponseDto
+            {
+                Id = agreement.Id,
+                AgreementNumber = agreement.AgreementNumber,
+                BookingId = agreement.BookingId,
+                CustomerId = agreement.CustomerId,
+                VehicleId = agreement.VehicleId,
+                CompanyId = agreement.CompanyId,
+                Language = agreement.Language,
+                CustomerName = agreement.CustomerName,
+                CustomerEmail = agreement.CustomerEmail,
+                CustomerPhone = agreement.CustomerPhone,
+                CustomerAddress = agreement.CustomerAddress,
+                DriverLicenseNumber = agreement.DriverLicenseNumber,
+                DriverLicenseState = agreement.DriverLicenseState,
+                VehicleName = agreement.VehicleName,
+                VehiclePlate = agreement.VehiclePlate,
+                PickupDate = agreement.PickupDate,
+                PickupLocation = agreement.PickupLocation,
+                ReturnDate = agreement.ReturnDate,
+                ReturnLocation = agreement.ReturnLocation,
+                RentalAmount = agreement.RentalAmount,
+                DepositAmount = agreement.DepositAmount,
+                Currency = agreement.Currency,
+                SignatureImage = agreement.SignatureImage,
+                SignedAt = agreement.SignedAt,
+                PdfUrl = agreement.PdfUrl,
+                PdfGeneratedAt = agreement.PdfGeneratedAt,
+                Status = agreement.Status,
+                CreatedAt = agreement.CreatedAt,
+                Consents = new AgreementConsentsDto
+                {
+                    TermsAcceptedAt = agreement.TermsAcceptedAt,
+                    NonRefundableAcceptedAt = agreement.NonRefundableAcceptedAt,
+                    DamagePolicyAcceptedAt = agreement.DamagePolicyAcceptedAt,
+                    CardAuthorizationAcceptedAt = agreement.CardAuthorizationAcceptedAt,
+                },
+                ConsentTexts = new ConsentTextsDto
+                {
+                    TermsTitle = agreement.TermsText?.Split('\n')[0] ?? "",
+                    TermsText = (agreement.TermsText?.Contains('\n') ?? false) ? agreement.TermsText.Substring(agreement.TermsText.IndexOf('\n') + 1) : "",
+                    NonRefundableTitle = agreement.NonRefundableText?.Split('\n')[0] ?? "",
+                    NonRefundableText = (agreement.NonRefundableText?.Contains('\n') ?? false) ? agreement.NonRefundableText.Substring(agreement.NonRefundableText.IndexOf('\n') + 1) : "",
+                    DamagePolicyTitle = agreement.DamagePolicyText?.Split('\n')[0] ?? "",
+                    DamagePolicyText = (agreement.DamagePolicyText?.Contains('\n') ?? false) ? agreement.DamagePolicyText.Substring(agreement.DamagePolicyText.IndexOf('\n') + 1) : "",
+                    CardAuthorizationTitle = agreement.CardAuthorizationText?.Split('\n')[0] ?? "",
+                    CardAuthorizationText = (agreement.CardAuthorizationText?.Contains('\n') ?? false) ? agreement.CardAuthorizationText.Substring(agreement.CardAuthorizationText.IndexOf('\n') + 1) : "",
+                }
+            };
+
+            _logger.LogInformation(
+                "[Booking] Successfully signed booking {BookingId} - AgreementId: {AgreementId}",
+                id,
+                agreement.Id
+            );
+
+            return Ok(response);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("already exists"))
+        {
+            _logger.LogWarning(ex, "Agreement already exists for booking {BookingId}", id);
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            _logger.LogWarning(ex, "Invalid argument when signing booking {BookingId}", id);
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error signing booking {BookingId}", id);
+            return StatusCode(500, new { message = "Error signing booking" });
+        }
+    }
+
+    /// <summary>
     /// Delete a reservation
     /// </summary>
     /// <param name="id">Reservation ID</param>

@@ -22,6 +22,12 @@ public interface IRentalAgreementService
     Task<string> GenerateAndStorePdfAsync(Guid agreementId, CancellationToken ct = default);
     Task VoidAgreementAsync(Guid agreementId, string reason, string performedBy, CancellationToken ct = default);
     Task LogActionAsync(Guid agreementId, string action, string performedBy, string? ipAddress = null, string? userAgent = null, object? details = null, CancellationToken ct = default);
+    
+    /// <summary>
+    /// Signs an existing booking that doesn't have an agreement yet.
+    /// Creates the agreement and generates PDF.
+    /// </summary>
+    Task<RentalAgreementEntity> SignExistingBookingAsync(Guid bookingId, AgreementDataDto agreementData, string? ipAddress = null, CancellationToken ct = default);
 }
 
 public class CreateAgreementRequest
@@ -394,6 +400,124 @@ public class RentalAgreementService : IRentalAgreementService
         
         _db.RentalAgreementAuditLogs.Add(log);
         await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<RentalAgreementEntity> SignExistingBookingAsync(
+        Guid bookingId, 
+        AgreementDataDto agreementData, 
+        string? ipAddress = null, 
+        CancellationToken ct = default)
+    {
+        _logger.LogInformation(
+            "[RentalAgreement] SignExistingBookingAsync - BookingId: {BookingId}, HasSignature: {HasSignature}",
+            bookingId,
+            !string.IsNullOrEmpty(agreementData?.SignatureImage)
+        );
+
+        // Validate signature
+        if (agreementData == null || string.IsNullOrEmpty(agreementData.SignatureImage))
+        {
+            throw new ArgumentException("SignatureImage is required", nameof(agreementData));
+        }
+
+        // Check if agreement already exists
+        var existingAgreement = await _db.RentalAgreements
+            .FirstOrDefaultAsync(a => a.BookingId == bookingId && a.Status != "Voided", ct);
+        
+        if (existingAgreement != null)
+        {
+            throw new InvalidOperationException($"Agreement already exists for booking {bookingId}");
+        }
+
+        // Get booking with related entities
+        var booking = await _db.Bookings
+            .Include(b => b.Customer)
+            .Include(b => b.Vehicle)
+                .ThenInclude(v => v.VehicleModel!)
+                    .ThenInclude(vm => vm.Model)
+            .Include(b => b.Company)
+            .FirstOrDefaultAsync(b => b.Id == bookingId, ct);
+
+        if (booking == null)
+        {
+            throw new InvalidOperationException($"Booking {bookingId} not found");
+        }
+
+        // Get customer license
+        var license = await _db.CustomerLicenses
+            .FirstOrDefaultAsync(l => l.CustomerId == booking.CustomerId, ct);
+
+        // Build customer address
+        var customerAddressParts = new List<string>();
+        if (!string.IsNullOrEmpty(booking.Customer.Address)) customerAddressParts.Add(booking.Customer.Address);
+        if (!string.IsNullOrEmpty(booking.Customer.City)) customerAddressParts.Add(booking.Customer.City);
+        if (!string.IsNullOrEmpty(booking.Customer.State)) customerAddressParts.Add(booking.Customer.State);
+        if (!string.IsNullOrEmpty(booking.Customer.PostalCode)) customerAddressParts.Add(booking.Customer.PostalCode);
+        var customerAddress = customerAddressParts.Count > 0 ? string.Join(", ", customerAddressParts) : null;
+
+        // Get vehicle name
+        var vehicleName = (booking.Vehicle?.VehicleModel?.Model != null)
+            ? $"{booking.Vehicle.VehicleModel.Model.Make} {booking.Vehicle.VehicleModel.Model.ModelName} ({booking.Vehicle.VehicleModel.Model.Year})"
+            : "Unknown Vehicle";
+
+        // Create agreement request
+        var agreementRequest = new CreateAgreementRequest
+        {
+            CompanyId = booking.CompanyId,
+            BookingId = booking.Id,
+            CustomerId = booking.CustomerId,
+            VehicleId = booking.VehicleId,
+            
+            // Customer info
+            CustomerName = $"{booking.Customer.FirstName} {booking.Customer.LastName}",
+            CustomerEmail = booking.Customer.Email,
+            CustomerPhone = booking.Customer.Phone,
+            CustomerAddress = customerAddress,
+            DriverLicenseNumber = license?.LicenseNumber,
+            DriverLicenseState = license?.StateIssued,
+            
+            // Vehicle info
+            VehicleName = vehicleName,
+            VehiclePlate = booking.Vehicle?.LicensePlate,
+            
+            // Rental details
+            PickupDate = booking.PickupDate,
+            PickupLocation = booking.PickupLocation,
+            ReturnDate = booking.ReturnDate,
+            ReturnLocation = booking.ReturnLocation,
+            RentalAmount = booking.TotalAmount,
+            DepositAmount = booking.SecurityDeposit,
+            Currency = booking.Company?.Currency ?? "USD",
+            
+            // Agreement data
+            AgreementData = agreementData,
+            
+            // Request context
+            IpAddress = ipAddress
+        };
+
+        // Create the agreement
+        var agreement = await CreateAgreementAsync(agreementRequest, ct);
+
+        // Generate PDF
+        try
+        {
+            await GenerateAndStorePdfAsync(agreement.Id, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate PDF for agreement {AgreementId}", agreement.Id);
+            // Don't fail the whole operation if PDF generation fails
+        }
+
+        _logger.LogInformation(
+            "[RentalAgreement] Successfully signed existing booking {BookingId} - AgreementId: {AgreementId}, AgreementNumber: {AgreementNumber}",
+            bookingId,
+            agreement.Id,
+            agreement.AgreementNumber
+        );
+
+        return agreement;
     }
 
     private static string? GetCompanyAddress(Company company)
