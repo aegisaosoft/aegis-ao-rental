@@ -1647,10 +1647,15 @@ public class BookingController : ControllerBase
                     {
                         await _rentalAgreementService.GenerateAndStorePdfAsync(createdAgreement.Id);
                     }
+                    catch (InvalidOperationException ex) when (ex.Message.Contains("Azure Blob Storage is not configured"))
+                    {
+                        _logger.LogWarning("Azure Blob Storage not configured for booking {BookingId}. PDF generation skipped: {Message}", reservation.Id, ex.Message);
+                        // Continue without PDF - this is acceptable for local development
+                    }
                     catch (Exception ex)
                     {
                         // Log error but don't fail the booking creation itself
-                        _logger.LogError(ex, "Failed to generate agreement PDF for booking {BookingId}", reservation.Id);
+                        _logger.LogError(ex, "Failed to generate agreement PDF for booking {BookingId}: {Message}", reservation.Id, ex.Message);
                     }
                 }
                 catch (Exception ex)

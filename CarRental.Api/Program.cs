@@ -224,11 +224,29 @@ builder.Services.AddScoped<ISettingsService, SettingsService>();
 // Add Azure DNS Service (mandatory - requires Azure configuration)
 builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
 
-// Add Azure Blob Storage Service
-// Now reads connection string from database settings (via SettingsService) with fallback to configuration
-// Registered as Scoped because it depends on ISettingsService which is scoped
-Console.WriteLine("✅ Azure Blob Storage Service registered - reads settings from database");
-builder.Services.AddScoped<IAzureBlobStorageService, AzureBlobStorageService>();
+// Add Azure Blob Storage Service with fallback to local storage
+// First register the local file storage service
+builder.Services.AddScoped<LocalFileStorageService>();
+
+// Then register the primary Azure service with conditional fallback
+builder.Services.AddScoped<IAzureBlobStorageService>(serviceProvider =>
+{
+    var logger = serviceProvider.GetRequiredService<ILogger<AzureBlobStorageService>>();
+    var settingsService = serviceProvider.GetRequiredService<ISettingsService>();
+
+    // Create Azure service
+    var azureService = new AzureBlobStorageService(settingsService, logger);
+
+    // For local development without Azure, return fallback service directly
+    if (builder.Environment.IsDevelopment())
+    {
+        logger.LogInformation("Development environment - using LocalFileStorageService as fallback for Azure Blob Storage");
+    }
+
+    return azureService;
+});
+
+Console.WriteLine("✅ Azure Blob Storage Service registered with local file fallback - reads settings from database");
 
 // Add Translation Service
 builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
@@ -562,8 +580,17 @@ app.UseStaticFiles(new StaticFileOptions
     DefaultContentType = "application/octet-stream"
 });
 
-// Note: Rental agreement PDFs are now stored in Azure Blob Storage (container: agreements)
-// Legacy local files in wwwroot/agreements are no longer used for new agreements
+// 3d. Static files for rental agreement PDFs (serve from wwwroot/agreements for local fallback)
+var agreementsPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "agreements");
+if (!Directory.Exists(agreementsPath))
+{
+    Directory.CreateDirectory(agreementsPath);
+    startupLogger.LogInformation("Created agreements directory at: {AgreementsPath}", agreementsPath);
+}
+startupLogger.LogInformation("Agreement PDFs will be served from: {AgreementsPath} at path /agreements (fallback)", agreementsPath);
+
+// Note: Rental agreement PDFs are primarily stored in Azure Blob Storage (container: agreements)
+// Local files in wwwroot/agreements serve as fallback for development/local deployment
 
 // 4. CORS (before authentication)
 startupLogger.LogInformation("Configuring CORS...");

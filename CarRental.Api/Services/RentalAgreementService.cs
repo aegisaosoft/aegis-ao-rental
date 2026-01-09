@@ -693,10 +693,15 @@ public class RentalAgreementService : IRentalAgreementService
         {
             await GenerateAndStorePdfAsync(agreement.Id, ct);
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Azure Blob Storage is not configured"))
+        {
+            _logger.LogWarning("Azure Blob Storage not configured for agreement {AgreementId}. PDF generation skipped: {Message}", agreement.Id, ex.Message);
+            // Continue without PDF - this is acceptable for local development
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to generate PDF for agreement {AgreementId}", agreement.Id);
-            // Don't fail the whole operation if PDF generation fails
+            _logger.LogError(ex, "Failed to generate PDF for agreement {AgreementId}: {Message}", agreement.Id, ex.Message);
+            // Continue without PDF but log the detailed error
         }
 
         _logger.LogInformation(
