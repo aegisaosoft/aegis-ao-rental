@@ -15,11 +15,12 @@
 
 using Microsoft.AspNetCore.Mvc;
 using CarRental.Api.Services;
+using System.Collections.Generic;
 
 namespace CarRental.Api.Controllers;
 
 [ApiController]
-[Route("agreements")]
+[Route("{containerName}")]
 public class StaticFilesController : ControllerBase
 {
     private readonly IAzureBlobStorageService _blobStorageService;
@@ -33,149 +34,110 @@ public class StaticFilesController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
-    /// Serves PDF files from Azure Blob Storage
-    /// </summary>
-    /// <param name="companyId">Company ID</param>
-    /// <param name="fileName">PDF file name (e.g., AGR-2025-000001.pdf)</param>
-    /// <returns>PDF file stream</returns>
-    [HttpGet("{companyId}/{fileName}")]
-    [ResponseCache(Duration = 3600)] // Cache for 1 hour
-    public async Task<IActionResult> GetAgreementPdf(string companyId, string fileName)
+    // Valid container names
+    private static readonly HashSet<string> ValidContainers = new()
     {
-        try
+        "agreements", "companies", "customer-licenses", "models"
+    };
+
+    /// <summary>
+    /// Determine content type from file extension
+    /// </summary>
+    private static string GetContentType(string fileName)
+    {
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        return extension switch
         {
-            _logger.LogInformation("Requesting PDF file: {CompanyId}/{FileName}", companyId, fileName);
-
-            // Validate file extension
-            if (!fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogWarning("Invalid file extension requested: {FileName}", fileName);
-                return BadRequest("Only PDF files are supported");
-            }
-
-            // Validate company ID format
-            if (!Guid.TryParse(companyId, out _))
-            {
-                _logger.LogWarning("Invalid company ID format: {CompanyId}", companyId);
-                return BadRequest("Invalid company ID format");
-            }
-
-            // Check if Azure Blob Storage is configured
-            if (!await _blobStorageService.IsConfiguredAsync())
-            {
-                _logger.LogError("Azure Blob Storage is not configured");
-                return StatusCode(503, "File storage is not available");
-            }
-
-            // Build blob path: {companyId}/{fileName}
-            var blobPath = $"{companyId}/{fileName}";
-            const string containerName = "agreements";
-
-            // Check if file exists
-            if (!await _blobStorageService.FileExistsAsync(containerName, blobPath))
-            {
-                _logger.LogWarning("PDF file not found: {ContainerName}/{BlobPath}", containerName, blobPath);
-                return NotFound("PDF file not found");
-            }
-
-            // Download file from Azure Blob Storage
-            var fileStream = await _blobStorageService.DownloadFileAsync(containerName, blobPath);
-
-            if (fileStream == null)
-            {
-                _logger.LogError("Failed to download PDF file: {ContainerName}/{BlobPath}", containerName, blobPath);
-                return StatusCode(500, "Failed to retrieve PDF file");
-            }
-
-            _logger.LogInformation("Successfully serving PDF file: {CompanyId}/{FileName}", companyId, fileName);
-
-            // Return PDF file with proper headers
-            return File(fileStream, "application/pdf", fileName, enableRangeProcessing: true);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error serving PDF file {CompanyId}/{FileName}: {ErrorMessage}",
-                companyId, fileName, ex.Message);
-            return StatusCode(500, "Internal server error");
-        }
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".svg" => "image/svg+xml",
+            ".pdf" => "application/pdf",
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mov" => "video/quicktime",
+            ".avi" => "video/x-msvideo",
+            ".wmv" => "video/x-ms-wmv",
+            ".flv" => "video/x-flv",
+            ".mkv" => "video/x-matroska",
+            _ => "application/octet-stream"
+        };
     }
 
     /// <summary>
-    /// Serves customer-specific PDF files from Azure Blob Storage
-    /// Path: /agreements/{customerId}/agreements/{dateFolder}/{fileName}
+    /// Serves files from Azure Blob Storage for different container types
+    /// Examples:
+    /// - /agreements/{companyId}/{fileName}.pdf
+    /// - /companies/{companyId}/logos/{fileName}.png
+    /// - /customer-licenses/{customerId}/licenses/{fileName}.jpg
     /// </summary>
-    /// <param name="customerId">Customer ID</param>
-    /// <param name="dateFolder">Date folder (YYYY-MM-DD)</param>
-    /// <param name="fileName">PDF file name</param>
-    /// <returns>PDF file stream</returns>
-    [HttpGet("{customerId}/agreements/{dateFolder}/{fileName}")]
+    /// <param name="containerName">Container name (agreements, companies, customer-licenses, models)</param>
+    /// <param name="filePath">File path within container (can include subfolders)</param>
+    /// <returns>File stream</returns>
+    [HttpGet("{**filePath}")]
     [ResponseCache(Duration = 3600)] // Cache for 1 hour
-    public async Task<IActionResult> GetCustomerAgreementPdf(string customerId, string dateFolder, string fileName)
+    public async Task<IActionResult> GetFile(string containerName, string filePath)
     {
         try
         {
-            _logger.LogInformation("Requesting customer PDF file: {CustomerId}/agreements/{DateFolder}/{FileName}",
-                customerId, dateFolder, fileName);
+            _logger.LogInformation("Requesting file: {ContainerName}/{FilePath}", containerName, filePath);
 
-            // Validate file extension
-            if (!fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            // Validate container name
+            if (!ValidContainers.Contains(containerName))
             {
-                _logger.LogWarning("Invalid file extension requested: {FileName}", fileName);
-                return BadRequest("Only PDF files are supported");
+                _logger.LogWarning("Invalid container requested: {ContainerName}", containerName);
+                return BadRequest($"Invalid container. Valid containers: {string.Join(", ", ValidContainers)}");
             }
 
-            // Validate customer ID format
-            if (!Guid.TryParse(customerId, out _))
+            // Validate file path
+            if (string.IsNullOrWhiteSpace(filePath) || filePath.Contains(".."))
             {
-                _logger.LogWarning("Invalid customer ID format: {CustomerId}", customerId);
-                return BadRequest("Invalid customer ID format");
+                _logger.LogWarning("Invalid file path: {FilePath}", filePath);
+                return BadRequest("Invalid file path");
             }
 
-            // Validate date folder format (YYYY-MM-DD)
-            if (!System.Text.RegularExpressions.Regex.IsMatch(dateFolder, @"^\d{4}-\d{2}-\d{2}$"))
+            // Extract file name to determine content type
+            var fileName = Path.GetFileName(filePath);
+            if (string.IsNullOrEmpty(fileName))
             {
-                _logger.LogWarning("Invalid date folder format: {DateFolder}", dateFolder);
-                return BadRequest("Invalid date folder format");
+                _logger.LogWarning("No file name in path: {FilePath}", filePath);
+                return BadRequest("Invalid file path - no file name");
             }
 
-            // Check if Azure Blob Storage is configured
-            if (!await _blobStorageService.IsConfiguredAsync())
+            // Check if file exists in storage
+            if (!await _blobStorageService.FileExistsAsync(containerName, filePath))
             {
-                _logger.LogError("Azure Blob Storage is not configured");
-                return StatusCode(503, "File storage is not available");
+                _logger.LogWarning("File not found: {ContainerName}/{FilePath}", containerName, filePath);
+                return NotFound("File not found");
             }
 
-            // Build blob path: {customerId}/agreements/{dateFolder}/{fileName}
-            var blobPath = $"{customerId}/agreements/{dateFolder}/{fileName}";
-            const string containerName = "agreements";
-
-            // Check if file exists
-            if (!await _blobStorageService.FileExistsAsync(containerName, blobPath))
-            {
-                _logger.LogWarning("Customer PDF file not found: {ContainerName}/{BlobPath}", containerName, blobPath);
-                return NotFound("PDF file not found");
-            }
-
-            // Download file from Azure Blob Storage
-            var fileStream = await _blobStorageService.DownloadFileAsync(containerName, blobPath);
+            // Download file from storage
+            var fileStream = await _blobStorageService.DownloadFileAsync(containerName, filePath);
 
             if (fileStream == null)
             {
-                _logger.LogError("Failed to download customer PDF file: {ContainerName}/{BlobPath}", containerName, blobPath);
-                return StatusCode(500, "Failed to retrieve PDF file");
+                _logger.LogError("Failed to download file: {ContainerName}/{FilePath}", containerName, filePath);
+                return StatusCode(500, "Failed to retrieve file");
             }
 
-            _logger.LogInformation("Successfully serving customer PDF file: {CustomerId}/agreements/{DateFolder}/{FileName}",
-                customerId, dateFolder, fileName);
+            // Determine content type
+            var contentType = GetContentType(fileName);
 
-            // Return PDF file with proper headers
-            return File(fileStream, "application/pdf", fileName, enableRangeProcessing: true);
+            _logger.LogInformation("Successfully serving file: {ContainerName}/{FilePath} as {ContentType}",
+                containerName, filePath, contentType);
+
+            // Set CORS headers
+            Response.Headers.Append("Access-Control-Allow-Origin", "*");
+            Response.Headers.Append("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+
+            // Return file with proper headers
+            return File(fileStream, contentType, fileName, enableRangeProcessing: true);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error serving customer PDF file {CustomerId}/agreements/{DateFolder}/{FileName}: {ErrorMessage}",
-                customerId, dateFolder, fileName, ex.Message);
+            _logger.LogError(ex, "Error serving file {ContainerName}/{FilePath}: {ErrorMessage}",
+                containerName, filePath, ex.Message);
             return StatusCode(500, "Internal server error");
         }
     }

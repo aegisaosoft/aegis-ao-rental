@@ -224,29 +224,15 @@ builder.Services.AddScoped<ISettingsService, SettingsService>();
 // Add Azure DNS Service (mandatory - requires Azure configuration)
 builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
 
-// Add Azure Blob Storage Service with fallback to local storage
-// First register the local file storage service
+// Add Azure Blob Storage Service with smart fallback to local storage
+// Register both storage services
+builder.Services.AddScoped<AzureBlobStorageService>();
 builder.Services.AddScoped<LocalFileStorageService>();
 
-// Then register the primary Azure service with conditional fallback
-builder.Services.AddScoped<IAzureBlobStorageService>(serviceProvider =>
-{
-    var logger = serviceProvider.GetRequiredService<ILogger<AzureBlobStorageService>>();
-    var settingsService = serviceProvider.GetRequiredService<ISettingsService>();
+// Register the smart service that automatically chooses between Azure and local
+builder.Services.AddScoped<IAzureBlobStorageService, SmartBlobStorageService>();
 
-    // Create Azure service
-    var azureService = new AzureBlobStorageService(settingsService, logger);
-
-    // For local development without Azure, return fallback service directly
-    if (builder.Environment.IsDevelopment())
-    {
-        logger.LogInformation("Development environment - using LocalFileStorageService as fallback for Azure Blob Storage");
-    }
-
-    return azureService;
-});
-
-Console.WriteLine("✅ Azure Blob Storage Service registered with local file fallback - reads settings from database");
+Console.WriteLine("✅ Smart Blob Storage Service registered - automatic fallback between Azure and local storage");
 
 // Add Translation Service
 builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
@@ -580,17 +566,66 @@ app.UseStaticFiles(new StaticFileOptions
     DefaultContentType = "application/octet-stream"
 });
 
-// 3d. Static files for rental agreement PDFs (serve from wwwroot/agreements for local fallback)
-var agreementsPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "agreements");
-if (!Directory.Exists(agreementsPath))
-{
-    Directory.CreateDirectory(agreementsPath);
-    startupLogger.LogInformation("Created agreements directory at: {AgreementsPath}", agreementsPath);
-}
-startupLogger.LogInformation("Agreement PDFs will be served from: {AgreementsPath} at path /agreements (fallback)", agreementsPath);
+// 3d. Static files for Azure Blob Storage containers (local fallback)
+// Note: All media files are primarily stored in Azure Blob Storage
+// Local files in wwwroot/{container} serve as fallback for development/local deployment
 
-// Note: Rental agreement PDFs are primarily stored in Azure Blob Storage (container: agreements)
-// Local files in wwwroot/agreements serve as fallback for development/local deployment
+var containerConfigs = new[]
+{
+    new { Container = "agreements", Description = "Agreement PDFs" },
+    new { Container = "companies", Description = "Company logos, banners, videos" },
+    new { Container = "customer-licenses", Description = "Driver license images" },
+    new { Container = "models", Description = "Vehicle model images" }
+};
+
+foreach (var config in containerConfigs)
+{
+    var containerPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", config.Container);
+    if (!Directory.Exists(containerPath))
+    {
+        Directory.CreateDirectory(containerPath);
+        startupLogger.LogInformation("Created {Container} directory at: {ContainerPath}", config.Container, containerPath);
+    }
+    startupLogger.LogInformation("{Description} will be served from: {ContainerPath} at path /{Container} (fallback)",
+        config.Description, containerPath, config.Container);
+
+    // Configure static files for this container
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(containerPath),
+        RequestPath = $"/{config.Container}",
+        ServeUnknownFileTypes = true, // Allow serving all file types
+        DefaultContentType = "application/octet-stream",
+        OnPrepareResponse = ctx =>
+        {
+            // Set appropriate content type based on file extension
+            var ext = Path.GetExtension(ctx.File.Name).ToLowerInvariant();
+            var contentType = ext switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".svg" => "image/svg+xml",
+                ".pdf" => "application/pdf",
+                ".mp4" => "video/mp4",
+                ".webm" => "video/webm",
+                ".mov" => "video/quicktime",
+                ".avi" => "video/x-msvideo",
+                _ => "application/octet-stream"
+            };
+
+            ctx.Context.Response.Headers.Append("Content-Type", contentType);
+            ctx.Context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
+            ctx.Context.Response.Headers.Append("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+
+            // Cache for 1 hour
+            ctx.Context.Response.Headers.Append("Cache-Control", "public, max-age=3600");
+
+            startupLogger.LogInformation("Serving static file: {File} as {ContentType}", ctx.File.Name, contentType);
+        }
+    });
+}
 
 // 4. CORS (before authentication)
 startupLogger.LogInformation("Configuring CORS...");
