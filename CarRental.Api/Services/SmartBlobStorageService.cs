@@ -121,7 +121,7 @@ public class SmartBlobStorageService : IAzureBlobStorageService
         {
             _logger.LogWarning(ex, "Error downloading from primary storage, trying fallback: {BlobPath}", blobPath);
             // Try the opposite service as fallback
-            var fallbackService = _azureAvailable == true ? _localService : _azureService;
+            IAzureBlobStorageService fallbackService = _azureAvailable == true ? _localService : _azureService;
             try
             {
                 return await fallbackService.DownloadFileAsync(containerName, blobPath);
@@ -144,7 +144,7 @@ public class SmartBlobStorageService : IAzureBlobStorageService
             // Also try to delete from the other storage (cleanup)
             try
             {
-                var fallbackService = service == _azureService ? _localService : _azureService;
+                IAzureBlobStorageService fallbackService = service == _azureService ? _localService : _azureService;
                 await fallbackService.DeleteFileAsync(containerName, blobPath);
             }
             catch
