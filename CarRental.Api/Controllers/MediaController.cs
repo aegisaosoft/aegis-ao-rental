@@ -420,6 +420,7 @@ public class MediaController : ControllerBase
     [HttpPost("customers/{customerId}/licenses/{side}")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(10_485_760)] // 10 MB limit for images
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<ActionResult<object>> UploadCustomerLicenseImage(Guid customerId, string side, IFormFile image)
     {
         try
@@ -517,6 +518,7 @@ public class MediaController : ControllerBase
     /// This endpoint serves files directly from Azure Blob Storage or local disk
     /// </summary>
     [HttpGet("customers/{customerId}/licenses/file/{fileName}")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<IActionResult> GetCustomerLicenseImageFile(Guid customerId, string fileName)
     {
         try
@@ -585,6 +587,7 @@ public class MediaController : ControllerBase
     /// Returns the actual filenames and URLs of existing images
     /// </summary>
     [HttpGet("customers/{customerId}/licenses")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<IActionResult> GetCustomerLicenseImages(Guid customerId)
     {
         try
@@ -714,11 +717,12 @@ public class MediaController : ControllerBase
     /// Delete driver license image (front or back) for a customer
     /// </summary>
     [HttpDelete("customers/{customerId}/licenses/{side}")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<IActionResult> DeleteCustomerLicenseImage(Guid customerId, string side)
     {
         try
         {
-            _logger.LogInformation("DeleteCustomerLicenseImage called - customerId: {CustomerId}, side: {Side}", customerId, side);
+            _logger.LogInformation("=== DeleteCustomerLicenseImage called - customerId: {CustomerId}, side: {Side} [AllowAnonymous] ===", customerId, side);
 
             if (side != "front" && side != "back")
             {
@@ -784,6 +788,7 @@ public class MediaController : ControllerBase
     [HttpPost("wizard/{wizardId}/licenses/{side}")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(10_485_760)] // 10 MB limit for images
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<ActionResult<object>> UploadWizardLicenseImage(string wizardId, string side, IFormFile image)
     {
         try
@@ -890,6 +895,7 @@ public class MediaController : ControllerBase
     /// Delete driver license image (front or back) for a wizard
     /// </summary>
     [HttpDelete("wizard/{wizardId}/licenses/{side}")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<IActionResult> DeleteWizardLicenseImage(string wizardId, string side)
     {
         try
