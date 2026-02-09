@@ -4289,10 +4289,40 @@ public class BookingController : ControllerBase
     /// </summary>
     private string GetDynamicFrontendUrl(string path)
     {
-        var host = HttpContext.Request.Host.Host;
+        // On Azure, use X-Forwarded-Host or X-Original-Host instead of Request.Host
+        // This gets the original user-facing domain instead of internal Azure host
+        var forwardedHost = HttpContext.Request.Headers["X-Forwarded-Host"].FirstOrDefault();
+        var originalHost = HttpContext.Request.Headers["X-Original-Host"].FirstOrDefault();
+        var requestHost = HttpContext.Request.Host.Host;
+
+        // Fallback: try to extract host from Origin/Referer headers
+        string? hostFromHeaders = null;
+        if (string.IsNullOrEmpty(forwardedHost) && string.IsNullOrEmpty(originalHost))
+        {
+            var origin = HttpContext.Request.Headers["Origin"].FirstOrDefault();
+            var referer = HttpContext.Request.Headers["Referer"].FirstOrDefault();
+            var sourceUrl = !string.IsNullOrEmpty(origin) ? origin : referer;
+
+            if (!string.IsNullOrEmpty(sourceUrl))
+            {
+                try
+                {
+                    var uri = new Uri(sourceUrl);
+                    hostFromHeaders = uri.Host;
+                }
+                catch (Exception)
+                {
+                    // Ignore parsing errors
+                }
+            }
+        }
+
+        // Prefer forwarded host > host from headers > internal Azure host
+        var host = forwardedHost ?? originalHost ?? hostFromHeaders ?? requestHost;
         var scheme = HttpContext.Request.Scheme;
 
-        _logger.LogInformation("[GetDynamicFrontendUrl] Processing: Host={Host}, Scheme={Scheme}, Path={Path}", host, scheme, path);
+        _logger.LogInformation("[GetDynamicFrontendUrl] Processing: Host={Host}, ForwardedHost={ForwardedHost}, OriginalHost={OriginalHost}, HostFromHeaders={HostFromHeaders}, RequestHost={RequestHost}, Scheme={Scheme}, Path={Path}",
+            host, forwardedHost, originalHost, hostFromHeaders, requestHost, scheme, path);
 
         // For localhost development
         if (host.Contains("localhost") || host == "127.0.0.1")
@@ -4350,7 +4380,7 @@ public class BookingController : ControllerBase
         }
 
         // Azure-specific domain mapping
-        var currentHost = HttpContext.Request.Host.Host.ToLower();
+        var currentHost = host.ToLower();
 
         // Check for Azure App Service domains
         if (currentHost.Contains("azurewebsites.net"))
@@ -4382,9 +4412,9 @@ public class BookingController : ControllerBase
             finalScheme = "https";
         }
 
-        var fallbackUrl = $"{finalScheme}://{HttpContext.Request.Host}{path}";
+        var fallbackUrl = $"{finalScheme}://{host}{path}";
         _logger.LogInformation("[BookingController] Using fallback tenant URL: {FallbackUrl} (Host: {Host}, OriginalScheme: {OriginalScheme}, FinalScheme: {FinalScheme})",
-            fallbackUrl, HttpContext.Request.Host, scheme, finalScheme);
+            fallbackUrl, host, scheme, finalScheme);
         return fallbackUrl;
     }
 

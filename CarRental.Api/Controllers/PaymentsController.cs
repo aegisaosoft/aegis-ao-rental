@@ -1185,7 +1185,8 @@ public class PaymentsController : ControllerBase
             var captureIntent = await _stripeService.CapturePaymentIntentAsync(
                 payment.SecurityDepositPaymentIntentId,
                 dto.Amount,
-                currency);
+                currency,
+                payment.CompanyId);
 
             // Convert from smallest currency unit to decimal amount
             // Get currency decimal places (0 for JPY, etc., 2 for most currencies)
@@ -1249,7 +1250,7 @@ public class PaymentsController : ControllerBase
 
         try
         {
-            var cancelIntent = await _stripeService.CancelPaymentIntentAsync(payment.SecurityDepositPaymentIntentId);
+            var cancelIntent = await _stripeService.CancelPaymentIntentAsync(payment.SecurityDepositPaymentIntentId, payment.CompanyId);
 
             payment.SecurityDepositStatus = "released";
             payment.SecurityDepositReleasedAt = DateTime.UtcNow;
@@ -1320,8 +1321,9 @@ public class PaymentsController : ControllerBase
 
             // Attach payment method to customer
             var paymentMethod = await _stripeService.CreatePaymentMethodAsync(
-                customer.StripeCustomerId!, 
-                createDto.StripePaymentMethodId);
+                customer.StripeCustomerId!,
+                createDto.StripePaymentMethodId,
+                customer.CompanyId);
 
             // If this is the first payment method or marked as default, set as default
             if (createDto.IsDefault)

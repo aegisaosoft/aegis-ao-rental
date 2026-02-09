@@ -31,8 +31,8 @@ public interface IStripeService
     Task<Models.Customer> CreateCustomerAsync(Models.Customer customer);
     Task<Models.Customer> UpdateCustomerAsync(Models.Customer customer);
     Task<Models.Customer> GetCustomerAsync(string stripeCustomerId);
-    Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId);
-    Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId);
+    Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId, Guid? companyId = null);
+    Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId, Guid? companyId = null);
     Task<PaymentIntent> CreatePaymentIntentAsync(
         decimal amount,
         string currency,
@@ -43,8 +43,8 @@ public interface IStripeService
         bool requestExtendedAuthorization = false,
         Guid? companyId = null);
     Task<PaymentIntent> ConfirmPaymentIntentAsync(string paymentIntentId, Guid? companyId = null);
-    Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId);
-    Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null, string? currency = null);
+    Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId, Guid? companyId = null);
+    Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null, string? currency = null, Guid? companyId = null);
     Task<Refund> CreateRefundAsync(string paymentIntentId, decimal amount, Guid? companyId = null);
     
     // Stripe Connect methods
@@ -325,6 +325,101 @@ public class StripeService : IStripeService
         }
     }
 
+    /// <summary>
+    /// Helper method to get RequestOptions with connected account context for company operations
+    /// SECURITY: Ensures all payment operations use connected accounts, never platform account
+    /// </summary>
+    private async Task<RequestOptions> GetStripeRequestOptionsAsync(Guid? companyId)
+    {
+        var requestOptions = new RequestOptions();
+
+        if (!companyId.HasValue)
+        {
+            _logger.LogWarning("[Stripe] No companyId provided - operations without companyId may use platform account");
+            return requestOptions;
+        }
+
+        // Get API key from cache or database
+        string? apiKey = null;
+        if (_companySettingsCache.ContainsKey(companyId.Value))
+        {
+            apiKey = _companySettingsCache[companyId.Value].secretKey;
+        }
+        else
+        {
+            // Look up from database
+            var company = await _context.Companies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == companyId.Value);
+
+            if (company?.StripeSettingsId.HasValue == true)
+            {
+                var stripeSettings = await _context.StripeSettings
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(ss => ss.Id == company.StripeSettingsId.Value);
+
+                if (stripeSettings != null)
+                {
+                    apiKey = DecryptKey(stripeSettings.SecretKey);
+                }
+            }
+        }
+
+        if (!string.IsNullOrEmpty(apiKey))
+        {
+            requestOptions.ApiKey = apiKey;
+
+            // Get Stripe connected account ID from stripe_company table
+            try
+            {
+                var company = await _context.Companies
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == companyId.Value);
+
+                if (company?.StripeSettingsId.HasValue == true)
+                {
+                    var stripeCompany = await _context.StripeCompanies
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(sc => sc.CompanyId == companyId.Value && sc.SettingsId == company.StripeSettingsId.Value);
+
+                    if (stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId))
+                    {
+                        try
+                        {
+                            // Decrypt the account ID
+                            var accountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
+                            requestOptions.StripeAccount = accountId;
+                            _logger.LogInformation("[Stripe] Using connected account {StripeAccountId} for company {CompanyId}", accountId, companyId);
+                        }
+                        catch
+                        {
+                            // If decryption fails, use as-is (might be plain text)
+                            requestOptions.StripeAccount = stripeCompany.StripeAccountId;
+                            _logger.LogInformation("[Stripe] Using connected account {StripeAccountId} for company {CompanyId} (plain text)", stripeCompany.StripeAccountId, companyId);
+                        }
+                    }
+                    else
+                    {
+                        // PROHIBIT operations on platform account when companyId is provided
+                        _logger.LogError("[Stripe] No stripe_company record found or StripeAccountId is missing for company {CompanyId}. Operation PROHIBITED - operations must use company account, not platform account.", companyId);
+                        throw new InvalidOperationException($"Stripe account not configured for company {companyId}. Operations must be processed through the company's connected account.");
+                    }
+                }
+            }
+            catch (Exception ex) when (!(ex is InvalidOperationException))
+            {
+                _logger.LogError(ex, "[Stripe] Error getting connected account ID for company {CompanyId}. Operation PROHIBITED - operations must use company account, not platform account.", companyId);
+                throw new InvalidOperationException($"Failed to get Stripe account for company {companyId}. Operations must be processed through the company's connected account.", ex);
+            }
+        }
+        else
+        {
+            _logger.LogWarning("[Stripe] No API key found for company {CompanyId}", companyId);
+        }
+
+        return requestOptions;
+    }
+
     public async Task<Models.Customer> CreateCustomerAsync(Models.Customer customer)
     {
         await EnsureInitializedAsync(customer.CompanyId);
@@ -351,7 +446,9 @@ public class StripeService : IStripeService
                 }
             };
 
-            var stripeCustomer = await new CustomerService().CreateAsync(customerCreateOptions);
+            // SECURITY: Use connected account - never create customers on platform account
+            var requestOptions = await GetStripeRequestOptionsAsync(customer.CompanyId);
+            var stripeCustomer = await new CustomerService().CreateAsync(customerCreateOptions, requestOptions);
             
             // Update the customer with Stripe ID
             customer.StripeCustomerId = stripeCustomer.Id;
@@ -396,7 +493,9 @@ public class StripeService : IStripeService
                 }
             };
 
-            var stripeCustomer = await new CustomerService().UpdateAsync(customer.StripeCustomerId, customerUpdateOptions);
+            // SECURITY: Use connected account - never update customers on platform account
+            var requestOptions = await GetStripeRequestOptionsAsync(customer.CompanyId);
+            var stripeCustomer = await new CustomerService().UpdateAsync(customer.StripeCustomerId, customerUpdateOptions, requestOptions);
             
             return customer;
         }
@@ -407,13 +506,15 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<Models.Customer> GetCustomerAsync(string stripeCustomerId)
+    public async Task<Models.Customer> GetCustomerAsync(string stripeCustomerId, Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] GetCustomerAsync stripeCustomerId={StripeCustomerId}", stripeCustomerId);
+        await EnsureInitializedAsync(companyId);
+        _logger.LogWarning("[Stripe] GetCustomerAsync stripeCustomerId={StripeCustomerId} companyId={CompanyId}", stripeCustomerId, companyId);
         try
         {
-            var stripeCustomer = await new CustomerService().GetAsync(stripeCustomerId);
+            // SECURITY: Use connected account - never get customers from platform account
+            var requestOptions = await GetStripeRequestOptionsAsync(companyId);
+            var stripeCustomer = await new CustomerService().GetAsync(stripeCustomerId, null, requestOptions);
             
             // Convert Stripe customer to our customer model
             var customer = new Models.Customer
@@ -439,10 +540,10 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId)
+    public async Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId, Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CreatePaymentMethodAsync customerId={CustomerId} paymentMethodId={PaymentMethodId}", customerId, paymentMethodId);
+        await EnsureInitializedAsync(companyId);
+        _logger.LogWarning("[Stripe] CreatePaymentMethodAsync customerId={CustomerId} paymentMethodId={PaymentMethodId} companyId={CompanyId}", customerId, paymentMethodId, companyId);
         try
         {
             var attachOptions = new PaymentMethodAttachOptions
@@ -450,8 +551,10 @@ public class StripeService : IStripeService
                 Customer = customerId
             };
 
-            var paymentMethod = await new PaymentMethodService().AttachAsync(paymentMethodId, attachOptions);
-            
+            // SECURITY: Use connected account - never attach payment methods on platform account
+            var requestOptions = await GetStripeRequestOptionsAsync(companyId);
+            var paymentMethod = await new PaymentMethodService().AttachAsync(paymentMethodId, attachOptions, requestOptions);
+
             return paymentMethod;
         }
         catch (StripeException ex)
@@ -461,13 +564,15 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId)
+    public async Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId, Guid? companyId = null)
     {
-        await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] GetPaymentMethodAsync paymentMethodId={PaymentMethodId}", paymentMethodId);
+        await EnsureInitializedAsync(companyId);
+        _logger.LogWarning("[Stripe] GetPaymentMethodAsync paymentMethodId={PaymentMethodId} companyId={CompanyId}", paymentMethodId, companyId);
         try
         {
-            var paymentMethod = await new PaymentMethodService().GetAsync(paymentMethodId);
+            // SECURITY: Use connected account - never get payment methods from platform account
+            var requestOptions = await GetStripeRequestOptionsAsync(companyId);
+            var paymentMethod = await new PaymentMethodService().GetAsync(paymentMethodId, null, requestOptions);
             return paymentMethod;
         }
         catch (StripeException ex)
@@ -721,28 +826,33 @@ public class StripeService : IStripeService
         }
     }
 
-    public async Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId)
+    public async Task<PaymentIntent> CancelPaymentIntentAsync(string paymentIntentId, Guid? companyId = null)
     {
         await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CancelPaymentIntentAsync paymentIntentId={PaymentIntentId}", paymentIntentId);
+        _logger.LogWarning("[Stripe] CancelPaymentIntentAsync paymentIntentId={PaymentIntentId}, companyId={CompanyId}", paymentIntentId, companyId);
         try
         {
-            var paymentIntent = await new PaymentIntentService().CancelAsync(paymentIntentId);
+            // Get RequestOptions with connected account context (same as other payment operations)
+            var requestOptions = await GetStripeRequestOptionsAsync(companyId);
+            var paymentIntent = await new PaymentIntentService().CancelAsync(paymentIntentId, null, requestOptions);
             return paymentIntent;
         }
         catch (StripeException ex)
         {
-            _logger.LogError(ex, "Error canceling payment intent {PaymentIntentId}", paymentIntentId);
+            _logger.LogError(ex, "Error canceling payment intent {PaymentIntentId} for company {CompanyId}", paymentIntentId, companyId);
             throw new InvalidOperationException($"Failed to cancel payment intent: {ex.Message}", ex);
         }
     }
 
-    public async Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null, string? currency = null)
+    public async Task<PaymentIntent> CapturePaymentIntentAsync(string paymentIntentId, decimal? amountToCapture = null, string? currency = null, Guid? companyId = null)
     {
         await EnsureInitializedAsync();
-        _logger.LogWarning("[Stripe] CapturePaymentIntentAsync paymentIntentId={PaymentIntentId} amount={Amount} currency={Currency}", paymentIntentId, amountToCapture, currency);
+        _logger.LogWarning("[Stripe] CapturePaymentIntentAsync paymentIntentId={PaymentIntentId} amount={Amount} currency={Currency} companyId={CompanyId}", paymentIntentId, amountToCapture, currency, companyId);
         try
         {
+            // Get RequestOptions with connected account context (same as other payment operations)
+            var requestOptions = await GetStripeRequestOptionsAsync(companyId);
+
             var options = new PaymentIntentCaptureOptions();
             if (amountToCapture.HasValue)
             {
@@ -750,7 +860,7 @@ public class StripeService : IStripeService
                 if (string.IsNullOrEmpty(currency))
                 {
                     var paymentIntentService = new PaymentIntentService();
-                    var existingIntent = await paymentIntentService.GetAsync(paymentIntentId);
+                    var existingIntent = await paymentIntentService.GetAsync(paymentIntentId, null, requestOptions);
                     currency = existingIntent.Currency?.ToLower() ?? "usd";
                 }
                 
@@ -765,7 +875,7 @@ public class StripeService : IStripeService
                     amountToCapture.Value, currency, amountInSmallestUnit, decimalPlaces);
             }
 
-            var paymentIntent = await new PaymentIntentService().CaptureAsync(paymentIntentId, options);
+            var paymentIntent = await new PaymentIntentService().CaptureAsync(paymentIntentId, options, requestOptions);
             return paymentIntent;
         }
         catch (StripeException ex)
@@ -802,51 +912,10 @@ public class StripeService : IStripeService
                 Amount = (long)(amount * 100) // Convert to cents
             };
 
-            // Use RequestOptions with company-specific API key and connected account ID if available
-            RequestOptions? requestOptions = null;
-            if (companyId.HasValue && _companySettingsCache.ContainsKey(companyId.Value))
-            {
-                var settings = _companySettingsCache[companyId.Value];
-                requestOptions = new RequestOptions { ApiKey = settings.secretKey };
-                
-                // Get Stripe connected account ID from stripe_company table
-                try
-                {
-                    var company = await _context.Companies
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(c => c.Id == companyId.Value);
-
-                    if (company?.StripeSettingsId.HasValue == true)
-                    {
-                        var stripeCompany = await _context.StripeCompanies
-                            .AsNoTracking()
-                            .FirstOrDefaultAsync(sc => sc.CompanyId == companyId.Value && sc.SettingsId == company.StripeSettingsId.Value);
-
-                        if (stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId))
-                        {
-                            try
-                            {
-                                // Decrypt the account ID
-                                var accountId = _encryptionService.Decrypt(stripeCompany.StripeAccountId);
-                                requestOptions.StripeAccount = accountId;
-                                _logger.LogInformation("[Stripe] Using connected account {StripeAccountId} for refund", accountId);
-                            }
-                            catch
-                            {
-                                // If decryption fails, use as-is (might be plain text)
-                                requestOptions.StripeAccount = stripeCompany.StripeAccountId;
-                                _logger.LogInformation("[Stripe] Using connected account {StripeAccountId} for refund (plain text)", stripeCompany.StripeAccountId);
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "[Stripe] Error getting connected account ID for company {CompanyId}, proceeding without connected account", companyId);
-                }
-            }
-
+            // SECURITY: Use connected account - never create refunds on platform account
+            var requestOptions = await GetStripeRequestOptionsAsync(companyId);
             var refund = await new RefundService().CreateAsync(refundOptions, requestOptions);
+
             return refund;
         }
         catch (StripeException ex)
@@ -1101,7 +1170,7 @@ public class StripeService : IStripeService
         Guid? companyId = null)
     {
         await EnsureInitializedAsync(companyId);
-        _logger.LogWarning("[Stripe] CreateSecurityDepositAsync customerId={CustomerId} amount={Amount} currency={Currency} connectedAccountId={ConnectedAccountId}", 
+        _logger.LogWarning("[Stripe] CreateSecurityDepositAsync customerId={CustomerId} amount={Amount} currency={Currency} connectedAccountId={ConnectedAccountId}",
             customerId, amount, currency, connectedAccountId);
         try
         {
@@ -1113,20 +1182,13 @@ public class StripeService : IStripeService
                 PaymentMethod = paymentMethodId,
                 CaptureMethod = "manual", // Authorization only
                 Confirm = true,
-                Metadata = metadata,
-                TransferData = new PaymentIntentTransferDataOptions
-                {
-                    Destination = connectedAccountId
-                }
+                Metadata = metadata
+                // REMOVED: TransferData - using direct charges instead of destination charges
             };
 
-            // Use RequestOptions with company-specific API key if available
-            RequestOptions? requestOptions = null;
-            if (companyId.HasValue && _companySettingsCache.ContainsKey(companyId.Value))
-            {
-                var settings = _companySettingsCache[companyId.Value];
-                requestOptions = new RequestOptions { ApiKey = settings.secretKey };
-            }
+            // SECURITY: Use connected account - never create security deposits on platform account
+            // Direct charge pattern - charge goes directly to connected account, not platform
+            var requestOptions = await GetStripeRequestOptionsAsync(companyId);
 
             var service = new PaymentIntentService();
             return await service.CreateAsync(options, requestOptions);
