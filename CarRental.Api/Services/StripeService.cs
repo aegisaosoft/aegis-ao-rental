@@ -30,7 +30,7 @@ public interface IStripeService
 {
     Task<Models.Customer> CreateCustomerAsync(Models.Customer customer);
     Task<Models.Customer> UpdateCustomerAsync(Models.Customer customer);
-    Task<Models.Customer> GetCustomerAsync(string stripeCustomerId);
+    Task<Models.Customer> GetCustomerAsync(string stripeCustomerId, Guid? companyId = null);
     Task<PaymentMethod> CreatePaymentMethodAsync(string customerId, string paymentMethodId, Guid? companyId = null);
     Task<PaymentMethod> GetPaymentMethodAsync(string paymentMethodId, Guid? companyId = null);
     Task<PaymentIntent> CreatePaymentIntentAsync(
