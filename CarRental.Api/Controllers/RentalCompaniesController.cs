@@ -1491,6 +1491,8 @@ public class RentalCompaniesController : ControllerBase
             .Include(r => r.Customer)
             .Include(r => r.Vehicle)
                 .ThenInclude(v => v.VehicleModel)
+                    .ThenInclude(vm => vm != null ? vm.Model : null!)
+                        .ThenInclude(m => m != null ? m.Category : null!)
             .Where(r => r.CompanyId == id);
 
         if (!string.IsNullOrEmpty(status))
@@ -1540,10 +1542,16 @@ public class RentalCompaniesController : ControllerBase
             UpdatedAt = r.UpdatedAt,
             CustomerName = r.Customer.FirstName + " " + r.Customer.LastName,
             CustomerEmail = r.Customer.Email,
-            VehicleName = (r.Vehicle?.VehicleModel?.Model != null) ? 
-                r.Vehicle.VehicleModel.Model.Make + " " + r.Vehicle.VehicleModel.Model.ModelName + " (" + r.Vehicle.VehicleModel.Model.Year + ")" : 
-                "Unknown Vehicle",
-            LicensePlate = r.Vehicle?.LicensePlate ?? "",
+            VehicleMake = r.Vehicle?.VehicleModel?.Model?.Make,
+            VehicleModel = r.Vehicle?.VehicleModel?.Model?.ModelName,
+            VehicleYear = r.Vehicle?.VehicleModel?.Model?.Year,
+            VehicleColor = r.Vehicle?.Color,
+            VehicleCategory = r.Vehicle?.VehicleModel?.Model?.Category?.CategoryName,
+            VehicleLicensePlate = r.Vehicle?.LicensePlate,
+            VehicleName = (r.Vehicle?.VehicleModel?.Model != null) ?
+                r.Vehicle.VehicleModel.Model.Make + " " + r.Vehicle.VehicleModel.Model.ModelName + " (" + r.Vehicle.VehicleModel.Model.Year + ")" :
+                "Unknown Vehicle", // Deprecated
+            LicensePlate = r.Vehicle?.LicensePlate ?? "", // Deprecated: use VehicleLicensePlate instead
             CompanyName = company.CompanyName
         }).ToList();
 

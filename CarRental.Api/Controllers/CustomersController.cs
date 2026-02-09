@@ -281,6 +281,98 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
+    /// Get customer with all details (including license data)
+    /// </summary>
+    [HttpGet("{id}/details")]
+    public async Task<ActionResult<object>> GetCustomerWithDetails(Guid id)
+    {
+        return await GetCustomerData(id);
+    }
+
+    /// <summary>
+    /// Get customer information with license data
+    /// </summary>
+    [HttpGet("data/{id}")]
+    public async Task<ActionResult<object>> GetCustomerData(Guid id)
+    {
+        var customer = await _context.Customers.FindAsync(id);
+        if (customer == null)
+            return NotFound();
+
+        // Get the most recent license for the customer
+        var license = await _context.CustomerLicenses
+            .Where(cl => cl.CustomerId == id)
+            .OrderByDescending(cl => cl.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        // Get customer statistics
+        var totalBookings = await _context.Bookings.CountAsync(b => b.CustomerId == id);
+        var completedBookings = await _context.Bookings.CountAsync(b => b.CustomerId == id && b.Status == "Completed");
+
+        var result = new
+        {
+            Customer = new
+            {
+                CustomerId = customer.Id,
+                Email = customer.Email,
+                FirstName = customer.FirstName,
+                LastName = customer.LastName,
+                Phone = customer.Phone,
+                DateOfBirth = customer.DateOfBirth,
+                Address = customer.Address,
+                City = customer.City,
+                State = customer.State,
+                Country = customer.Country,
+                PostalCode = customer.PostalCode,
+                StripeCustomerId = customer.StripeCustomerId,
+                IsVerified = customer.IsVerified,
+                CreatedAt = customer.CreatedAt,
+                UpdatedAt = customer.UpdatedAt
+            },
+            License = license == null ? null : new
+            {
+                Id = license.Id,
+                LicenseNumber = license.LicenseNumber,
+                StateIssued = license.StateIssued,
+                CountryIssued = license.CountryIssued,
+                Sex = license.Sex,
+                Height = license.Height,
+                EyeColor = license.EyeColor,
+                MiddleName = license.MiddleName,
+                IssueDate = license.IssueDate,
+                ExpirationDate = license.ExpirationDate,
+                LicenseAddress = license.LicenseAddress,
+                LicenseCity = license.LicenseCity,
+                LicenseState = license.LicenseState,
+                LicensePostalCode = license.LicensePostalCode,
+                LicenseCountry = license.LicenseCountry,
+                IsVerified = license.IsVerified,
+                CreatedAt = license.CreatedAt,
+                UpdatedAt = license.UpdatedAt,
+                Expired = license.ExpirationDate < DateTime.UtcNow
+            },
+            Statistics = new
+            {
+                TotalBookings = totalBookings,
+                CompletedBookings = completedBookings,
+                HasLicense = license != null,
+                LicenseExpired = license != null && license.ExpirationDate < DateTime.UtcNow
+            }
+        };
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Test endpoint for debugging routing
+    /// </summary>
+    [HttpGet("{id}/test")]
+    public async Task<ActionResult<object>> TestEndpoint(Guid id)
+    {
+        return Ok(new { message = "Test endpoint works!", customerId = id });
+    }
+
+    /// <summary>
     /// Get customer by email (public endpoint, no auth required)
     /// </summary>
     [HttpGet("email/{email}")]

@@ -286,11 +286,77 @@ public class PaymentsController : ControllerBase
             if (company == null)
                 return BadRequest("Company not found");
 
-            // Get Stripe API key from stripe_settings table using company.StripeSettingsId
-            var stripeSecretKey = await GetStripeSecretKeyAsync(company.Id);
-            if (string.IsNullOrEmpty(stripeSecretKey))
+            // Check if this specific booking already has a completed payment
+            if (dto.BookingId.HasValue)
             {
-                _logger.LogError("CreateCheckoutSession: Stripe secret key not configured for company {CompanyId}", company.Id);
+                var existingBooking = await _context.Bookings
+                    .FirstOrDefaultAsync(b => b.Id == dto.BookingId.Value);
+
+                if (existingBooking != null && existingBooking.PaymentStatus == "completed")
+                {
+                    _logger.LogInformation(
+                        "[Stripe] Booking {BookingId} already has completed payment. Skipping checkout session creation.",
+                        dto.BookingId.Value);
+
+                    return Ok(new {
+                        alreadyPaid = true,
+                        bookingId = existingBooking.Id,
+                        bookingNumber = existingBooking.BookingNumber,
+                        paymentStatus = existingBooking.PaymentStatus,
+                        message = "Payment already completed for this booking",
+                        redirectUrl = dto.SuccessUrl?.Replace("{booking_id}", existingBooking.Id.ToString())
+                    });
+                }
+            }
+            else
+            {
+                // If no specific BookingId, check if customer has any pending bookings
+                var existingPaidBooking = await _context.Bookings
+                    .FirstOrDefaultAsync(b =>
+                        b.CustomerId == dto.CustomerId &&
+                        b.CompanyId == dto.CompanyId &&
+                        b.PaymentStatus == "completed" &&
+                        b.Status != BookingStatus.Cancelled);
+
+                if (existingPaidBooking != null)
+                {
+                    _logger.LogInformation(
+                        "[Stripe] Customer {CustomerId} already has paid booking {BookingId} for company {CompanyId}. Skipping checkout session creation.",
+                        dto.CustomerId, existingPaidBooking.Id, dto.CompanyId);
+
+                    return Ok(new {
+                        alreadyPaid = true,
+                        bookingId = existingPaidBooking.Id,
+                        bookingNumber = existingPaidBooking.BookingNumber,
+                        paymentStatus = existingPaidBooking.PaymentStatus,
+                        message = "Payment already completed for this booking",
+                        redirectUrl = dto.SuccessUrl?.Replace("{booking_id}", existingPaidBooking.Id.ToString())
+                    });
+                }
+            }
+
+            // Get company's StripeSettings to determine environment (test/US)
+            var companyStripeSettings = await GetCompanyStripeSettingsAsync(company.Id);
+            if (companyStripeSettings == null)
+            {
+                _logger.LogError("CreateCheckoutSession: StripeSettings not found for company {CompanyId}", company.Id);
+                return StatusCode(500, new { error = "Stripe not configured for this company" });
+            }
+
+            // Get platform Stripe settings for application fee collection
+            var (platformAccountId, platformSecretKey) = await GetPlatformStripeSettingsAsync(company.Id);
+            if (string.IsNullOrEmpty(platformSecretKey))
+            {
+                _logger.LogError("CreateCheckoutSession: Platform Stripe settings not configured for environment {Environment}", companyStripeSettings.Name);
+                return StatusCode(500, new { error = "Platform Stripe not configured for this environment" });
+            }
+
+
+            // Get company Stripe API key for connected account operations
+            var companySecretKey = await GetStripeSecretKeyAsync(company.Id);
+            if (string.IsNullOrEmpty(companySecretKey))
+            {
+                _logger.LogError("CreateCheckoutSession: Company Stripe secret key not configured for company {CompanyId}", company.Id);
                 return StatusCode(500, new { error = "Stripe not configured for this company" });
             }
 
@@ -309,7 +375,7 @@ public class PaymentsController : ControllerBase
                 try
                 {
                     var customerService = new Stripe.CustomerService();
-                    var customerRequestOptions = new Stripe.RequestOptions { ApiKey = stripeSecretKey };
+                    var customerRequestOptions = new Stripe.RequestOptions { ApiKey = companySecretKey };
                     
                     try
                     {
@@ -427,7 +493,8 @@ public class PaymentsController : ControllerBase
                     {
                         { "customer_id", customer.Id.ToString() },
                         { "company_id", dto.CompanyId.ToString() }
-                    }
+                    },
+                    ApplicationFeeAmount = (long)(dto.Amount * 100m * (company.PlatformFeePercentage / 100m)) // Dynamic platform commission per company
                 },
                 Metadata = new Dictionary<string, string>
                 {
@@ -435,7 +502,13 @@ public class PaymentsController : ControllerBase
                     { "company_id", dto.CompanyId.ToString() }
                 }
             };
-            
+
+            // Log platform fee calculation
+            var totalAmount = (long)(dto.Amount * 100);
+            var platformFee = (long)(totalAmount * (company.PlatformFeePercentage / 100m));
+            _logger.LogInformation("[Stripe] Checkout session with platform fee: Amount={Amount}, PlatformFee={PlatformFee} ({Percentage}%), Environment={Environment}, ConnectedAccount={AccountId}",
+                totalAmount, platformFee, company.PlatformFeePercentage, companyStripeSettings.Name, stripeAccountId);
+
             // Update options to use valid customer ID or email (same as security deposit)
             if (!string.IsNullOrEmpty(validCustomerId))
             {
@@ -487,6 +560,10 @@ public class PaymentsController : ControllerBase
                 sessionOptions.Metadata!["booking_id"] = bookingId.Value.ToString();
             }
 
+            // Add company_id to metadata for webhook processing
+            sessionOptions.PaymentIntentData.Metadata!["company_id"] = company.Id.ToString();
+            sessionOptions.Metadata!["company_id"] = company.Id.ToString();
+
             if (!string.IsNullOrWhiteSpace(dto.BookingNumber))
             {
                 sessionOptions.PaymentIntentData.Metadata!["booking_number"] = dto.BookingNumber;
@@ -507,17 +584,19 @@ public class PaymentsController : ControllerBase
             }
 
             _logger.LogInformation(
-                "CreateCheckoutSession: Creating checkout session for connected account {StripeAccountId} using Stripe keys from stripe_settings (CompanyId: {CompanyId})", 
-                stripeAccountId, 
+                "CreateCheckoutSession: Creating checkout session for connected account {StripeAccountId} using Stripe keys from stripe_settings (CompanyId: {CompanyId})",
+                stripeAccountId,
                 company.Id
             );
 
-            // Create RequestOptions with API key from stripe_settings table (via company.StripeSettingsId)
-            // and connected account ID from stripe_company table (REQUIRED)
+
+
+            // Create RequestOptions for direct charge to connected account with application fee
+            // Application fee automatically goes to platform account
             var requestOptions = new Stripe.RequestOptions
             {
-                ApiKey = stripeSecretKey, // Key from stripe_settings table using company.StripeSettingsId
-                StripeAccount = stripeAccountId // Account ID from stripe_company table (REQUIRED)
+                ApiKey = platformSecretKey, // Platform key based on company's environment (test/US)
+                StripeAccount = stripeAccountId // Direct charge to connected account
             };
 
             _logger.LogInformation("[Stripe] Checkout session options: {@Options}", new
@@ -533,10 +612,11 @@ public class PaymentsController : ControllerBase
                     ProductName = li.PriceData?.ProductData?.Name
                 }).ToList(),
                 Metadata = sessionOptions.PaymentIntentData?.Metadata,
-                TransferDestination = sessionOptions.PaymentIntentData?.TransferData?.Destination
+                ApplicationFeeAmount = sessionOptions.PaymentIntentData?.ApplicationFeeAmount,
+                ConnectedAccount = requestOptions.StripeAccount
             });
 
-            // Pass RequestOptions with connected account ID (same as security deposit)
+            // Direct charge to connected account with automatic application fee to platform
             var session = await _stripeService.CreateCheckoutSessionAsync(sessionOptions, requestOptions, companyId: company.Id);
 
             _logger.LogInformation("[Stripe] Checkout session created. SessionId={SessionId} Url={Url}", session.Id, session.Url);
@@ -722,6 +802,101 @@ public class PaymentsController : ControllerBase
         {
             _logger.LogWarning(ex, "Error decrypting Stripe key, using as-is");
             return encryptedKey;
+        }
+    }
+
+    /// <summary>
+    /// Get platform Stripe settings based on company's StripeSettings environment
+    /// </summary>
+    private async Task<(string? platformAccountId, string? platformSecretKey)> GetPlatformStripeSettingsAsync(Guid companyId)
+    {
+        try
+        {
+            // Get company and its StripeSettings
+            var company = await _context.Companies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == companyId);
+
+            if (company?.StripeSettingsId == null)
+            {
+                _logger.LogWarning("GetPlatformStripeSettings: Company {CompanyId} has no StripeSettingsId", companyId);
+                return (null, null);
+            }
+
+            var companyStripeSettings = await _context.StripeSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == company.StripeSettingsId.Value);
+
+            if (companyStripeSettings == null)
+            {
+                _logger.LogWarning("GetPlatformStripeSettings: StripeSettings not found for company {CompanyId}", companyId);
+                return (null, null);
+            }
+
+            // Use the same settings as company settings - they already contain platform account info
+            var platformSettings = companyStripeSettings;
+
+            if (platformSettings == null)
+            {
+                _logger.LogError("GetPlatformStripeSettings: Stripe settings not found for company {CompanyId}", companyId);
+                return (null, null);
+            }
+
+            var platformSecretKey = DecryptStripeKey(platformSettings.SecretKey);
+
+            _logger.LogInformation("GetPlatformStripeSettings: Using stripe settings for company environment '{CompanyEnvironment}'",
+                companyStripeSettings.Name);
+
+            // Get platform account ID from database
+            var platformAccountId = platformSettings.PlatformAccountId;
+
+            if (string.IsNullOrEmpty(platformAccountId))
+            {
+                _logger.LogWarning("GetPlatformStripeSettings: Platform account ID not configured for environment '{Environment}'",
+                    companyStripeSettings.Name);
+            }
+            else
+            {
+                _logger.LogInformation("GetPlatformStripeSettings: Platform account ID: {AccountId} for environment '{Environment}'",
+                    platformAccountId, companyStripeSettings.Name);
+            }
+
+            return (platformAccountId, platformSecretKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting platform Stripe settings for company {CompanyId}", companyId);
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// Get company's StripeSettings information
+    /// </summary>
+    private async Task<StripeSettings?> GetCompanyStripeSettingsAsync(Guid companyId)
+    {
+        try
+        {
+            var company = await _context.Companies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == companyId);
+
+            if (company?.StripeSettingsId == null)
+            {
+                _logger.LogWarning("GetCompanyStripeSettings: Company {CompanyId} has no StripeSettingsId", companyId);
+                return null;
+            }
+
+            var stripeSettings = await _context.StripeSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == company.StripeSettingsId.Value);
+
+            return stripeSettings;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting company StripeSettings for company {CompanyId}", companyId);
+            return null;
         }
     }
 

@@ -25,9 +25,6 @@ public class LicenseScan
     [Column("id")]
     public Guid Id { get; set; } = Guid.NewGuid();
 
-    [Required]
-    [Column("company_id")]
-    public Guid CompanyId { get; set; }
 
     [Required]
     [Column("customer_id")]
@@ -90,8 +87,6 @@ public class LicenseScan
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation properties
-    [ForeignKey("CompanyId")]
-    public virtual Company Company { get; set; } = null!;
 
     [ForeignKey("CustomerId")]
     public virtual Customer Customer { get; set; } = null!;

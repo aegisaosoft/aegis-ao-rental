@@ -29,10 +29,6 @@ public class CustomerLicense
     [Column("customer_id")]
     public Guid CustomerId { get; set; }
 
-    [Required]
-    [Column("company_id")]
-    public Guid CompanyId { get; set; }
-
     // License Identity
     [Required]
     [MaxLength(50)]
@@ -47,6 +43,15 @@ public class CustomerLicense
     [MaxLength(2)]
     [Column("country_issued")]
     public string CountryIssued { get; set; } = "US";
+
+    // Personal Information from License
+    [MaxLength(100)]
+    [Column("first_name")]
+    public string? FirstName { get; set; }
+
+    [MaxLength(100)]
+    [Column("last_name")]
+    public string? LastName { get; set; }
 
     // Physical Characteristics
     [MaxLength(1)]
@@ -143,7 +148,4 @@ public class CustomerLicense
     // Navigation properties
     [ForeignKey("CustomerId")]
     public virtual Customer Customer { get; set; } = null!;
-
-    [ForeignKey("CompanyId")]
-    public virtual Company? Company { get; set; }
 }

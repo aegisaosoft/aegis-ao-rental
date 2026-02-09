@@ -81,12 +81,14 @@ public class RentalAgreementEntity
     public DateTime NonRefundableAcceptedAt { get; set; }
     public DateTime DamagePolicyAcceptedAt { get; set; }
     public DateTime CardAuthorizationAcceptedAt { get; set; }
-    
+    public DateTime SmsConsentAcceptedAt { get; set; }
+
     // Consent texts
     public string TermsText { get; set; } = null!;
     public string NonRefundableText { get; set; } = null!;
     public string DamagePolicyText { get; set; } = null!;
     public string CardAuthorizationText { get; set; } = null!;
+    public string SmsConsentText { get; set; } = null!;
     
     // Signing metadata
     public DateTime SignedAt { get; set; }
@@ -192,10 +194,12 @@ public class RentalAgreementConfiguration : IEntityTypeConfiguration<RentalAgree
         builder.Property(e => e.NonRefundableAcceptedAt).HasColumnName("non_refundable_accepted_at");
         builder.Property(e => e.DamagePolicyAcceptedAt).HasColumnName("damage_policy_accepted_at");
         builder.Property(e => e.CardAuthorizationAcceptedAt).HasColumnName("card_authorization_accepted_at");
+        builder.Property(e => e.SmsConsentAcceptedAt).HasColumnName("sms_consent_accepted_at");
         builder.Property(e => e.TermsText).HasColumnName("terms_text");
         builder.Property(e => e.NonRefundableText).HasColumnName("non_refundable_text");
         builder.Property(e => e.DamagePolicyText).HasColumnName("damage_policy_text");
         builder.Property(e => e.CardAuthorizationText).HasColumnName("card_authorization_text");
+        builder.Property(e => e.SmsConsentText).HasColumnName("sms_consent_text");
         builder.Property(e => e.SignedAt).HasColumnName("signed_at");
         builder.Property(e => e.IpAddress).HasColumnName("ip_address");
         builder.Property(e => e.UserAgent).HasColumnName("user_agent");

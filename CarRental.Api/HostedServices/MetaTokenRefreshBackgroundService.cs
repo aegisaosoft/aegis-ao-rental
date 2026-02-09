@@ -39,22 +39,45 @@ public class MetaTokenRefreshBackgroundService : BackgroundService
     {
         _logger.LogInformation("Meta Token Refresh Background Service started");
 
-        // Wait a bit on startup
-        await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
-            {
-                await RefreshExpiringTokensAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in Meta Token Refresh Background Service");
-            }
+            // Wait a bit on startup
+            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
 
-            await Task.Delay(_checkInterval, stoppingToken);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await RefreshExpiringTokensAsync(stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Service is being stopped - this is normal
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in Meta Token Refresh Background Service");
+                }
+
+                try
+                {
+                    await Task.Delay(_checkInterval, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Service is being stopped - this is normal
+                    break;
+                }
+            }
         }
+        catch (OperationCanceledException)
+        {
+            // Service is being stopped - this is normal
+            _logger.LogInformation("Meta Token Refresh Background Service stopping");
+        }
+
+        _logger.LogInformation("Meta Token Refresh Background Service stopped");
     }
 
     private async Task RefreshExpiringTokensAsync(CancellationToken stoppingToken)
@@ -86,7 +109,15 @@ public class MetaTokenRefreshBackgroundService : BackgroundService
                     credentials.CompanyId);
 
                 // Small delay between refreshes to avoid rate limiting
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Service is being stopped - exit gracefully
+                    break;
+                }
             }
             catch (Exception ex)
             {

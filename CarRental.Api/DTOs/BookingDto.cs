@@ -82,8 +82,14 @@ public class BookingDto
 
     public string? CustomerName { get; set; }
     public string? CustomerEmail { get; set; }
-    public string? VehicleName { get; set; }
-    public string? LicensePlate { get; set; }
+    public string? VehicleMake { get; set; }
+    public string? VehicleModel { get; set; }
+    public int? VehicleYear { get; set; }
+    public string? VehicleColor { get; set; }
+    public string? VehicleCategory { get; set; }
+    public string? VehicleLicensePlate { get; set; }
+    public string? LicensePlate { get; set; } // Deprecated: use VehicleLicensePlate instead
+    public string? VehicleName { get; set; } // Deprecated: use separate vehicle fields instead
     public string? CompanyName { get; set; }
     
     // Payment information
@@ -290,6 +296,7 @@ public class AgreementConsentsDto
     public DateTime? NonRefundableAcceptedAt { get; set; }
     public DateTime? DamagePolicyAcceptedAt { get; set; }
     public DateTime? CardAuthorizationAcceptedAt { get; set; }
+    public DateTime? SmsConsentAcceptedAt { get; set; }
 }
 
 /// <summary>
@@ -305,6 +312,8 @@ public class ConsentTextsDto
     public string DamagePolicyText { get; set; } = string.Empty;
     public string CardAuthorizationTitle { get; set; } = string.Empty;
     public string CardAuthorizationText { get; set; } = string.Empty;
+    public string SmsConsentTitle { get; set; } = string.Empty;
+    public string SmsConsentText { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -349,7 +358,13 @@ public class BookingTokenDto
     
     // Navigation properties
     public string? CompanyName { get; set; }
-    public string? VehicleName { get; set; }
+    public string? VehicleMake { get; set; }
+    public string? VehicleModel { get; set; }
+    public int? VehicleYear { get; set; }
+    public string? VehicleColor { get; set; }
+    public string? VehicleCategory { get; set; }
+    public string? VehicleLicensePlate { get; set; }
+    public string? VehicleName { get; set; } // Deprecated: use separate vehicle fields instead
 }
 
 public class CreateBookingTokenDto
@@ -519,8 +534,14 @@ public class RentalAgreementResponseDto
     public string? CustomerAddress { get; set; }
     public string? DriverLicenseNumber { get; set; }
     public string? DriverLicenseState { get; set; }
-    public string VehicleName { get; set; } = string.Empty;
-    public string? VehiclePlate { get; set; }
+    public string VehicleName { get; set; } = string.Empty; // Deprecated: use separate vehicle fields instead
+    public string? VehicleMake { get; set; }
+    public string? VehicleModel { get; set; }
+    public int? VehicleYear { get; set; }
+    public string? VehicleColor { get; set; }
+    public string? VehicleCategory { get; set; }
+    public string? VehicleLicensePlate { get; set; }
+    public string? VehiclePlate { get; set; } // Deprecated: use VehicleLicensePlate instead
     public DateTime PickupDate { get; set; }
     public string? PickupLocation { get; set; }
     public DateTime ReturnDate { get; set; }

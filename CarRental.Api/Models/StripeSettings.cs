@@ -39,6 +39,9 @@ public class StripeSettings
     [Column("webhook_secret")]
     public string? WebhookSecret { get; set; }
 
+    [Column("platform_account_id")]
+    public string? PlatformAccountId { get; set; }
+
     [Column("created_at")]
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

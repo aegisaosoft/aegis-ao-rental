@@ -723,7 +723,8 @@ public class StripeConnectService : IStripeConnectService
                 {
                     { "booking_id", bookingId.ToString() },
                     { "booking_number", booking.BookingNumber },
-                    { "payment_type", "security_deposit" }
+                    { "payment_type", "security_deposit" },
+                    { "company_id", booking.Company.Id.ToString() }
                 }
             );
 

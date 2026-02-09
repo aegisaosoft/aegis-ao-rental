@@ -50,7 +50,72 @@ public class WebhooksController : ControllerBase
     }
 
     /// <summary>
-    /// Legacy webhook endpoint - uses default webhook secret from configuration
+    /// Extracts company ID from webhook metadata and returns appropriate StripeSettings
+    /// </summary>
+    private async Task<StripeSettings?> ExtractStripeSettingsFromWebhook(string json)
+    {
+        try
+        {
+            var webhookEvent = System.Text.Json.JsonDocument.Parse(json);
+
+            // Extract company ID from metadata - check both data.object.metadata and root metadata
+            string? companyId = null;
+
+            // Try to get company ID from data.object.metadata (payment_intent, checkout_session, etc.)
+            if (webhookEvent.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("object", out var obj) &&
+                obj.TryGetProperty("metadata", out var metadata) &&
+                metadata.TryGetProperty("company_id", out var companyIdElement))
+            {
+                companyId = companyIdElement.GetString();
+            }
+
+            if (!string.IsNullOrEmpty(companyId))
+            {
+                _logger.LogInformation("Found company ID in webhook metadata: {CompanyId}", companyId);
+
+                // Look up company's StripeSettings preference
+                var company = await _context.Companies
+                    .FirstOrDefaultAsync(c => c.Id.ToString() == companyId);
+
+                if (company != null && company.StripeSettingsId.HasValue)
+                {
+                    var stripeSettings = await _context.StripeSettings
+                        .FirstOrDefaultAsync(s => s.Id == company.StripeSettingsId.Value);
+
+                    if (stripeSettings != null)
+                    {
+                        _logger.LogInformation("Using StripeSettings '{Name}' for company {CompanyId}",
+                            stripeSettings.Name, companyId);
+                        return stripeSettings;
+                    }
+                    else
+                    {
+                        _logger.LogWarning("StripeSettings with ID {SettingsId} not found for company {CompanyId}",
+                            company.StripeSettingsId.Value, companyId);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Company {CompanyId} not found or has no StripeSettingsId configured", companyId);
+                }
+            }
+            else
+            {
+                _logger.LogDebug("No company_id found in webhook metadata");
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting company ID from webhook metadata");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Legacy webhook endpoint - determines StripeSettings from company metadata
     /// </summary>
     [HttpPost("stripe")]
     public async Task<IActionResult> StripeWebhook()
@@ -119,12 +184,19 @@ public class WebhooksController : ControllerBase
             {
                 var stripeEvent = EventUtility.ParseEvent(json);
                 var signatureHeader = Request.Headers["Stripe-Signature"];
+                _logger.LogInformation("Signature header: {SignatureHeader}", signatureHeader);
+
+                // If no StripeSettings provided, try to determine from company metadata in webhook
+                if (stripeSettings == null)
+                {
+                    stripeSettings = await ExtractStripeSettingsFromWebhook(json);
+                }
 
                 // Get webhook secret from StripeSettings if provided, otherwise from configuration
                 string? webhookSecret = null;
                 if (stripeSettings != null && !string.IsNullOrWhiteSpace(stripeSettings.WebhookSecret))
                 {
-                    webhookSecret = stripeSettings.WebhookSecret;
+                    webhookSecret = _encryptionService.Decrypt(stripeSettings.WebhookSecret);
                     _logger.LogInformation("Using webhook secret from StripeSettings: {SettingsName}", settingsName);
                 }
                 else
@@ -135,13 +207,21 @@ public class WebhooksController : ControllerBase
 
                 if (!string.IsNullOrEmpty(webhookSecret))
                 {
+                    _logger.LogInformation("Using webhook secret: {SecretPrefix}...", webhookSecret.Substring(0, Math.Min(20, webhookSecret.Length)));
+                    _logger.LogInformation("JSON body first 100 chars: {JsonPrefix}", json.Substring(0, Math.Min(100, json.Length)));
+
                     try
                     {
+                        // Increase tolerance for development environment (Stripe CLI)
+                        var tolerance = 600; // 10 minutes tolerance for development
+                        _logger.LogInformation("Attempting signature verification with tolerance: {Tolerance} seconds", tolerance);
                         stripeEvent = EventUtility.ConstructEvent(
                             json,
                             signatureHeader,
-                            webhookSecret
+                            webhookSecret,
+                            tolerance
                         );
+                        _logger.LogInformation("Signature verification successful!");
                     }
                     catch (StripeException ex)
                     {

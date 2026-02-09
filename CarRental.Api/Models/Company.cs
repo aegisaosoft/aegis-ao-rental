@@ -161,7 +161,7 @@ public class Company
     public string? StripeAccountType { get; set; } = "express";
 
     [Column("platform_fee_percentage", TypeName = "decimal(5,2)")]
-    public decimal PlatformFeePercentage { get; set; } = 10.00m;
+    public decimal PlatformFeePercentage { get; set; } = 3.00m;
 
     // Stripe Requirements
     [Column("stripe_requirements_currently_due", TypeName = "text[]")]

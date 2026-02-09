@@ -20,7 +20,7 @@ using System.Collections.Generic;
 namespace CarRental.Api.Controllers;
 
 [ApiController]
-[Route("{containerName}")]
+[Route("api/files/{containerName}")]
 public class StaticFilesController : ControllerBase
 {
     private readonly IAzureBlobStorageService _blobStorageService;

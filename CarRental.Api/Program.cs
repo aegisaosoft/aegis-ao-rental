@@ -221,6 +221,13 @@ builder.Services.AddSingleton<IEncryptionService, EncryptionService>();
 // Add Settings Service
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 
+// Add Driver License parsing services
+builder.Services.Configure<CarRental.Api.Configurations.DocumentAiConfiguration>(
+    builder.Configuration.GetSection("DocumentAi"));
+builder.Services.AddSingleton<CarRental.Api.Configurations.IDocumentAiConfiguration>(serviceProvider =>
+    serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CarRental.Api.Configurations.DocumentAiConfiguration>>().Value);
+builder.Services.AddScoped<CarRental.Api.Services.Interfaces.IBarcodeParserService, CarRental.Api.Services.BarcodeParserService>();
+
 // Add Azure DNS Service (mandatory - requires Azure configuration)
 builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
 
@@ -284,6 +291,10 @@ builder.Services.AddScoped<IInstagramCampaignService, InstagramCampaignService>(
 // Add Instagram DM Booking Assistant Services
 builder.Services.AddScoped<IInstagramMessagingService, InstagramMessagingService>();
 builder.Services.AddScoped<IBookingAssistantService, BookingAssistantService>();
+
+// Add Driver License Processing Services
+builder.Services.AddScoped<BarcodeParserService>();
+builder.Services.AddHttpClient(); // For Google Cloud Document AI integration
 
 // Add Social Media Scheduler Background Service (for scheduled posts)
 builder.Services.AddHostedService<SocialMediaSchedulerService>();

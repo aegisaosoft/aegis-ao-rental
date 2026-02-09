@@ -1492,15 +1492,8 @@ public class CompaniesController : ControllerBase
                 _context.DisputeAnalytics.RemoveRange(disputeAnalytics);
             }
 
-            var licenseScans = await _context.LicenseScans
-                .Where(ls => ls.CompanyId == id)
-                .ToListAsync();
-            
-            if (licenseScans.Any())
-            {
-                _logger.LogInformation("Deleting {Count} license scans for company {CompanyId}", licenseScans.Count, id);
-                _context.LicenseScans.RemoveRange(licenseScans);
-            }
+            // License scans are personal audit records, not company-specific
+            // No longer need to delete license scans when deleting company
 
             // 14. Set CompanyId to null for all customers associated with this company
             var customersWithCompany = await _context.Customers
@@ -1519,21 +1512,21 @@ public class CompaniesController : ControllerBase
             }
 
             // Save all changes before deleting the company
-            if (payments.Any() || rentals.Any() || bookings.Any() || vehicles.Any() || vehicleModels.Any() || 
-                reviews.Any() || bookingTokenIds.Any() || additionalServices.Any() || companyServices.Any() || 
+            if (payments.Any() || rentals.Any() || bookings.Any() || vehicles.Any() || vehicleModels.Any() ||
+                reviews.Any() || bookingTokenIds.Any() || additionalServices.Any() || companyServices.Any() ||
                 companyEmailStyles.Any() || companyLocations.Any() || locations.Any() || stripeCompanies.Any() ||
                 stripeTransfers.Any() || stripePayoutRecords.Any() || stripeBalanceTransactions.Any() ||
                 stripeOnboardingSessions.Any() || stripeAccountCapabilities.Any() || webhookEvents.Any() ||
-                refundAnalytics.Any() || disputeAnalytics.Any() || licenseScans.Any() || customersWithCompany.Any())
+                refundAnalytics.Any() || disputeAnalytics.Any() || customersWithCompany.Any())
             {
                 await _context.SaveChangesAsync();
-                _logger.LogInformation("Successfully deleted related entities: {Payments} payments, {Rentals} rentals, {Bookings} bookings, {Vehicles} vehicles, {VehicleModels} vehicle models, {Reviews} reviews, {BookingTokens} booking tokens, {AdditionalServices} additional services, {CompanyServices} company services, {CompanyEmailStyles} email styles, {CompanyLocations} company locations, {Locations} locations, {StripeCompanies} Stripe companies, {StripeTransfers} Stripe transfers, {StripePayoutRecords} Stripe payout records, {StripeBalanceTransactions} Stripe balance transactions, {StripeOnboardingSessions} Stripe onboarding sessions, {StripeAccountCapabilities} Stripe account capabilities, {WebhookEvents} webhook events, {RefundAnalytics} refund analytics, {DisputeAnalytics} dispute analytics, {LicenseScans} license scans, {Customers} customers updated", 
+                _logger.LogInformation("Successfully deleted related entities: {Payments} payments, {Rentals} rentals, {Bookings} bookings, {Vehicles} vehicles, {VehicleModels} vehicle models, {Reviews} reviews, {BookingTokens} booking tokens, {AdditionalServices} additional services, {CompanyServices} company services, {CompanyEmailStyles} email styles, {CompanyLocations} company locations, {Locations} locations, {StripeCompanies} Stripe companies, {StripeTransfers} Stripe transfers, {StripePayoutRecords} Stripe payout records, {StripeBalanceTransactions} Stripe balance transactions, {StripeOnboardingSessions} Stripe onboarding sessions, {StripeAccountCapabilities} Stripe account capabilities, {WebhookEvents} webhook events, {RefundAnalytics} refund analytics, {DisputeAnalytics} dispute analytics, {Customers} customers updated",
                     payments.Count, rentals.Count, bookings.Count, vehicles.Count, vehicleModels.Count, reviews.Count,
                     bookingTokenIds.Count, additionalServices.Count, companyServices.Count, companyEmailStyles.Count,
                     companyLocations.Count, locations.Count, stripeCompanies.Count, stripeTransfers.Count,
                     stripePayoutRecords.Count, stripeBalanceTransactions.Count, stripeOnboardingSessions.Count,
                     stripeAccountCapabilities.Count, webhookEvents.Count, refundAnalytics.Count, disputeAnalytics.Count,
-                    licenseScans.Count, customersWithCompany.Count);
+                    customersWithCompany.Count);
             }
 
             // 15. Delete company from database

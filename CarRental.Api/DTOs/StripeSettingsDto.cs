@@ -24,6 +24,7 @@ public class StripeSettingsDto
     public string? SecretKey { get; set; }
     public string? PublishableKey { get; set; }
     public string? WebhookSecret { get; set; }
+    public string? PlatformAccountId { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
@@ -33,19 +34,21 @@ public class CreateStripeSettingsDto
     [Required]
     [MaxLength(20)]
     public string Name { get; set; } = string.Empty;
-    
+
     public string? SecretKey { get; set; }
     public string? PublishableKey { get; set; }
     public string? WebhookSecret { get; set; }
+    public string? PlatformAccountId { get; set; }
 }
 
 public class UpdateStripeSettingsDto
 {
     [MaxLength(20)]
     public string? Name { get; set; }
-    
+
     public string? SecretKey { get; set; }
     public string? PublishableKey { get; set; }
     public string? WebhookSecret { get; set; }
+    public string? PlatformAccountId { get; set; }
 }
 

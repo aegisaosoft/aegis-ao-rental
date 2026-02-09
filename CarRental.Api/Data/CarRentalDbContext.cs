@@ -985,15 +985,9 @@ public class CarRentalDbContext : DbContext
             entity.Property(e => e.ScanDate).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.ValidationErrors).HasColumnType("text[]");
-            entity.HasIndex(e => e.CompanyId);
             entity.HasIndex(e => e.CustomerId);
             entity.HasIndex(e => e.CustomerLicenseId);
-            entity.HasIndex(e => new { e.CompanyId, e.ScanDate });
-            
-            entity.HasOne(e => e.Company)
-                .WithMany()
-                .HasForeignKey(e => e.CompanyId)
-                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.ScanDate);
             
             entity.HasOne(e => e.Customer)
                 .WithMany()
@@ -1061,15 +1055,7 @@ public class CarRentalDbContext : DbContext
         modelBuilder.Entity<Payment>()
             .HasIndex(e => e.StripeTransferId);
 
-        // Update CustomerLicense configuration for CompanyId
-        modelBuilder.Entity<CustomerLicense>()
-            .HasOne(cl => cl.Company)
-            .WithMany()
-            .HasForeignKey(cl => cl.CompanyId)
-            .OnDelete(DeleteBehavior.Cascade);
-
-        modelBuilder.Entity<CustomerLicense>()
-            .HasIndex(cl => cl.CompanyId);
+        // CustomerLicense configuration (CompanyId removed as licenses are personal documents)
 
         // Configure FindersList entity
         modelBuilder.Entity<FindersList>(entity =>

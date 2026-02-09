@@ -51,11 +51,18 @@ namespace CarRental.Api.Middleware
                 var path = context.Request.Path.Value ?? "";
                 var method = context.Request.Method;
                 
+                // Skip company resolution for webhook endpoints (Stripe calls don't need company context)
+                if (path.StartsWith("/api/webhooks/", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _next(context);
+                    return;
+                }
+
                 // Only skip for PUT/PATCH/DELETE operations on endpoints with ID in path
                 // GET /api/companies/config and other endpoints still need company resolution
                 if ((method == "PUT" || method == "PATCH" || method == "DELETE") &&
                     (path.StartsWith("/api/RentalCompanies/", StringComparison.OrdinalIgnoreCase) ||
-                     (path.StartsWith("/api/companies/", StringComparison.OrdinalIgnoreCase) && 
+                     (path.StartsWith("/api/companies/", StringComparison.OrdinalIgnoreCase) &&
                       !path.Equals("/api/companies/config", StringComparison.OrdinalIgnoreCase))))
                 {
                     // Company ID is in the URL path for update/delete operations, skip middleware resolution

@@ -21,6 +21,7 @@ namespace CarRental.Api.Services;
 public class RentalAgreementPdfData
 {
     public string AgreementNumber { get; set; } = string.Empty;
+    public string BookingNumber { get; set; } = string.Empty;
     public string Language { get; set; } = "en";
     
     // Company Info
@@ -113,6 +114,7 @@ public class RentalAgreementPdfData
     public string NonRefundableText { get; set; } = string.Empty;
     public string DamagePolicyText { get; set; } = string.Empty;
     public string CardAuthorizationText { get; set; } = string.Empty;
+    public string SmsConsentText { get; set; } = string.Empty;
 }
 
 public class AdditionalServiceItem
@@ -470,7 +472,7 @@ public class RentalAgreementPdfGenerator
                 .Column(column =>
                 {
                     var titleSuffix = isSecondVersion ? "" : (lang != "en" ? $" ({GetLanguageName(lang)})" : "");
-                    column.Item().Text($"{t("rentalAgreement")} - {data.AgreementNumber}{titleSuffix}")
+                    column.Item().Text($"{t("rentalAgreement")} - {data.BookingNumber}{titleSuffix}")
                         .FontSize(20)
                         .Bold()
                         .AlignCenter();
@@ -794,7 +796,23 @@ public class RentalAgreementPdfGenerator
             column.Item().PaddingTop(3);
         }
 
-        // "I have read and agree" checkbox
+        // SMS Consent - moved to second-to-last position
+        if (!string.IsNullOrEmpty(data.SmsConsentText))
+        {
+            Console.WriteLine($"PDF Generator: Rendering SMS Consent section with text: {data.SmsConsentText}");
+            column.Item().PaddingTop(8).Row(row =>
+            {
+                // Large checked checkbox using Unicode symbol
+                row.ConstantItem(18).Text("☑").FontSize(14);
+                row.RelativeItem().Text(data.SmsConsentText).FontSize(10);
+            });
+        }
+        else
+        {
+            Console.WriteLine("PDF Generator: SMS Consent text is empty, skipping section");
+        }
+
+        // "I have read and agree" checkbox - now last
         column.Item().PaddingTop(8).Row(row =>
         {
             row.ConstantItem(18).Text("☑").FontSize(14);
@@ -845,7 +863,7 @@ public class RentalAgreementPdfGenerator
             column.Item().Background(Colors.Grey.Lighten3).Padding(5).Text(t("rentalTermsConditions")).FontSize(11).Bold();
             column.Item().PaddingTop(5).Text(data.FullTermsText).FontSize(8);
         }
-        else if (!string.IsNullOrEmpty(data.TermsText) || !string.IsNullOrEmpty(data.NonRefundableText) || 
+        else if (!string.IsNullOrEmpty(data.TermsText) || !string.IsNullOrEmpty(data.NonRefundableText) ||
                  !string.IsNullOrEmpty(data.DamagePolicyText) || !string.IsNullOrEmpty(data.CardAuthorizationText))
         {
             column.Item().PageBreak();
