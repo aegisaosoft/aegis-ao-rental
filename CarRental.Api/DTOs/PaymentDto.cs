@@ -97,16 +97,20 @@ public class ProcessPaymentDto
 {
     [Required]
     public Guid CustomerId { get; set; }
-    
+
+    public Guid? CompanyId { get; set; }
+
+    public Guid? ReservationId { get; set; }
+
     [Required]
     public decimal Amount { get; set; }
-    
+
     [MaxLength(10)]
     public string Currency { get; set; } = "USD";
-    
+
     [Required]
     public string PaymentMethodId { get; set; } = string.Empty;
-    
+
     public string? Description { get; set; }
 }
 

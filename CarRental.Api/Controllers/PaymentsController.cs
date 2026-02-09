@@ -656,12 +656,30 @@ public class PaymentsController : ControllerBase
                 await _context.SaveChangesAsync();
             }
 
-            // Create payment intent
+            // Create payment intent with metadata for webhook processing
+            var metadata = new Dictionary<string, string>
+            {
+                { "customer_id", processPaymentDto.CustomerId.ToString() },
+                { "payment_type", "full_payment" }
+            };
+
+            // Add company_id and booking/reservation metadata if available
+            if (processPaymentDto.CompanyId.HasValue)
+            {
+                metadata["company_id"] = processPaymentDto.CompanyId.Value.ToString();
+            }
+            if (processPaymentDto.ReservationId.HasValue)
+            {
+                metadata["reservation_id"] = processPaymentDto.ReservationId.Value.ToString();
+                metadata["booking_id"] = processPaymentDto.ReservationId.Value.ToString();
+            }
+
             var paymentIntent = await _stripeService.CreatePaymentIntentAsync(
                 processPaymentDto.Amount,
                 processPaymentDto.Currency,
                 customer.StripeCustomerId!,
-                processPaymentDto.PaymentMethodId);
+                processPaymentDto.PaymentMethodId,
+                metadata);
 
             _logger.LogInformation("[Stripe] Payment intent created: {@Info}", new
             {
@@ -676,7 +694,8 @@ public class PaymentsController : ControllerBase
             var payment = new Payment
             {
                 CustomerId = processPaymentDto.CustomerId,
-                CompanyId = Guid.Empty, // Will be set based on reservation/rental
+                CompanyId = processPaymentDto.CompanyId ?? Guid.Empty,
+                ReservationId = processPaymentDto.ReservationId,
                 Amount = processPaymentDto.Amount,
                 Currency = processPaymentDto.Currency,
                 PaymentType = "full_payment",
