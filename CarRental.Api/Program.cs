@@ -803,6 +803,14 @@ try
     Console.WriteLine("[Program] About to start Kestrel...");
     Console.WriteLine($"[Program] PORT: {port ?? "Not set"}");
     Console.WriteLine($"[Program] ASPNETCORE_URLS: {urls ?? "Not set"}");
+
+    // Diagnostic info for Azure SkiaSharp issues
+    var runtime = Environment.OSVersion;
+    var architecture = Environment.ProcessorCount;
+    Console.WriteLine($"[Program] Runtime: {runtime}");
+    Console.WriteLine($"[Program] Processor count: {architecture}");
+    Console.WriteLine($"[Program] Is64BitProcess: {Environment.Is64BitProcess}");
+    Console.WriteLine($"[Program] Is64BitOperatingSystem: {Environment.Is64BitOperatingSystem}");
     
     startupLogger.LogInformation("Starting Kestrel web server...");
     startupLogger.LogInformation("PORT environment variable: {Port}", port ?? "Not set");

@@ -41,7 +41,18 @@ public class BarcodeParserService : IBarcodeParserService
             }
         };
 
-        _logger.LogInformation("BarcodeParserService initialized with SkiaSharp support");
+        // Verify SkiaSharp is properly loaded (especially important on Azure)
+        try
+        {
+            var testBitmap = new SKBitmap(1, 1);
+            testBitmap.Dispose();
+            _logger.LogInformation("BarcodeParserService initialized with SkiaSharp support - Azure native assets loaded successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SkiaSharp initialization failed - native assets may be missing. Error: {Error}", ex.Message);
+            throw new InvalidOperationException($"SkiaSharp not properly initialized: {ex.Message}", ex);
+        }
     }
 
     public async Task<CarRental.Api.Services.Interfaces.BarcodeParseResult> ParseDriverLicenseBarcodeAsync(Stream imageStream, string mimeType)
