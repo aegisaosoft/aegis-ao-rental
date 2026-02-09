@@ -173,7 +173,10 @@ public class CreateBookingDto
     public decimal? SecurityDeposit { get; set; }
 
     public string? Notes { get; set; }
-    
+
+    // Payment fields (copied from working ProcessBooking code)
+    public string? PaymentMethodId { get; set; }
+
     // Location ID for availability check
     public Guid? LocationId { get; set; }
     

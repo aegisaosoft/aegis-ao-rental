@@ -25,6 +25,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
 using BCrypt.Net;
+using StripePaymentIntent = Stripe.PaymentIntent;
 
 namespace CarRental.Api.Controllers;
 
@@ -1580,6 +1581,53 @@ public class BookingController : ControllerBase
 
             _context.Bookings.Add(reservation);
             await _context.SaveChangesAsync();
+
+            // COPIED FROM WORKING ProcessBooking CODE: Create PaymentIntent and Payment record
+            StripePaymentIntent? paymentIntent = null;
+            if (!string.IsNullOrEmpty(createReservationDto.PaymentMethodId))
+            {
+                _logger.LogInformation("[CreateBooking] Creating PaymentIntent for booking {BookingNumber}", reservation.BookingNumber);
+
+                // Create payment intent using connected account (same as ProcessBooking)
+                paymentIntent = await _stripeService.CreatePaymentIntentAsync(
+                    totalAmount,
+                    company.Currency ?? "USD",
+                    customer.StripeCustomerId ?? "",
+                    createReservationDto.PaymentMethodId,
+                    metadata: new Dictionary<string, string>
+                    {
+                        { "booking_id", reservation.Id.ToString() },
+                        { "booking_number", reservation.BookingNumber },
+                        { "customer_id", customer.Id.ToString() }
+                    },
+                    companyId: createReservationDto.CompanyId);
+
+                // COPIED FROM WORKING ProcessBooking CODE: Create Payment record
+                var payment = new Payment
+                {
+                    CustomerId = createReservationDto.CustomerId,
+                    CompanyId = createReservationDto.CompanyId,
+                    ReservationId = reservation.Id,
+                    Amount = totalAmount,
+                    Currency = company.Currency ?? "USD",
+                    PaymentType = "full_payment",
+                    PaymentMethod = "card",
+                    StripePaymentIntentId = paymentIntent.Id,
+                    StripePaymentMethodId = createReservationDto.PaymentMethodId,
+                    Status = "succeeded",
+                    ProcessedAt = DateTime.UtcNow
+                };
+
+                _context.Payments.Add(payment);
+
+                // Security deposit will be handled separately through CreateSecurityDepositCheckout
+                // Do not set SecurityDepositAuthorizedAt here - it should only be set after real payment
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("[CreateBooking] Created PaymentIntent {PaymentIntentId} and Payment record for booking {BookingNumber}",
+                    paymentIntent.Id, reservation.BookingNumber);
+            }
 
             await _context.Entry(reservation)
                 .Reference(r => r.Customer)
@@ -3926,8 +3974,8 @@ public class BookingController : ControllerBase
                         { "type", "security_deposit" }
                     }
                 },
-                SuccessUrl = GetDynamicFrontendUrl($"/admin-dashboard?tab=reservations&deposit_success=true&booking_id={booking.Id}"),
-                CancelUrl = GetDynamicFrontendUrl($"/admin-dashboard?tab=reservations&deposit_cancelled=true&booking_id={booking.Id}"),
+                SuccessUrl = await GetAdminDashboardUrl($"/admin-dashboard?tab=reservations&deposit_success=true&booking_id={booking.Id}", booking.CompanyId),
+                CancelUrl = await GetAdminDashboardUrl($"/admin-dashboard?tab=reservations&deposit_cancelled=true&booking_id={booking.Id}", booking.CompanyId),
                 Metadata = new Dictionary<string, string>
                 {
                     { "booking_id", booking.Id.ToString() },
@@ -4324,6 +4372,12 @@ public class BookingController : ControllerBase
         _logger.LogInformation("[GetDynamicFrontendUrl] Processing: Host={Host}, ForwardedHost={ForwardedHost}, OriginalHost={OriginalHost}, HostFromHeaders={HostFromHeaders}, RequestHost={RequestHost}, Scheme={Scheme}, Path={Path}",
             host, forwardedHost, originalHost, hostFromHeaders, requestHost, scheme, path);
 
+        // ADDITIONAL DEBUGGING: Log all relevant headers for troubleshooting redirect issues
+        _logger.LogInformation("[GetDynamicFrontendUrl] All Headers: Origin={Origin}, Referer={Referer}, UserAgent={UserAgent}",
+            HttpContext.Request.Headers["Origin"].ToString(),
+            HttpContext.Request.Headers["Referer"].ToString(),
+            HttpContext.Request.Headers["User-Agent"].ToString());
+
         // For localhost development
         if (host.Contains("localhost") || host == "127.0.0.1")
         {
@@ -4416,6 +4470,38 @@ public class BookingController : ControllerBase
         _logger.LogInformation("[BookingController] Using fallback tenant URL: {FallbackUrl} (Host: {Host}, OriginalScheme: {OriginalScheme}, FinalScheme: {FinalScheme})",
             fallbackUrl, host, scheme, finalScheme);
         return fallbackUrl;
+    }
+
+    /// <summary>
+    /// Get admin dashboard URL with proper company subdomain
+    /// FIXED: Uses company data to generate correct subdomain instead of relying on headers
+    /// </summary>
+    private async Task<string> GetAdminDashboardUrl(string path, Guid companyId)
+    {
+        try
+        {
+            // Get company subdomain from database instead of relying on headers
+            var company = await _context.Companies
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == companyId);
+
+            if (company != null && !string.IsNullOrEmpty(company.Subdomain))
+            {
+                var adminUrl = $"https://{company.Subdomain}.aegis-rental.com{path}";
+                _logger.LogInformation("[GetAdminDashboardUrl] Using company subdomain: {AdminUrl} (Company: {CompanyName}, Subdomain: {Subdomain})",
+                    adminUrl, company.CompanyName, company.Subdomain);
+                return adminUrl;
+            }
+
+            // Fallback to GetDynamicFrontendUrl if company/subdomain not found
+            _logger.LogWarning("[GetAdminDashboardUrl] Company {CompanyId} subdomain not found, falling back to GetDynamicFrontendUrl", companyId);
+            return GetDynamicFrontendUrl(path);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[GetAdminDashboardUrl] Error getting company subdomain for {CompanyId}, falling back to GetDynamicFrontendUrl", companyId);
+            return GetDynamicFrontendUrl(path);
+        }
     }
 
     /// <summary>

@@ -341,10 +341,20 @@ public class WebhooksController : ControllerBase
             var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
             if (paymentIntent == null) return;
 
-            _logger.LogInformation("Payment succeeded: {PaymentIntentId}, Amount: {Amount}", 
+            _logger.LogInformation("Payment succeeded: {PaymentIntentId}, Amount: {Amount}",
                 paymentIntent.Id, paymentIntent.Amount);
 
-            // Find the payment record
+            // Check if this is a security deposit PaymentIntent
+            if (paymentIntent.Metadata != null &&
+                paymentIntent.Metadata.ContainsKey("type") &&
+                paymentIntent.Metadata["type"] == "security_deposit")
+            {
+                _logger.LogInformation("Processing security deposit PaymentIntent {PaymentIntentId}", paymentIntent.Id);
+                await HandleSecurityDepositPaymentIntent(paymentIntent);
+                return;
+            }
+
+            // Find the payment record for regular payments
             var payment = await _context.Payments
                 .Include(p => p.Reservation)
                 .FirstOrDefaultAsync(p => p.StripePaymentIntentId == paymentIntent.Id);
@@ -431,6 +441,61 @@ public class WebhooksController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling payment_intent.succeeded for event {EventId}", stripeEvent.Id);
+        }
+    }
+
+    private async Task HandleSecurityDepositPaymentIntent(PaymentIntent paymentIntent)
+    {
+        try
+        {
+            // Get booking ID from metadata
+            if (paymentIntent.Metadata == null || !paymentIntent.Metadata.ContainsKey("booking_id"))
+            {
+                _logger.LogWarning("Security deposit PaymentIntent {PaymentIntentId} missing booking_id in metadata", paymentIntent.Id);
+                return;
+            }
+
+            var bookingIdStr = paymentIntent.Metadata["booking_id"];
+            if (!Guid.TryParse(bookingIdStr, out var bookingId))
+            {
+                _logger.LogWarning("Invalid booking_id in security deposit PaymentIntent {PaymentIntentId}: {BookingId}", paymentIntent.Id, bookingIdStr);
+                return;
+            }
+
+            // Find and update booking
+            var booking = await _context.Bookings.FindAsync(bookingId);
+            if (booking == null)
+            {
+                _logger.LogWarning("Booking not found for security deposit PaymentIntent {PaymentIntentId}, booking_id: {BookingId}", paymentIntent.Id, bookingId);
+                return;
+            }
+
+            // Update security deposit information
+            booking.SecurityDepositPaymentIntentId = paymentIntent.Id;
+            booking.SecurityDepositStatus = paymentIntent.Status == "succeeded" ? "captured" : "authorized";
+            booking.SecurityDepositAuthorizedAt = DateTime.UtcNow;
+
+            if (paymentIntent.Status == "succeeded")
+            {
+                booking.SecurityDepositCapturedAt = DateTime.UtcNow;
+                booking.SecurityDepositChargedAmount = paymentIntent.Amount / 100m; // Convert from cents
+            }
+
+            // Update booking status if needed
+            if (booking.Status == "Confirmed" && paymentIntent.Status == "requires_capture")
+            {
+                booking.Status = "Active";
+                _logger.LogInformation("Updated booking {BookingId} status to Active after security deposit authorization", bookingId);
+            }
+
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Security deposit PaymentIntent {PaymentIntentId} processed for booking {BookingId}, status: {Status}",
+                paymentIntent.Id, bookingId, paymentIntent.Status);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling security deposit PaymentIntent {PaymentIntentId}", paymentIntent.Id);
         }
     }
 
