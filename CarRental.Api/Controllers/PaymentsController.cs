@@ -663,15 +663,14 @@ public class PaymentsController : ControllerBase
                 { "payment_type", "full_payment" }
             };
 
-            // Add company_id and booking/reservation metadata if available
+            // Add company_id and booking metadata if available
             if (processPaymentDto.CompanyId.HasValue)
             {
                 metadata["company_id"] = processPaymentDto.CompanyId.Value.ToString();
             }
-            if (processPaymentDto.ReservationId.HasValue)
+            if (processPaymentDto.BookingId.HasValue)
             {
-                metadata["reservation_id"] = processPaymentDto.ReservationId.Value.ToString();
-                metadata["booking_id"] = processPaymentDto.ReservationId.Value.ToString();
+                metadata["booking_id"] = processPaymentDto.BookingId.Value.ToString();
             }
 
             var paymentIntent = await _stripeService.CreatePaymentIntentAsync(
@@ -695,7 +694,7 @@ public class PaymentsController : ControllerBase
             {
                 CustomerId = processPaymentDto.CustomerId,
                 CompanyId = processPaymentDto.CompanyId ?? Guid.Empty,
-                ReservationId = processPaymentDto.ReservationId,
+                ReservationId = processPaymentDto.BookingId,
                 Amount = processPaymentDto.Amount,
                 Currency = processPaymentDto.Currency,
                 PaymentType = "full_payment",

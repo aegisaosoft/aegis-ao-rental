@@ -100,7 +100,7 @@ public class ProcessPaymentDto
 
     public Guid? CompanyId { get; set; }
 
-    public Guid? ReservationId { get; set; }
+    public Guid? BookingId { get; set; }
 
     [Required]
     public decimal Amount { get; set; }
