@@ -15,6 +15,7 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Caching.Memory;
 using CarRental.Api.Services;
 using CarRental.Api.DTOs.Stripe;
 using CarRental.Api.Data;
@@ -37,6 +38,8 @@ public class CompanyStripeManagementController : ControllerBase
     private readonly CarRentalDbContext _context;
     private readonly ILogger<CompanyStripeManagementController> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IMemoryCache _cache;
+    private static readonly TimeSpan StripeCacheExpiration = TimeSpan.FromMinutes(60);
 
     public CompanyStripeManagementController(
         IStripeConnectService stripeConnectService,
@@ -44,7 +47,8 @@ public class CompanyStripeManagementController : ControllerBase
         IEncryptionService encryptionService,
         CarRentalDbContext context,
         ILogger<CompanyStripeManagementController> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IMemoryCache cache)
     {
         _stripeConnectService = stripeConnectService;
         _stripeService = stripeService;
@@ -52,6 +56,7 @@ public class CompanyStripeManagementController : ControllerBase
         _context = context;
         _logger = logger;
         _configuration = configuration;
+        _cache = cache;
     }
 
     /// <summary>
@@ -484,37 +489,50 @@ public class CompanyStripeManagementController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult> CheckStripeAccount(Guid companyId)
     {
-        _logger.LogInformation("CheckStripeAccount: Method called for company {CompanyId}. Route: /api/companies/{{CompanyId}}/stripe/check-account", companyId);
-        
+        // Check cache first — Stripe account status rarely changes
+        var cacheKey = $"stripe_check_{companyId}";
+        if (_cache.TryGetValue(cacheKey, out object? cachedResult))
+        {
+            _logger.LogDebug("CheckStripeAccount cache HIT for {CompanyId}", companyId);
+            return Ok(cachedResult);
+        }
+
+        _logger.LogDebug("CheckStripeAccount cache MISS for {CompanyId}, checking DB", companyId);
+
         try
         {
-            // Check if company exists and is active
             var company = await _context.Companies
                 .AsNoTracking()
                 .FirstOrDefaultAsync(c => c.Id == companyId && c.IsActive);
-            
+
             if (company == null)
             {
                 _logger.LogWarning("CheckStripeAccount: Company {CompanyId} not found or inactive", companyId);
-                return Ok(new { hasStripeAccount = false, message = "Company not found or inactive" });
+                var noCompanyResult = new { hasStripeAccount = false, message = "Company not found or inactive" };
+                _cache.Set(cacheKey, noCompanyResult, TimeSpan.FromMinutes(5)); // Short cache for not-found
+                return Ok(noCompanyResult);
             }
-            
-            // Check if Stripe account exists in stripe_company table
+
             if (!company.StripeSettingsId.HasValue)
             {
                 _logger.LogInformation("CheckStripeAccount: Company {CompanyId} does not have StripeSettingsId", companyId);
-                return Ok(new { hasStripeAccount = false });
+                var noSettingsResult = new { hasStripeAccount = false };
+                _cache.Set(cacheKey, noSettingsResult, TimeSpan.FromMinutes(10));
+                return Ok(noSettingsResult);
             }
-            
+
             var stripeCompany = await _context.StripeCompanies
                 .AsNoTracking()
                 .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value);
-            
+
             var hasStripeAccount = stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId);
-            
+
             _logger.LogInformation("CheckStripeAccount: Company {CompanyId} - HasStripeAccount: {HasStripeAccount}", companyId, hasStripeAccount);
-            
-            return Ok(new { hasStripeAccount });
+
+            var result = new { hasStripeAccount };
+            _cache.Set(cacheKey, result, StripeCacheExpiration);
+
+            return Ok(result);
         }
         catch (Exception ex)
         {

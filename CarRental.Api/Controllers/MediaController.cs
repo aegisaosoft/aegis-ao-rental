@@ -450,10 +450,11 @@ public class MediaController : ControllerBase
             if (image.Length > 20_971_520)
                 return BadRequest("File size exceeds 20 MB limit");
 
-            // Full pipeline: HEIC→PNG + EXIF orientation + compress ≤ 1 MB
-            var processedBytes = await _orientationService.ProcessImageAsync(image);
+            // Full pipeline: HEIC→JPEG + EXIF orientation + text rotation (Vision API for front only) + compress ≤ 1 MB
+            // Back side skips Vision API — ZXing handles barcode in any orientation
+            var processedBytes = await _orientationService.ProcessLicenseImageAsync(image, side);
 
-            // After processing, image is always JPEG (compressed) or PNG (from HEIC)
+            // After processing, image is always JPEG (compressed)
             var contentType = "image/jpeg";
             var fileName = $"{side}.jpg";
             var blobPath = $"{customerId}/licenses/{fileName}";
@@ -825,8 +826,9 @@ public class MediaController : ControllerBase
             // Sanitize wizardId to prevent directory traversal
             var sanitizedWizardId = string.Join("_", wizardId.Split(Path.GetInvalidFileNameChars()));
 
-            // Full pipeline: HEIC→PNG + EXIF orientation + compress ≤ 1 MB
-            var processedBytes = await _orientationService.ProcessImageAsync(image);
+            // Full pipeline: HEIC→JPEG + EXIF orientation + text rotation (Vision API for front only) + compress ≤ 1 MB
+            // Back side skips Vision API — ZXing handles barcode in any orientation
+            var processedBytes = await _orientationService.ProcessLicenseImageAsync(image, side);
 
             // After processing, image is always JPEG
             var contentType = "image/jpeg";

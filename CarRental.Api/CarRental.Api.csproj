@@ -44,7 +44,9 @@
     <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="14.10.2" />
     <!-- Google Document AI for front-side OCR -->
     <PackageReference Include="Google.Cloud.DocumentAI.V1" Version="3.15.0" />
-    <PackageReference Include="Google.Apis.Auth" Version="1.68.0" />
+    <!-- Google Cloud Vision for text orientation detection -->
+    <PackageReference Include="Google.Cloud.Vision.V1" Version="3.8.0" />
+    <PackageReference Include="Google.Apis.Auth" Version="1.72.0" />
   </ItemGroup>
 
 </Project>

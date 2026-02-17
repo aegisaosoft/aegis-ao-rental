@@ -37,6 +37,7 @@ public class ImageOrientationService
     private const int MinJpegQuality   = 40;
 
     private readonly ILogger<ImageOrientationService> _logger;
+    private readonly TextOrientationService? _textOrientationService;
 
     // ── Static readonly sets (allocated once at class load) ─────────
     private static readonly HashSet<string> HeicMimeTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -62,9 +63,10 @@ public class ImageOrientationService
         ".webp", ".gif", ".heic", ".heif"
     };
 
-    public ImageOrientationService(ILogger<ImageOrientationService> logger)
+    public ImageOrientationService(ILogger<ImageOrientationService> logger, TextOrientationService? textOrientationService = null)
     {
         _logger = logger;
+        _textOrientationService = textOrientationService;
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -114,6 +116,42 @@ public class ImageOrientationService
     }
 
     /// <summary>
+    /// Full pipeline for driver license images:
+    /// HEIC→JPEG, EXIF orient, smart text rotation via Vision API (front only), compress ≤ 1 MB.
+    /// Back side skips Vision API — ZXing handles barcode orientation natively.
+    /// </summary>
+    /// <param name="file">Image file</param>
+    /// <param name="side">"front" or "back". Back side skips expensive Vision API call.</param>
+    public async Task<byte[]> ProcessLicenseImageAsync(IFormFile file, string side = "front")
+    {
+        using var ms = new MemoryStream((int)file.Length);
+        await file.CopyToAsync(ms);
+        return await ProcessLicenseImageBytesAsync(ms.ToArray(), file.FileName, file.ContentType, side);
+    }
+
+    /// <summary>
+    /// Full pipeline for driver license images (from raw bytes):
+    /// HEIC→JPEG, EXIF orient, smart text rotation via Vision API (front only), compress ≤ 1 MB.
+    /// Back side uses only portrait→landscape heuristic (no Vision API cost).
+    /// </summary>
+    public async Task<byte[]> ProcessLicenseImageBytesAsync(byte[] imageData, string? fileName = null, string? contentType = null, string side = "front")
+    {
+        // First, run the standard pipeline (HEIC + EXIF + compress)
+        var processed = ProcessImageBytes(imageData, fileName, contentType);
+
+        // Front side: use Vision API for accurate text orientation detection
+        // Back side: skip Vision API (ZXing reads barcodes in any orientation), use simple heuristic only
+        if (side == "back")
+        {
+            _logger.LogInformation("Back side: skipping Vision API, using portrait→landscape heuristic only");
+            return EnsureLandscapeFallback(processed);
+        }
+
+        // Front side: Vision API → accurate text rotation, fallback to heuristic
+        return await CorrectTextOrientationAsync(processed);
+    }
+
+    /// <summary>
     /// Full pipeline from raw bytes:
     /// HEIC→JPEG (Magick+AutoOrient), EXIF orient, compress ≤ 1 MB.
     /// Optimised: single decode + single encode path.
@@ -121,6 +159,7 @@ public class ImageOrientationService
     public byte[] ProcessImageBytes(byte[] imageData, string? fileName = null, string? contentType = null)
     {
         var sw = Stopwatch.StartNew();
+
         bool isHeic = IsHeicFile(fileName, contentType) || IsHeicBySignature(imageData);
 
         // ── HEIC fast-path: Magick handles decode + orient + JPEG encode ──
@@ -133,6 +172,7 @@ public class ImageOrientationService
             // If already ≤ 1 MB, we're done
             if (jpegBytes.Length <= MaxFileSizeBytes)
             {
+                StripExifOrientation(jpegBytes);
                 _logger.LogInformation("Pipeline complete (HEIC fast-path) in {Ms}ms, {Size} KB",
                     sw.ElapsedMilliseconds, jpegBytes.Length / 1024);
                 return jpegBytes;
@@ -140,19 +180,22 @@ public class ImageOrientationService
 
             // Need further compression — single decode from JPEG
             var compressed = CompressFromBytes(jpegBytes);
+            StripExifOrientation(compressed);
             _logger.LogInformation("Pipeline complete (HEIC+compress) in {Ms}ms, {OrigKB} KB → {ResultKB} KB",
                 sw.ElapsedMilliseconds, imageData.Length / 1024, compressed.Length / 1024);
             return compressed;
         }
 
         // ── Non-HEIC: single-decode pipeline ──────────────────────────
-        // 1. Read EXIF origin (header-only, lightweight)
-        var origin = ReadExifOrigin(imageData);
+        // 1. Read EXIF origin + raw codec dimensions (header-only, lightweight)
+        SKEncodedOrigin origin;
+        int codecWidth, codecHeight;
+        ReadExifOriginAndDimensions(imageData, out origin, out codecWidth, out codecHeight);
 
         // 2. If no orientation needed and already ≤ 1 MB → return as-is
         if (origin == SKEncodedOrigin.TopLeft && imageData.Length <= MaxFileSizeBytes)
         {
-            _logger.LogInformation("Pipeline complete (no-op) in {Ms}ms, {Size} KB",
+            _logger.LogInformation("Pipeline complete (no-op, origin=TopLeft, size OK) in {Ms}ms, {Size} KB",
                 sw.ElapsedMilliseconds, imageData.Length / 1024);
             return imageData;
         }
@@ -166,12 +209,55 @@ public class ImageOrientationService
         }
 
         // 4. Apply orientation in-memory (no encode/decode cycle)
+        //    SKIP if SKBitmap.Decode already auto-applied EXIF orientation.
+        //    Detection: compare bitmap dimensions with raw codec dimensions.
+        //    If they differ (swapped W/H), decode already rotated the pixels.
         SKBitmap oriented;
         bool wasOriented = false;
-        if (origin != SKEncodedOrigin.TopLeft)
+        bool alreadyRotatedByDecode = false;
+
+        if (origin != SKEncodedOrigin.TopLeft && codecWidth > 0 && codecHeight > 0)
+        {
+            // For 90°/270° rotations, codec reports raw (unrotated) dimensions.
+            // If bitmap dimensions differ from codec dimensions, decode already rotated.
+            bool dimensionsSwapped = (bitmap.Width == codecHeight && bitmap.Height == codecWidth);
+            bool dimensionsSame = (bitmap.Width == codecWidth && bitmap.Height == codecHeight);
+
+            if (dimensionsSwapped)
+            {
+                // SKBitmap.Decode already applied the rotation
+                alreadyRotatedByDecode = true;
+                _logger.LogInformation("SKBitmap.Decode auto-rotated: codec={CW}x{CH} → bitmap={BW}x{BH}, skipping manual orient",
+                    codecWidth, codecHeight, bitmap.Width, bitmap.Height);
+            }
+            else if (!dimensionsSame)
+            {
+                // Dimensions don't match exactly (possible scaling) — compare aspect ratio
+                bool codecIsLandscape = codecWidth > codecHeight;
+                bool bitmapIsLandscape = bitmap.Width > bitmap.Height;
+                bool shouldSwap = origin == SKEncodedOrigin.RightTop || origin == SKEncodedOrigin.LeftTop ||
+                                  origin == SKEncodedOrigin.RightBottom || origin == SKEncodedOrigin.LeftBottom;
+
+                if (shouldSwap && codecIsLandscape != bitmapIsLandscape)
+                {
+                    // Aspect ratio flipped = already rotated by decode
+                    alreadyRotatedByDecode = true;
+                    _logger.LogInformation("SKBitmap.Decode auto-rotated (aspect flip): codec={CW}x{CH} → bitmap={BW}x{BH}",
+                        codecWidth, codecHeight, bitmap.Width, bitmap.Height);
+                }
+            }
+        }
+
+        if (alreadyRotatedByDecode)
+        {
+            oriented = bitmap;
+        }
+        else if (origin != SKEncodedOrigin.TopLeft)
         {
             oriented = ApplyOrientation(bitmap, origin);
             wasOriented = true;
+            _logger.LogInformation("Applied EXIF {Origin}: {BW}x{BH} → {OW}x{OH}",
+                origin, bitmap.Width, bitmap.Height, oriented.Width, oriented.Height);
         }
         else
         {
@@ -182,6 +268,10 @@ public class ImageOrientationService
         {
             // 5. Encode with compression (binary-search quality)
             var result = CompressFromBitmap(oriented, MaxFileSizeBytes);
+
+            // 6. Strip any residual EXIF orientation tag to prevent browser double-rotation
+            StripExifOrientation(result);
+
             _logger.LogInformation(
                 "Pipeline complete in {Ms}ms: {W}x{H}, oriented={Oriented}, {OrigKB} KB → {ResultKB} KB",
                 sw.ElapsedMilliseconds, oriented.Width, oriented.Height, wasOriented,
@@ -220,8 +310,17 @@ public class ImageOrientationService
             decodableBytes = imageData;
         }
 
-        // Read EXIF (skip if Magick already oriented the HEIC)
-        var origin = heicOriented ? SKEncodedOrigin.TopLeft : ReadExifOrigin(decodableBytes);
+        // Read EXIF + raw codec dimensions (skip if Magick already oriented the HEIC)
+        SKEncodedOrigin origin;
+        int codecWidth = 0, codecHeight = 0;
+        if (heicOriented)
+        {
+            origin = SKEncodedOrigin.TopLeft;
+        }
+        else
+        {
+            ReadExifOriginAndDimensions(decodableBytes, out origin, out codecWidth, out codecHeight);
+        }
 
         // Single decode
         var bitmap = SKBitmap.Decode(decodableBytes);
@@ -230,8 +329,36 @@ public class ImageOrientationService
 
         if (origin == SKEncodedOrigin.TopLeft)
         {
-            _logger.LogInformation("Bitmap decode complete in {Ms}ms, {W}x{H}",
+            _logger.LogDebug("Bitmap decode complete in {Ms}ms, {W}x{H}",
                 sw.ElapsedMilliseconds, bitmap.Width, bitmap.Height);
+            return bitmap;
+        }
+
+        // Check if SKBitmap.Decode already auto-applied orientation
+        // by comparing bitmap dimensions with raw codec dimensions
+        bool alreadyRotatedByDecode = false;
+        if (codecWidth > 0 && codecHeight > 0)
+        {
+            bool dimensionsSwapped = (bitmap.Width == codecHeight && bitmap.Height == codecWidth);
+            if (dimensionsSwapped)
+            {
+                alreadyRotatedByDecode = true;
+            }
+            else
+            {
+                bool codecIsLandscape = codecWidth > codecHeight;
+                bool bitmapIsLandscape = bitmap.Width > bitmap.Height;
+                bool shouldSwap = origin == SKEncodedOrigin.RightTop || origin == SKEncodedOrigin.LeftTop ||
+                                  origin == SKEncodedOrigin.RightBottom || origin == SKEncodedOrigin.LeftBottom;
+                if (shouldSwap && codecIsLandscape != bitmapIsLandscape)
+                    alreadyRotatedByDecode = true;
+            }
+        }
+
+        if (alreadyRotatedByDecode)
+        {
+            _logger.LogInformation("SKBitmap.Decode auto-rotated: codec={CW}x{CH} → bitmap={BW}x{BH}, skip manual",
+                codecWidth, codecHeight, bitmap.Width, bitmap.Height);
             return bitmap;
         }
 
@@ -244,7 +371,11 @@ public class ImageOrientationService
     }
 
     /// <summary>Read EXIF orientation from image header. Lightweight — does not fully decode pixels.</summary>
-    public SKEncodedOrigin GetExifOrientation(byte[] imageData) => ReadExifOrigin(imageData);
+    public SKEncodedOrigin GetExifOrientation(byte[] imageData)
+    {
+        ReadExifOriginAndDimensions(imageData, out var origin, out _, out _);
+        return origin;
+    }
 
     // ──────────────────────────────────────────────────────────────────
     //  Private: HEIC → JPEG conversion (Magick.NET)
@@ -296,22 +427,32 @@ public class ImageOrientationService
     //  Private: EXIF orientation (header-only read)
     // ──────────────────────────────────────────────────────────────────
 
-    private SKEncodedOrigin ReadExifOrigin(byte[] imageData)
+    /// <summary>Read EXIF orientation and raw codec dimensions (header-only, no pixel decode).</summary>
+    private void ReadExifOriginAndDimensions(byte[] imageData, out SKEncodedOrigin origin, out int codecWidth, out int codecHeight)
     {
         try
         {
             using var stream = new MemoryStream(imageData, writable: false);
             using var codec = SKCodec.Create(stream);
-            if (codec == null) return SKEncodedOrigin.TopLeft;
-            var origin = codec.EncodedOrigin;
-            if (origin != SKEncodedOrigin.TopLeft)
-                _logger.LogInformation("EXIF orientation: {Origin} ({Value})", origin, (int)origin);
-            return origin;
+            if (codec == null)
+            {
+                _logger.LogWarning("SKCodec.Create returned NULL ({Size} bytes), defaulting to TopLeft", imageData.Length);
+                origin = SKEncodedOrigin.TopLeft;
+                codecWidth = 0;
+                codecHeight = 0;
+                return;
+            }
+
+            origin = codec.EncodedOrigin;
+            codecWidth = codec.Info.Width;
+            codecHeight = codec.Info.Height;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "EXIF read failed, defaulting to TopLeft");
-            return SKEncodedOrigin.TopLeft;
+            origin = SKEncodedOrigin.TopLeft;
+            codecWidth = 0;
+            codecHeight = 0;
         }
     }
 
@@ -406,6 +547,116 @@ public class ImageOrientationService
     }
 
     // ──────────────────────────────────────────────────────────────────
+    //  Private: EXIF orientation stripping (patch byte-level in JPEG)
+    // ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Patch any EXIF Orientation tag in the JPEG bytes to 1 (TopLeft).
+    /// This prevents browsers from double-rotating server-oriented images.
+    /// Fast: scans raw bytes without full decode. No allocation.
+    /// </summary>
+    private static byte[] StripExifOrientation(byte[] jpegData)
+    {
+        // JPEG starts with FF D8; APP1 marker is FF E1 containing EXIF
+        if (jpegData.Length < 14 || jpegData[0] != 0xFF || jpegData[1] != 0xD8)
+            return jpegData;
+
+        int pos = 2;
+        while (pos < jpegData.Length - 4)
+        {
+            if (jpegData[pos] != 0xFF)
+                break;
+
+            byte marker = jpegData[pos + 1];
+
+            // SOS (Start of Scan) — stop scanning, no more metadata
+            if (marker == 0xDA)
+                break;
+
+            // Segment length (big-endian, includes length bytes)
+            int segLen = (jpegData[pos + 2] << 8) | jpegData[pos + 3];
+
+            // APP1 (EXIF) marker
+            if (marker == 0xE1)
+            {
+                int segStart = pos + 4; // after marker + length
+                int segEnd = pos + 2 + segLen;
+                if (segEnd > jpegData.Length)
+                    break;
+
+                // Check for "Exif\0\0" header
+                if (segStart + 6 <= jpegData.Length &&
+                    jpegData[segStart] == (byte)'E' && jpegData[segStart + 1] == (byte)'x' &&
+                    jpegData[segStart + 2] == (byte)'i' && jpegData[segStart + 3] == (byte)'f' &&
+                    jpegData[segStart + 4] == 0x00 && jpegData[segStart + 5] == 0x00)
+                {
+                    int tiffStart = segStart + 6;
+                    if (tiffStart + 8 > jpegData.Length)
+                        break;
+
+                    // Determine byte order: II (little-endian) or MM (big-endian)
+                    bool littleEndian;
+                    if (jpegData[tiffStart] == (byte)'I' && jpegData[tiffStart + 1] == (byte)'I')
+                        littleEndian = true;
+                    else if (jpegData[tiffStart] == (byte)'M' && jpegData[tiffStart + 1] == (byte)'M')
+                        littleEndian = false;
+                    else
+                        break;
+
+                    // Read offset to first IFD
+                    int ifdOffset = littleEndian
+                        ? jpegData[tiffStart + 4] | (jpegData[tiffStart + 5] << 8) |
+                          (jpegData[tiffStart + 6] << 16) | (jpegData[tiffStart + 7] << 24)
+                        : (jpegData[tiffStart + 4] << 24) | (jpegData[tiffStart + 5] << 16) |
+                          (jpegData[tiffStart + 6] << 8) | jpegData[tiffStart + 7];
+
+                    int ifdPos = tiffStart + ifdOffset;
+                    if (ifdPos + 2 > jpegData.Length)
+                        break;
+
+                    // Number of IFD entries
+                    int entryCount = littleEndian
+                        ? jpegData[ifdPos] | (jpegData[ifdPos + 1] << 8)
+                        : (jpegData[ifdPos] << 8) | jpegData[ifdPos + 1];
+
+                    // Scan IFD entries for Orientation tag (0x0112)
+                    for (int i = 0; i < entryCount; i++)
+                    {
+                        int entryPos = ifdPos + 2 + (i * 12);
+                        if (entryPos + 12 > jpegData.Length)
+                            break;
+
+                        int tag = littleEndian
+                            ? jpegData[entryPos] | (jpegData[entryPos + 1] << 8)
+                            : (jpegData[entryPos] << 8) | jpegData[entryPos + 1];
+
+                        if (tag == 0x0112) // Orientation tag
+                        {
+                            // Value is at offset +8 (SHORT type, 2 bytes)
+                            // Set to 1 (TopLeft = normal)
+                            if (littleEndian)
+                            {
+                                jpegData[entryPos + 8] = 1;
+                                jpegData[entryPos + 9] = 0;
+                            }
+                            else
+                            {
+                                jpegData[entryPos + 8] = 0;
+                                jpegData[entryPos + 9] = 1;
+                            }
+                            return jpegData; // Done — patched in place
+                        }
+                    }
+                }
+            }
+
+            pos += 2 + segLen;
+        }
+
+        return jpegData; // No orientation tag found — return as-is
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     //  Private: orientation transforms (in-memory, no encode/decode)
     // ──────────────────────────────────────────────────────────────────
 
@@ -466,5 +717,109 @@ public class ImageOrientationService
         canvas.Scale(1, -1, 0, original.Height / 2f);
         canvas.DrawBitmap(original, 0, 0);
         return flipped;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    //  Private: smart text orientation correction for license documents
+    // ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Correct text orientation using Google Cloud Vision API.
+    /// 1. Send image to Vision API → get text angle
+    /// 2. Rotate image by the detected correction angle
+    /// 3. Fall back to portrait→landscape heuristic if Vision API unavailable
+    /// </summary>
+    private async Task<byte[]> CorrectTextOrientationAsync(byte[] imageData)
+    {
+        // Try Vision API first
+        int? correctionAngle = null;
+        if (_textOrientationService != null)
+        {
+            try
+            {
+                correctionAngle = await _textOrientationService.DetectTextRotationAsync(imageData);
+                _logger.LogInformation("Vision API detected correction angle: {Angle}°", correctionAngle ?? -1);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Vision API text orientation detection failed, falling back to heuristic");
+            }
+        }
+        else
+        {
+            _logger.LogInformation("TextOrientationService not available, using portrait→landscape heuristic");
+        }
+
+        // If Vision API returned 0° — text is already horizontal, no rotation needed
+        if (correctionAngle == 0)
+        {
+            _logger.LogInformation("CorrectTextOrientation: text already horizontal, no rotation needed");
+            return imageData;
+        }
+
+        // If Vision API returned a rotation angle — apply it
+        if (correctionAngle.HasValue && correctionAngle.Value != 0)
+        {
+            return RotateImageBytes(imageData, correctionAngle.Value);
+        }
+
+        // Fallback: if Vision API unavailable/failed — use simple portrait→landscape heuristic
+        _logger.LogInformation("CorrectTextOrientation: falling back to portrait→landscape heuristic");
+        return EnsureLandscapeFallback(imageData);
+    }
+
+    /// <summary>
+    /// Rotate image by the specified angle (90, 180, or 270 degrees).
+    /// Re-encodes as JPEG with compression.
+    /// </summary>
+    private byte[] RotateImageBytes(byte[] imageData, int angle)
+    {
+        if (angle == 0) return imageData;
+
+        using var bitmap = SKBitmap.Decode(imageData);
+        if (bitmap == null)
+        {
+            _logger.LogWarning("RotateImageBytes: failed to decode image, returning as-is");
+            return imageData;
+        }
+
+        _logger.LogInformation("RotateImageBytes: rotating {W}x{H} by {Angle}°", bitmap.Width, bitmap.Height, angle);
+
+        using var rotated = Rotate(bitmap, angle);
+
+        _logger.LogInformation("RotateImageBytes: result {W}x{H}", rotated.Width, rotated.Height);
+
+        // Re-encode as JPEG
+        using var image = SKImage.FromBitmap(rotated);
+        using var encoded = image.Encode(SKEncodedImageFormat.Jpeg, MaxJpegQuality);
+        var result = encoded.ToArray();
+
+        // Compress if needed
+        if (result.Length > MaxFileSizeBytes)
+        {
+            return CompressFromBitmap(rotated, MaxFileSizeBytes);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Simple fallback: if image is portrait, rotate 270° CW (= 90° CCW) to landscape.
+    /// Used when Vision API is unavailable.
+    /// After EXIF RightTop correction, portrait images need 270° CW to get text horizontal.
+    /// </summary>
+    private byte[] EnsureLandscapeFallback(byte[] imageData)
+    {
+        using var bitmap = SKBitmap.Decode(imageData);
+        if (bitmap == null) return imageData;
+
+        if (bitmap.Width >= bitmap.Height)
+        {
+            _logger.LogInformation("EnsureLandscapeFallback: already landscape ({W}x{H})", bitmap.Width, bitmap.Height);
+            return imageData;
+        }
+
+        _logger.LogInformation("EnsureLandscapeFallback: portrait ({W}x{H}) → rotating 270° CW (90° CCW)", bitmap.Width, bitmap.Height);
+        return RotateImageBytes(imageData, 270);
     }
 }

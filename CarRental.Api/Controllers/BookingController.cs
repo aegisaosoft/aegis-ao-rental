@@ -16,6 +16,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
@@ -48,6 +49,9 @@ public class BookingController : ControllerBase
     private readonly ISettingsService _settingsService;
     private readonly IEncryptionService _encryptionService;
     private readonly IRentalAgreementService _rentalAgreementService;
+    private readonly IMemoryCache _cache;
+    private static readonly TimeSpan TenantCacheExpiration = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan VehicleCacheExpiration = TimeSpan.FromMinutes(5);
 
     public BookingController(
         CarRentalDbContext context,
@@ -57,7 +61,8 @@ public class BookingController : ControllerBase
         IConfiguration configuration,
         ISettingsService settingsService,
         IEncryptionService encryptionService,
-        IRentalAgreementService rentalAgreementService)
+        IRentalAgreementService rentalAgreementService,
+        IMemoryCache cache)
     {
         _context = context;
         _emailService = emailService;
@@ -67,6 +72,204 @@ public class BookingController : ControllerBase
         _settingsService = settingsService;
         _encryptionService = encryptionService;
         _rentalAgreementService = rentalAgreementService;
+        _cache = cache;
+    }
+
+    /// <summary>
+    /// Combined booking page info — everything in one request.
+    /// Tenant data (services, locations, stripe) is cached 30 min.
+    /// Vehicle data is always fresh (depends on make/model filters).
+    /// </summary>
+    [HttpGet("info/{companyId}")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(BookingInfoDto), 200)]
+    public async Task<ActionResult<BookingInfoDto>> GetBookingInfo(
+        Guid companyId,
+        [FromQuery] string? make = null,
+        [FromQuery] string? model = null,
+        [FromQuery] Guid? categoryId = null)
+    {
+        try
+        {
+            // ── Check full response cache first (tenant + vehicles) ──
+            var makeLower = (make ?? "").Trim().ToLowerInvariant();
+            var modelLower = (model ?? "").Trim().ToLowerInvariant();
+            var fullCacheKey = $"booking_full_{companyId}_{makeLower}_{modelLower}_{categoryId}";
+
+            if (_cache.TryGetValue(fullCacheKey, out BookingInfoDto? cachedFull))
+            {
+                _logger.LogDebug("BookingInfo full cache HIT for {CompanyId} {Make} {Model}", companyId, make, model);
+                return Ok(cachedFull);
+            }
+
+            // ── Tenant-level data (cached 30 min) ──────────────────────
+            var tenantCacheKey = $"booking_info_{companyId}";
+            BookingInfoDto result;
+
+            if (_cache.TryGetValue(tenantCacheKey, out BookingInfoDto? cachedTenant))
+            {
+                result = new BookingInfoDto
+                {
+                    HasStripeAccount = cachedTenant!.HasStripeAccount,
+                    Services = cachedTenant.Services,
+                    PickupLocations = cachedTenant.PickupLocations,
+                    CachedAt = cachedTenant.CachedAt
+                };
+            }
+            else
+            {
+                // 1. Stripe account check
+                var company = await _context.Companies
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == companyId && c.IsActive);
+
+                bool hasStripeAccount = false;
+                if (company?.StripeSettingsId != null)
+                {
+                    var stripeCompany = await _context.StripeCompanies
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(sc => sc.CompanyId == companyId && sc.SettingsId == company.StripeSettingsId.Value);
+                    hasStripeAccount = stripeCompany != null && !string.IsNullOrEmpty(stripeCompany.StripeAccountId);
+                }
+
+                // 2. Company services
+                var services = await _context.CompanyServices
+                    .AsNoTracking()
+                    .Include(cs => cs.Company)
+                    .Include(cs => cs.AdditionalService)
+                    .Where(cs => cs.CompanyId == companyId && cs.IsActive)
+                    .OrderBy(cs => cs.AdditionalService.ServiceType)
+                    .ThenBy(cs => cs.AdditionalService.Name)
+                    .Select(cs => new CompanyServiceDto
+                    {
+                        CompanyId = cs.CompanyId,
+                        AdditionalServiceId = cs.AdditionalServiceId,
+                        Price = cs.Price,
+                        IsMandatory = cs.IsMandatory,
+                        IsActive = cs.IsActive,
+                        CreatedAt = cs.CreatedAt,
+                        CompanyName = cs.Company.CompanyName,
+                        ServiceName = cs.AdditionalService.Name,
+                        ServiceDescription = cs.AdditionalService.Description,
+                        ServicePrice = cs.Price ?? cs.AdditionalService.Price,
+                        ServiceType = cs.AdditionalService.ServiceType,
+                        ServiceIsMandatory = cs.IsMandatory ?? cs.AdditionalService.IsMandatory,
+                        ServiceMaxQuantity = cs.AdditionalService.MaxQuantity
+                    })
+                    .ToListAsync();
+
+                // 3. Pickup locations
+                var locations = await _context.CompanyLocations
+                    .AsNoTracking()
+                    .Where(cl => cl.CompanyId == companyId && cl.IsActive && cl.IsPickupLocation)
+                    .OrderBy(cl => cl.LocationName)
+                    .Select(l => new CompanyLocationDto
+                    {
+                        LocationId = l.Id,
+                        CompanyId = l.CompanyId,
+                        LocationName = l.LocationName,
+                        Address = l.Address,
+                        City = l.City,
+                        State = l.State,
+                        Country = l.Country,
+                        PostalCode = l.PostalCode,
+                        Phone = l.Phone,
+                        Email = l.Email,
+                        Latitude = l.Latitude,
+                        Longitude = l.Longitude,
+                        IsActive = l.IsActive,
+                        IsPickupLocation = l.IsPickupLocation,
+                        IsReturnLocation = l.IsReturnLocation,
+                        IsOffice = l.IsOffice,
+                        OpeningHours = l.OpeningHours,
+                        CreatedAt = l.CreatedAt,
+                        UpdatedAt = l.UpdatedAt
+                    })
+                    .ToListAsync();
+
+                result = new BookingInfoDto
+                {
+                    HasStripeAccount = hasStripeAccount,
+                    Services = services,
+                    PickupLocations = locations,
+                    CachedAt = DateTime.UtcNow
+                };
+
+                _cache.Set(tenantCacheKey, result, TenantCacheExpiration);
+
+                _logger.LogInformation("BookingInfo tenant cached for {CompanyId}: Stripe={HasStripe}, Services={ServiceCount}, Locations={LocationCount}",
+                    companyId, hasStripeAccount, services.Count, locations.Count);
+            }
+
+            // ── Vehicle data (cached 5 min per make/model) ────────────
+            if (!string.IsNullOrEmpty(make) && !string.IsNullOrEmpty(model))
+            {
+                var vehicleQuery = _context.Vehicles
+                    .AsNoTracking()
+                    .Include(v => v.VehicleModel)
+                        .ThenInclude(vm => vm!.Model)
+                    .Include(v => v.LocationDetails)
+                    .Where(v => v.CompanyId == companyId
+                        && v.Status == VehicleStatus.Available
+                        && v.VehicleModel != null
+                        && v.VehicleModel.Model != null
+                        && EF.Functions.ILike(v.VehicleModel.Model.Make, $"%{make}%")
+                        && EF.Functions.ILike(v.VehicleModel.Model.ModelName, $"%{model}%"));
+
+                if (categoryId.HasValue)
+                    vehicleQuery = vehicleQuery.Where(v => v.VehicleModel!.Model!.CategoryId == categoryId.Value);
+
+                result.Vehicles = await vehicleQuery
+                    .Select(v => new BookingVehicleDto
+                    {
+                        VehicleId = v.Id,
+                        Make = v.VehicleModel!.Model!.Make,
+                        Model = v.VehicleModel!.Model!.ModelName,
+                        Year = v.VehicleModel!.Model!.Year,
+                        Color = v.Color,
+                        LicensePlate = v.LicensePlate,
+                        Status = v.Status.ToString(),
+                        ImageUrl = v.ImageUrl,
+                        DailyRate = v.VehicleModel.DailyRate ?? 0,
+                        LocationId = v.LocationId,
+                        LocationName = v.LocationDetails != null ? v.LocationDetails.LocationName : v.Location
+                    })
+                    .Take(50)
+                    .ToListAsync();
+
+                result.ModelInfo = await _context.VehicleModels
+                    .AsNoTracking()
+                    .Include(vm => vm.Model)
+                        .ThenInclude(m => m!.Category)
+                    .Where(vm => vm.Model != null
+                        && EF.Functions.ILike(vm.Model.Make, $"%{make}%")
+                        && EF.Functions.ILike(vm.Model.ModelName, $"%{model}%")
+                        && vm.CompanyId == companyId)
+                    .Select(vm => new BookingModelInfoDto
+                    {
+                        Make = vm.Model!.Make,
+                        ModelName = vm.Model.ModelName,
+                        Year = vm.Model.Year,
+                        DailyRate = vm.DailyRate ?? 0,
+                        CategoryName = vm.Model.Category != null ? vm.Model.Category.CategoryName : null,
+                        Description = vm.Model.Description
+                    })
+                    .FirstOrDefaultAsync();
+
+                _logger.LogInformation("BookingInfo for {CompanyId}: {Make} {Model} → {VehicleCount} vehicles, modelInfo={HasModelInfo}",
+                    companyId, make, model, result.Vehicles.Count, result.ModelInfo != null);
+            }
+
+            // ── Cache full response (tenant + vehicles) before returning ──
+            _cache.Set(fullCacheKey, result, VehicleCacheExpiration);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error loading booking info for company {CompanyId}", companyId);
+            return StatusCode(500, "Internal server error");
+        }
     }
 
     /// <summary>

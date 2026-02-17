@@ -16,6 +16,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Caching.Memory;
 using System.Security.Claims;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
@@ -30,12 +31,18 @@ public class CompanyLocationsController : ControllerBase
 {
     private readonly CarRentalDbContext _context;
     private readonly ILogger<CompanyLocationsController> _logger;
+    private readonly IMemoryCache _cache;
+    private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(30);
 
-    public CompanyLocationsController(CarRentalDbContext context, ILogger<CompanyLocationsController> logger)
+    public CompanyLocationsController(CarRentalDbContext context, ILogger<CompanyLocationsController> logger, IMemoryCache cache)
     {
         _context = context;
         _logger = logger;
+        _cache = cache;
     }
+
+    private static string GetLocationsCacheKey(Guid? companyId, bool? isActive, bool? isPickup, bool? isReturn) =>
+        $"company_locations_{companyId}_{isActive}_{isPickup}_{isReturn}";
 
     /// <summary>
     /// Check if the current user has admin privileges (admin or mainadmin role)
@@ -79,11 +86,19 @@ public class CompanyLocationsController : ControllerBase
     {
         try
         {
+            var cacheKey = GetLocationsCacheKey(companyId, isActive, isPickupLocation, isReturnLocation);
+            if (_cache.TryGetValue(cacheKey, out List<CompanyLocationDto>? cached))
+            {
+                _logger.LogDebug("CompanyLocations cache HIT for {CompanyId}", companyId);
+                return Ok(cached);
+            }
+
+            _logger.LogDebug("CompanyLocations cache MISS for {CompanyId}, loading from DB", companyId);
+
             var query = _context.CompanyLocations
-                .AsNoTracking() // Don't track entities to avoid circular references
+                .AsNoTracking()
                 .AsQueryable();
 
-            // Apply filters
             if (companyId.HasValue)
                 query = query.Where(cl => cl.CompanyId == companyId.Value);
 
@@ -100,7 +115,6 @@ public class CompanyLocationsController : ControllerBase
                 .OrderBy(cl => cl.LocationName)
                 .ToListAsync();
 
-            // Map to DTOs to avoid circular references
             var locationDtos = locations.Select(l => new CompanyLocationDto
             {
                 LocationId = l.Id,
@@ -123,6 +137,8 @@ public class CompanyLocationsController : ControllerBase
                 CreatedAt = l.CreatedAt,
                 UpdatedAt = l.UpdatedAt
             }).ToList();
+
+            _cache.Set(cacheKey, locationDtos, CacheExpiration);
 
             return Ok(locationDtos);
         }
@@ -258,6 +274,8 @@ public class CompanyLocationsController : ControllerBase
             await _context.SaveChangesAsync();
 
             _logger.LogInformation("Created company location {LocationId} for company {CompanyId} and synced to locations table", location.Id, dto.CompanyId);
+
+            InvalidateLocationCache(dto.CompanyId);
 
             var locationDto = new CompanyLocationDto
             {
@@ -397,6 +415,8 @@ public class CompanyLocationsController : ControllerBase
 
             await _context.SaveChangesAsync();
 
+            InvalidateLocationCache(location.CompanyId);
+
             _logger.LogInformation("Updated company location {LocationId} and synced to locations table", id);
 
             return NoContent();
@@ -448,6 +468,8 @@ public class CompanyLocationsController : ControllerBase
             _context.CompanyLocations.Remove(location);
             await _context.SaveChangesAsync();
 
+            InvalidateLocationCache(location.CompanyId);
+
             _logger.LogInformation("Deleted company location {LocationId} and updated corresponding location record (companyId set to null), {VehicleCount} vehicles updated (location_id set to NULL)", id, vehicleCount);
 
             return NoContent();
@@ -457,6 +479,29 @@ public class CompanyLocationsController : ControllerBase
             _logger.LogError(ex, "Error deleting company location {LocationId}", id);
             return StatusCode(500, new { message = "Internal server error while deleting company location" });
         }
+    }
+
+    /// <summary>
+    /// Invalidate all cached location data for a company (all filter combinations)
+    /// </summary>
+    private void InvalidateLocationCache(Guid companyId)
+    {
+        // Invalidate common filter combinations used by the booking page
+        foreach (var isActive in new bool?[] { true, false, null })
+        foreach (var isPickup in new bool?[] { true, false, null })
+        foreach (var isReturn in new bool?[] { true, false, null })
+        {
+            _cache.Remove(GetLocationsCacheKey(companyId, isActive, isPickup, isReturn));
+        }
+        // Also invalidate "all companies" queries
+        foreach (var isActive in new bool?[] { true, false, null })
+        foreach (var isPickup in new bool?[] { true, false, null })
+        foreach (var isReturn in new bool?[] { true, false, null })
+        {
+            _cache.Remove(GetLocationsCacheKey(null, isActive, isPickup, isReturn));
+        }
+        _cache.Remove($"booking_info_{companyId}"); // Also invalidate combined booking info
+        _logger.LogInformation("Invalidated CompanyLocations + BookingInfo cache for company {CompanyId}", companyId);
     }
 }
 

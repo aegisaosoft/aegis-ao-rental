@@ -227,7 +227,10 @@ builder.Services.Configure<CarRental.Api.Configurations.DocumentAiConfiguration>
 builder.Services.AddSingleton<CarRental.Api.Configurations.IDocumentAiConfiguration>(serviceProvider =>
     serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CarRental.Api.Configurations.DocumentAiConfiguration>>().Value);
 
-// Image orientation correction (EXIF auto-rotate for iPhone photos)
+// Text orientation detection via Google Cloud Vision API (for license image rotation)
+builder.Services.AddSingleton<CarRental.Api.Services.TextOrientationService>();
+
+// Image orientation correction (EXIF auto-rotate + smart text rotation for license images)
 builder.Services.AddSingleton<CarRental.Api.Services.ImageOrientationService>();
 
 // ZXing BarcodeReader ObjectPool — thread-safe concurrent barcode parsing

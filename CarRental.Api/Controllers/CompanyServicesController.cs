@@ -15,6 +15,7 @@
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using CarRental.Api.Data;
 using CarRental.Api.DTOs;
 using CarRental.Api.Models;
@@ -27,14 +28,21 @@ public class CompanyServicesController : ControllerBase
 {
     private readonly CarRentalDbContext _context;
     private readonly ILogger<CompanyServicesController> _logger;
+    private readonly IMemoryCache _cache;
+    private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(30);
 
     public CompanyServicesController(
         CarRentalDbContext context,
-        ILogger<CompanyServicesController> logger)
+        ILogger<CompanyServicesController> logger,
+        IMemoryCache cache)
     {
         _context = context;
         _logger = logger;
+        _cache = cache;
     }
+
+    private static string GetCacheKey(Guid companyId, bool? isActive) =>
+        $"company_services_{companyId}_{isActive?.ToString() ?? "all"}";
 
     /// <summary>
     /// Get all services for a specific company
@@ -47,7 +55,17 @@ public class CompanyServicesController : ControllerBase
     {
         try
         {
+            var cacheKey = GetCacheKey(companyId, isActive);
+            if (_cache.TryGetValue(cacheKey, out List<CompanyServiceDto>? cached))
+            {
+                _logger.LogDebug("CompanyServices cache HIT for {CompanyId}", companyId);
+                return Ok(cached);
+            }
+
+            _logger.LogDebug("CompanyServices cache MISS for {CompanyId}, loading from DB", companyId);
+
             var query = _context.CompanyServices
+                .AsNoTracking()
                 .Include(cs => cs.Company)
                 .Include(cs => cs.AdditionalService)
                 .Where(cs => cs.CompanyId == companyId);
@@ -69,12 +87,14 @@ public class CompanyServicesController : ControllerBase
                     CompanyName = cs.Company.CompanyName,
                     ServiceName = cs.AdditionalService.Name,
                     ServiceDescription = cs.AdditionalService.Description,
-                    ServicePrice = cs.Price ?? cs.AdditionalService.Price, // Use custom price if set, otherwise use service price
+                    ServicePrice = cs.Price ?? cs.AdditionalService.Price,
                     ServiceType = cs.AdditionalService.ServiceType,
-                    ServiceIsMandatory = cs.IsMandatory ?? cs.AdditionalService.IsMandatory, // Use custom mandatory if set, otherwise use service mandatory
+                    ServiceIsMandatory = cs.IsMandatory ?? cs.AdditionalService.IsMandatory,
                     ServiceMaxQuantity = cs.AdditionalService.MaxQuantity
                 })
                 .ToListAsync();
+
+            _cache.Set(cacheKey, companyServices, CacheExpiration);
 
             return Ok(companyServices);
         }
@@ -225,6 +245,9 @@ public class CompanyServicesController : ControllerBase
             _context.CompanyServices.Add(companyService);
             await _context.SaveChangesAsync();
 
+            // Invalidate cache for this company
+            InvalidateCompanyCache(createDto.CompanyId);
+
             // Load related data for response
             await _context.Entry(companyService)
                 .Reference(cs => cs.Company)
@@ -298,6 +321,9 @@ public class CompanyServicesController : ControllerBase
 
             await _context.SaveChangesAsync();
 
+            // Invalidate cache for this company
+            InvalidateCompanyCache(companyId);
+
             var dto = new CompanyServiceDto
             {
                 CompanyId = companyService.CompanyId,
@@ -343,6 +369,9 @@ public class CompanyServicesController : ControllerBase
             _context.CompanyServices.Remove(companyService);
             await _context.SaveChangesAsync();
 
+            // Invalidate cache for this company
+            InvalidateCompanyCache(companyId);
+
             return NoContent();
         }
         catch (Exception ex)
@@ -350,6 +379,18 @@ public class CompanyServicesController : ControllerBase
             _logger.LogError(ex, "Error removing service from company {CompanyId}/{ServiceId}", companyId, serviceId);
             return StatusCode(500, "Internal server error");
         }
+    }
+
+    /// <summary>
+    /// Invalidate all cached service data for a company (both "active only" and "all" variants)
+    /// </summary>
+    private void InvalidateCompanyCache(Guid companyId)
+    {
+        _cache.Remove(GetCacheKey(companyId, true));
+        _cache.Remove(GetCacheKey(companyId, false));
+        _cache.Remove(GetCacheKey(companyId, null));
+        _cache.Remove($"booking_info_{companyId}"); // Also invalidate combined booking info
+        _logger.LogInformation("Invalidated CompanyServices + BookingInfo cache for company {CompanyId}", companyId);
     }
 }
 
