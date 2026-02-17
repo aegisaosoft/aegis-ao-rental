@@ -18,6 +18,7 @@ using CarRental.Api.Data;
 using CarRental.Api.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
+using SkiaSharp;
 
 namespace CarRental.Api.Controllers;
 
@@ -29,18 +30,21 @@ public class MediaController : ControllerBase
     private readonly CarRentalDbContext _context;
     private readonly ILogger<MediaController> _logger;
     private readonly IAzureBlobStorageService _blobStorage;
+    private readonly ImageOrientationService _orientationService;
     private const string CustomerLicensesContainer = "customer-licenses";
 
     public MediaController(
         IWebHostEnvironment environment,
         CarRentalDbContext context,
         ILogger<MediaController> logger,
-        IAzureBlobStorageService blobStorage)
+        IAzureBlobStorageService blobStorage,
+        ImageOrientationService orientationService)
     {
         _environment = environment;
         _context = context;
         _logger = logger;
         _blobStorage = blobStorage;
+        _orientationService = orientationService;
     }
 
     /// <summary>
@@ -438,35 +442,27 @@ public class MediaController : ControllerBase
             if (image == null || image.Length == 0)
                 return BadRequest("No file uploaded");
 
-            // Validate file type
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
-            var fileExtension = Path.GetExtension(image.FileName).ToLowerInvariant();
-            
-            if (!allowedExtensions.Contains(fileExtension))
-                return BadRequest($"Invalid file type. Allowed types: {string.Join(", ", allowedExtensions)}");
+            // Validate file type (includes HEIC/HEIF for iPhone photos)
+            if (!ImageOrientationService.IsSupportedImageFile(image))
+                return BadRequest("Invalid file type. Supported formats: JPEG, PNG, BMP, TIFF, WebP, GIF, HEIC, HEIF.");
 
-            // Validate file size (10 MB max)
-            if (image.Length > 10_485_760)
-                return BadRequest("File size exceeds 10 MB limit");
+            // Validate file size (20 MB max — HEIC files can be larger before conversion)
+            if (image.Length > 20_971_520)
+                return BadRequest("File size exceeds 20 MB limit");
 
-            // Determine content type
-            var contentType = fileExtension switch
-            {
-                ".png" => "image/png",
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".gif" => "image/gif",
-                ".webp" => "image/webp",
-                _ => "application/octet-stream"
-            };
+            // Full pipeline: HEIC→PNG + EXIF orientation + compress ≤ 1 MB
+            var processedBytes = await _orientationService.ProcessImageAsync(image);
 
-            // Use fixed filename: front.jpg or back.jpg (or appropriate extension)
-            var fileName = $"{side}{fileExtension}";
+            // After processing, image is always JPEG (compressed) or PNG (from HEIC)
+            var contentType = "image/jpeg";
+            var fileName = $"{side}.jpg";
             var blobPath = $"{customerId}/licenses/{fileName}";
 
-            _logger.LogInformation("Uploading license image to blob storage: {BlobPath}", blobPath);
+            _logger.LogInformation("Uploading license image to blob storage: {BlobPath} ({OrigSize} → {ProcessedSize} bytes)",
+                blobPath, image.Length, processedBytes.Length);
 
-            // Upload to Azure Blob Storage (or local fallback)
-            using var stream = image.OpenReadStream();
+            // Upload processed image to Azure Blob Storage (or local fallback)
+            using var stream = new MemoryStream(processedBytes);
             var imageUrl = await _blobStorage.UploadFileAsync(stream, CustomerLicensesContainer, blobPath, contentType);
 
             _logger.LogInformation("License image uploaded successfully: {ImageUrl}", imageUrl);
@@ -481,7 +477,7 @@ public class MediaController : ControllerBase
                         license.FrontImageUrl = imageUrl;
                     else
                         license.BackImageUrl = imageUrl;
-                    
+
                     license.UpdatedAt = DateTime.UtcNow;
                     await _context.SaveChangesAsync();
                     _logger.LogInformation("Saved {Side} image URL to database for customer {CustomerId}: {ImageUrl}", side, customerId, imageUrl);
@@ -500,8 +496,9 @@ public class MediaController : ControllerBase
             {
                 imageUrl,
                 fileName,
-                fileSize = image.Length,
+                fileSize = processedBytes.Length,
                 side,
+                imageProcessed = processedBytes.Length != image.Length,
                 message = $"Driver license {side} image uploaded successfully"
             });
         }
@@ -661,7 +658,7 @@ public class MediaController : ControllerBase
                 
                 if (Directory.Exists(folderPath))
                 {
-                    var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
+                    var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif" };
                     var files = Directory.GetFiles(folderPath)
                         .Where(f => allowedExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                         .Select(Path.GetFileName)
@@ -817,48 +814,23 @@ public class MediaController : ControllerBase
                 return BadRequest("No file uploaded");
             }
 
-            // Validate file type
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" };
-            var fileExtension = Path.GetExtension(image.FileName).ToLowerInvariant();
-            
-            if (!allowedExtensions.Contains(fileExtension))
-                return BadRequest($"Invalid file type. Allowed types: {string.Join(", ", allowedExtensions)}");
+            // Validate file type (includes HEIC/HEIF for iPhone photos)
+            if (!ImageOrientationService.IsSupportedImageFile(image))
+                return BadRequest("Invalid file type. Supported formats: JPEG, PNG, BMP, TIFF, WebP, GIF, HEIC, HEIF.");
 
-            // Validate file size (10 MB max)
-            if (image.Length > 10_485_760)
-                return BadRequest("File size exceeds 10 MB limit");
+            // Validate file size (20 MB max — HEIC files can be larger before conversion)
+            if (image.Length > 20_971_520)
+                return BadRequest("File size exceeds 20 MB limit");
 
             // Sanitize wizardId to prevent directory traversal
             var sanitizedWizardId = string.Join("_", wizardId.Split(Path.GetInvalidFileNameChars()));
 
-            // Determine file extension based on image format
-            var imageExtension = fileExtension; // Use original extension
-            if (string.IsNullOrEmpty(imageExtension))
-            {
-                // Determine from content type if extension is missing
-                imageExtension = image.ContentType switch
-                {
-                    "image/jpeg" => ".jpg",
-                    "image/jpg" => ".jpg",
-                    "image/png" => ".png",
-                    "image/gif" => ".gif",
-                    "image/webp" => ".webp",
-                    _ => ".jpg" // Default to jpg
-                };
-            }
+            // Full pipeline: HEIC→PNG + EXIF orientation + compress ≤ 1 MB
+            var processedBytes = await _orientationService.ProcessImageAsync(image);
 
-            // Determine content type
-            var contentType = imageExtension switch
-            {
-                ".png" => "image/png",
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".gif" => "image/gif",
-                ".webp" => "image/webp",
-                _ => "application/octet-stream"
-            };
-
-            // Use fixed filename: front.jpg or back.jpg (or appropriate extension)
-            var fileName = $"{side}{imageExtension}";
+            // After processing, image is always JPEG
+            var contentType = "image/jpeg";
+            var fileName = $"{side}.jpg";
             var blobPath = $"wizard/{sanitizedWizardId}/licenses/{fileName}";
 
             // Delete old file if exists
@@ -867,20 +839,24 @@ public class MediaController : ControllerBase
                 await _blobStorage.DeleteFileAsync(CustomerLicensesContainer, blobPath);
             }
 
-            // Upload to blob storage
-            using var stream = image.OpenReadStream();
+            _logger.LogInformation("Wizard image processed ({OrigSize} → {ProcessedSize} bytes), uploading to: {BlobPath}",
+                image.Length, processedBytes.Length, blobPath);
+
+            // Upload processed image to blob storage
+            using var stream = new MemoryStream(processedBytes);
             var imageUrl = await _blobStorage.UploadFileAsync(stream, CustomerLicensesContainer, blobPath, contentType);
-            
+
             _logger.LogInformation("Wizard license image uploaded to blob storage: {ImageUrl}", imageUrl);
 
             return Ok(new
             {
                 imageUrl,
                 fileName,
-                fileSize = image.Length,
+                fileSize = processedBytes.Length,
                 side,
                 wizardId,
-                sanitizedWizardId, // Include sanitized version so frontend can use it for fetching
+                sanitizedWizardId,
+                imageProcessed = processedBytes.Length != image.Length,
                 message = $"Driver license {side} image uploaded successfully"
             });
         }

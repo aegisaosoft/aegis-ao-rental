@@ -34,21 +34,27 @@ public class DriverLicenseController : ControllerBase
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<DriverLicenseController> _logger;
     private readonly IBarcodeParserService _barcodeParser;
+    private readonly IFrontSideParserService _frontSideParser;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly CarRentalDbContext _context;
+    private readonly ImageOrientationService _orientationService;
 
     public DriverLicenseController(
         IWebHostEnvironment env,
         ILogger<DriverLicenseController> logger,
         IBarcodeParserService barcodeParser,
+        IFrontSideParserService frontSideParser,
         IHttpClientFactory httpClientFactory,
-        CarRentalDbContext context)
+        CarRentalDbContext context,
+        ImageOrientationService orientationService)
     {
         _env = env;
         _logger = logger;
         _barcodeParser = barcodeParser;
+        _frontSideParser = frontSideParser;
         _httpClientFactory = httpClientFactory;
         _context = context;
+        _orientationService = orientationService;
     }
 
     /// <summary>
@@ -76,7 +82,7 @@ public class DriverLicenseController : ControllerBase
             // Validate image file type
             if (!IsValidImageFile(backSideImage))
             {
-                return BadRequest(new { message = "Invalid image file. Only JPEG, PNG, and BMP files are supported." });
+                return BadRequest(new { message = "Invalid image file. Supported formats: JPEG, PNG, BMP, TIFF, WebP, GIF, HEIC, HEIF." });
             }
 
             _logger.LogInformation("Processing PDF417 barcode from back side image: {FileName} ({Size} bytes)",
@@ -87,8 +93,8 @@ public class DriverLicenseController : ControllerBase
             await backSideImage.CopyToAsync(memoryStream);
             var imageBytes = memoryStream.ToArray();
 
-            // Parse PDF417 barcode using ZXing.Net + IdParser
-            var parseResult = await _barcodeParser.ParseDriverLicenseBarcodeAsync(imageBytes);
+            // Parse PDF417 barcode using ZXing.Net + IdParser (passes fileName/contentType for HEIC detection)
+            var parseResult = await _barcodeParser.ParseDriverLicenseBarcodeAsync(imageBytes, backSideImage.FileName, backSideImage.ContentType);
 
             if (parseResult?.Success == true)
             {
@@ -193,10 +199,10 @@ public class DriverLicenseController : ControllerBase
 
             if (!IsValidImageFile(frontSideImage))
             {
-                return BadRequest(new { message = "Invalid image file. Only JPEG, PNG, and BMP files are supported." });
+                return BadRequest(new { message = "Invalid image file. Supported formats: JPEG, PNG, BMP, TIFF, WebP, GIF, HEIC, HEIF." });
             }
 
-            _logger.LogInformation("Processing front side image with Google Cloud Document AI: {FileName} ({Size} bytes)",
+            _logger.LogInformation("Processing front side image: {FileName} ({Size} bytes)",
                 frontSideImage.FileName, frontSideImage.Length);
 
             // Convert uploaded file to byte array
@@ -204,8 +210,8 @@ public class DriverLicenseController : ControllerBase
             await frontSideImage.CopyToAsync(memoryStream);
             var imageBytes = memoryStream.ToArray();
 
-            // Process with Google Cloud Document AI
-            var parseResult = await ProcessWithDocumentAi(imageBytes);
+            // Parse front side via singleton service (HEIC→PNG + EXIF + compress + Document AI inside)
+            var parseResult = await _frontSideParser.ParseFrontSideAsync(imageBytes, frontSideImage.FileName, frontSideImage.ContentType);
 
             // Create scan records for Document AI processing
             if (customerId.HasValue && parseResult.Success && parseResult.Data != null)
@@ -345,18 +351,42 @@ public class DriverLicenseController : ControllerBase
     }
 
     /// <summary>
-    /// Health check endpoint for license parsing services
+    /// Health check endpoint for license parsing services.
+    /// Resolves BarcodeParserService, does a quick dummy parse, returns pool stats.
     /// </summary>
     [HttpGet("health")]
-    public ActionResult<object> HealthCheck()
+    public async Task<ActionResult<object>> HealthCheck()
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        string parserStatus;
+        try
+        {
+            // Quick dummy parse to verify the pool and SkiaSharp are working
+            using var dummyBitmap = new SkiaSharp.SKBitmap(10, 10);
+            dummyBitmap.Erase(SkiaSharp.SKColors.White);
+            using var ms = new MemoryStream();
+            dummyBitmap.Encode(ms, SkiaSharp.SKEncodedImageFormat.Png, 100);
+            var dummyResult = await _barcodeParser.ParseDriverLicenseBarcodeAsync(ms.ToArray());
+            // Expected: no barcode found in white image — that's fine, service is alive
+            parserStatus = "available";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Health check dummy parse failed");
+            parserStatus = $"degraded: {ex.Message}";
+        }
+        sw.Stop();
+
         return Ok(new
         {
-            status = "healthy",
+            status = parserStatus == "available" ? "healthy" : "degraded",
             services = new
             {
-                pdf417Parser = "available",
+                pdf417Parser = parserStatus,
+                pdf417ParserMode = "ObjectPool (thread-safe)",
                 documentAi = "configured",
+                healthCheckLatencyMs = sw.ElapsedMilliseconds,
+                processorCount = Environment.ProcessorCount,
                 timestamp = DateTime.UtcNow
             }
         });
@@ -365,106 +395,38 @@ public class DriverLicenseController : ControllerBase
     #region Private Methods
 
     /// <summary>
-    /// Validate image file type
+    /// Validate image file type (JPEG, PNG, BMP, TIFF, WebP, GIF, HEIC, HEIF)
     /// </summary>
     private static bool IsValidImageFile(IFormFile file)
     {
-        var allowedTypes = new[] { "image/jpeg", "image/png", "image/bmp", "image/tiff" };
-        return allowedTypes.Contains(file.ContentType?.ToLower());
+        return ImageOrientationService.IsSupportedImageFile(file);
     }
 
     /// <summary>
-    /// Process front side internally
+    /// Process front side internally (HEIC→PNG + EXIF + compress pipeline applied inside FrontSideParserService)
     /// </summary>
     private async Task<DocumentAiParseResult> ProcessFrontSideInternal(IFormFile frontSideImage)
     {
-        using var memoryStream = new MemoryStream();
-        await frontSideImage.CopyToAsync(memoryStream);
-        var imageBytes = memoryStream.ToArray();
-
-        return await ProcessWithDocumentAi(imageBytes);
+        using var ms = new MemoryStream();
+        await frontSideImage.CopyToAsync(ms);
+        return await _frontSideParser.ParseFrontSideAsync(ms.ToArray());
     }
 
     /// <summary>
-    /// Process back side internally
+    /// Process back side internally (HEIC→PNG + EXIF + compress pipeline applied inside BarcodeParserService)
     /// </summary>
     private async Task<BarcodeParseResult> ProcessBackSideInternal(IFormFile backSideImage)
     {
-        using var memoryStream = new MemoryStream();
-        await backSideImage.CopyToAsync(memoryStream);
-        var imageBytes = memoryStream.ToArray();
+        using var ms = new MemoryStream();
+        await backSideImage.CopyToAsync(ms);
+        var imageBytes = ms.ToArray();
 
-        return await _barcodeParser.ParseDriverLicenseBarcodeAsync(imageBytes) ?? new BarcodeParseResult
+        return await _barcodeParser.ParseDriverLicenseBarcodeAsync(imageBytes, backSideImage.FileName, backSideImage.ContentType) ?? new BarcodeParseResult
         {
             Success = false,
             Message = "Failed to parse back side barcode",
             Error = "PARSE_FAILED"
         };
-    }
-
-    /// <summary>
-    /// Process image with Google Cloud Document AI
-    /// TODO: Implement actual Google Cloud Document AI integration
-    /// </summary>
-    private async Task<DocumentAiParseResult> ProcessWithDocumentAi(byte[] imageBytes)
-    {
-        try
-        {
-            // TODO: Replace with actual Google Cloud Document AI implementation
-            // For now, return a placeholder structure
-
-            _logger.LogInformation("Processing with Google Cloud Document AI (placeholder implementation)");
-
-            // Simulate processing delay
-            await Task.Delay(1000);
-
-            return new DocumentAiParseResult
-            {
-                Success = false, // Set to false until actual implementation
-                ErrorMessage = "Google Cloud Document AI integration pending implementation",
-                ProcessingMethod = "document_ai_placeholder",
-                ConfidenceScore = 0.0,
-                ProcessingTimestamp = DateTime.UtcNow,
-                Data = new DocumentAiLicenseData
-                {
-                    ProcessingTimestamp = DateTime.UtcNow,
-                    ExtractedFromOcr = false,
-                    RequiresManualEntry = true
-                }
-            };
-
-            /*
-            TODO: Actual Google Cloud Document AI implementation:
-
-            using Google.Cloud.DocumentAI.V1;
-
-            var client = DocumentProcessorServiceClient.Create();
-            var request = new ProcessRequest
-            {
-                Name = "projects/{project}/locations/{location}/processors/{processor}",
-                RawDocument = new RawDocument
-                {
-                    Content = Google.Protobuf.ByteString.CopyFrom(imageBytes),
-                    MimeType = "image/jpeg"
-                }
-            };
-
-            var response = await client.ProcessDocumentAsync(request);
-
-            // Extract license data from response
-            return ParseDocumentAiResponse(response);
-            */
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing with Google Cloud Document AI");
-            return new DocumentAiParseResult
-            {
-                Success = false,
-                ErrorMessage = $"Document AI processing failed: {ex.Message}",
-                ProcessingMethod = "document_ai_error"
-            };
-        }
     }
 
     /// <summary>

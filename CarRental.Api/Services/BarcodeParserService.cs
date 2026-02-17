@@ -3,50 +3,50 @@
  * 34 Middletown Ave Atlantic Highlands NJ 07716
  *
  * Driver License PDF417 Barcode Parser Service
- * Cross-platform implementation using SkiaSharp and ZXing.Net
+ * Thread-safe implementation using ObjectPool + SkiaSharp + ZXing.Net
+ *
+ * CRITICAL: BarcodeReader<SKBitmap> is NOT thread-safe.
+ * Every parse call gets its own reader from the pool and returns it in finally.
+ * NEVER store a pooled reader as a class field.
  */
 
 using CarRental.Api.Models;
 using CarRental.Api.Services.Interfaces;
 using IdParser.Core;
+using Microsoft.Extensions.ObjectPool;
 using SkiaSharp;
 using ZXing;
 using ZXing.Common;
 using ZXing.SkiaSharp;
+using BarcodeParseResult = CarRental.Api.Services.Interfaces.BarcodeParseResult;
 
 namespace CarRental.Api.Services;
 
 /// <summary>
-/// Service for parsing PDF417 barcodes from driver licenses
-/// Uses ZXing.Net for barcode reading and IdParser.Core for AAMVA data parsing
-/// Cross-platform implementation using SkiaSharp (works on Windows, Linux, macOS)
+/// Singleton service for parsing PDF417 barcodes from driver licenses.
+/// Uses ObjectPool for thread-safe concurrent barcode reading.
 /// </summary>
 public class BarcodeParserService : IBarcodeParserService
 {
-    private readonly BarcodeReader<SKBitmap> _barcodeReader;
+    private readonly ObjectPool<BarcodeReader<SKBitmap>> _readerPool;
+    private readonly ImageOrientationService _orientationService;
     private readonly ILogger<BarcodeParserService> _logger;
 
-    public BarcodeParserService(ILogger<BarcodeParserService> logger)
+    public BarcodeParserService(
+        ObjectPool<BarcodeReader<SKBitmap>> readerPool,
+        ImageOrientationService orientationService,
+        ILogger<BarcodeParserService> logger)
     {
+        _readerPool = readerPool;
+        _orientationService = orientationService;
         _logger = logger;
-        _barcodeReader = new BarcodeReader<SKBitmap>(bitmap => new SKBitmapLuminanceSource(bitmap))
-        {
-            AutoRotate = true,
-            Options = new DecodingOptions
-            {
-                TryHarder = true,
-                TryInverted = true,
-                PossibleFormats = new[] { BarcodeFormat.PDF_417 },
-                PureBarcode = false
-            }
-        };
 
         // Verify SkiaSharp is properly loaded (especially important on Azure)
         try
         {
             var testBitmap = new SKBitmap(1, 1);
             testBitmap.Dispose();
-            _logger.LogInformation("BarcodeParserService initialized with SkiaSharp support - Azure native assets loaded successfully");
+            _logger.LogInformation("BarcodeParserService initialized with SkiaSharp support and ObjectPool - Azure native assets loaded successfully");
         }
         catch (Exception ex)
         {
@@ -55,26 +55,37 @@ public class BarcodeParserService : IBarcodeParserService
         }
     }
 
-    public async Task<CarRental.Api.Services.Interfaces.BarcodeParseResult> ParseDriverLicenseBarcodeAsync(Stream imageStream, string mimeType)
+    public async Task<BarcodeParseResult> ParseDriverLicenseBarcodeAsync(Stream imageStream, string mimeType)
     {
         using var memoryStream = new MemoryStream();
         await imageStream.CopyToAsync(memoryStream);
         return await ParseDriverLicenseBarcodeAsync(memoryStream.ToArray());
     }
 
-    public Task<CarRental.Api.Services.Interfaces.BarcodeParseResult> ParseDriverLicenseBarcodeAsync(byte[] imageData)
+    public Task<BarcodeParseResult> ParseDriverLicenseBarcodeAsync(byte[] imageData, string? fileName = null, string? contentType = null)
     {
         return Task.Run(() =>
         {
             try
             {
-                _logger.LogInformation("Starting PDF417 barcode parsing from image ({Size} bytes)", imageData.Length);
+                _logger.LogInformation("Starting PDF417 barcode parsing from image ({Size} bytes, file={FileName}, type={ContentType})",
+                    imageData.Length, fileName ?? "unknown", contentType ?? "unknown");
 
-                using var bitmap = SKBitmap.Decode(imageData);
+                // Full pipeline: HEIC→PNG + EXIF orientation (fileName/contentType needed for HEIC detection)
+                SKBitmap? bitmap;
+                try
+                {
+                    bitmap = _orientationService.DecodeAndCorrectOrientation(imageData, fileName, contentType);
+                }
+                catch (InvalidOperationException)
+                {
+                    bitmap = null;
+                }
+
                 if (bitmap == null)
                 {
                     _logger.LogWarning("Could not decode image data");
-                    return new CarRental.Api.Services.Interfaces.BarcodeParseResult
+                    return new BarcodeParseResult
                     {
                         Success = false,
                         ErrorCode = "INVALID_IMAGE",
@@ -83,62 +94,74 @@ public class BarcodeParserService : IBarcodeParserService
                     };
                 }
 
-                // Try to decode barcode
-                var result = _barcodeReader.Decode(bitmap);
-
-                // If not found, try with preprocessing
-                if (result == null)
+                using (bitmap)
                 {
-                    _logger.LogInformation("Initial barcode detection failed, trying with preprocessing");
-                    result = TryDecodeWithPreprocessing(bitmap);
-                }
-
-                if (result == null)
-                {
-                    _logger.LogWarning("No PDF417 barcode found in image");
-                    return new CarRental.Api.Services.Interfaces.BarcodeParseResult
+                    // Get reader from pool, decode, return reader — thread-safe pattern
+                    var reader = _readerPool.Get();
+                    Result? result;
+                    try
                     {
-                        Success = false,
-                        ErrorCode = "BARCODE_NOT_FOUND",
-                        Error = "BARCODE_NOT_FOUND",
-                        Message = "Could not find PDF417 barcode in the image. Please ensure the back of the license is clearly visible."
+                        result = reader.Decode(bitmap);
+                    }
+                    finally
+                    {
+                        _readerPool.Return(reader);
+                    }
+
+                    // If not found, try with preprocessing
+                    if (result == null)
+                    {
+                        _logger.LogInformation("Initial barcode detection failed, trying with preprocessing");
+                        result = TryDecodeWithPreprocessing(bitmap);
+                    }
+
+                    if (result == null)
+                    {
+                        _logger.LogWarning("No PDF417 barcode found in image");
+                        return new BarcodeParseResult
+                        {
+                            Success = false,
+                            ErrorCode = "BARCODE_NOT_FOUND",
+                            Error = "BARCODE_NOT_FOUND",
+                            Message = "Could not find PDF417 barcode in the image. Please ensure the back of the license is clearly visible."
+                        };
+                    }
+
+                    _logger.LogInformation("PDF417 barcode detected, raw data length: {Length}", result.Text?.Length ?? 0);
+
+                    var barcodeData = result.Text;
+                    var parseResult = Barcode.Parse(barcodeData);
+
+                    if (parseResult?.Card == null)
+                    {
+                        _logger.LogWarning("Barcode found but could not parse driver license data");
+                        return new BarcodeParseResult
+                        {
+                            Success = false,
+                            ErrorCode = "PARSE_FAILED",
+                            Error = "PARSE_FAILED",
+                            Message = "Barcode found but could not parse driver license data."
+                        };
+                    }
+
+                    var licenseData = MapToLicenseData(parseResult.Card);
+                    _logger.LogInformation("Successfully parsed driver license data for {FirstName} {LastName} (License: {LicenseNumber})",
+                        licenseData.FirstName, licenseData.LastName, licenseData.LicenseNumber);
+
+                    return new BarcodeParseResult
+                    {
+                        Success = true,
+                        Data = licenseData,
+                        Message = "Driver license barcode successfully parsed",
+                        ConfidenceScore = 1.0,
+                        RawData = barcodeData
                     };
                 }
-
-                _logger.LogInformation("PDF417 barcode detected, raw data length: {Length}", result.Text?.Length ?? 0);
-
-                var barcodeData = result.Text;
-                var parseResult = Barcode.Parse(barcodeData);
-
-                if (parseResult?.Card == null)
-                {
-                    _logger.LogWarning("Barcode found but could not parse driver license data");
-                    return new CarRental.Api.Services.Interfaces.BarcodeParseResult
-                    {
-                        Success = false,
-                        ErrorCode = "PARSE_FAILED",
-                        Error = "PARSE_FAILED",
-                        Message = "Barcode found but could not parse driver license data."
-                    };
-                }
-
-                var licenseData = MapToLicenseData(parseResult.Card);
-                _logger.LogInformation("Successfully parsed driver license data for {FirstName} {LastName} (License: {LicenseNumber})",
-                    licenseData.FirstName, licenseData.LastName, licenseData.LicenseNumber);
-
-                return new CarRental.Api.Services.Interfaces.BarcodeParseResult
-                {
-                    Success = true,
-                    Data = licenseData,
-                    Message = "Driver license barcode successfully parsed",
-                    ConfidenceScore = 1.0, // High confidence for barcode parsing
-                    RawData = barcodeData // Store raw barcode data for audit
-                };
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error parsing PDF417 barcode");
-                return new CarRental.Api.Services.Interfaces.BarcodeParseResult
+                return new BarcodeParseResult
                 {
                     Success = false,
                     ErrorCode = "PARSE_ERROR",
@@ -149,11 +172,27 @@ public class BarcodeParserService : IBarcodeParserService
         });
     }
 
+    /// <summary>
+    /// Decode a single bitmap using a pooled reader. Thread-safe: Get → Decode → Return.
+    /// </summary>
+    private Result? DecodeWithPooledReader(SKBitmap bitmap)
+    {
+        var reader = _readerPool.Get();
+        try
+        {
+            return reader.Decode(bitmap);
+        }
+        finally
+        {
+            _readerPool.Return(reader);
+        }
+    }
+
     private Result? TryDecodeWithPreprocessing(SKBitmap originalBitmap)
     {
         // Try grayscale
         using var grayscale = ConvertToGrayscale(originalBitmap);
-        var result = _barcodeReader.Decode(grayscale);
+        var result = DecodeWithPooledReader(grayscale);
         if (result != null)
         {
             _logger.LogInformation("Barcode found with grayscale preprocessing");
@@ -162,7 +201,7 @@ public class BarcodeParserService : IBarcodeParserService
 
         // Try with increased contrast
         using var contrasted = AdjustContrast(grayscale, 1.5f);
-        result = _barcodeReader.Decode(contrasted);
+        result = DecodeWithPooledReader(contrasted);
         if (result != null)
         {
             _logger.LogInformation("Barcode found with contrast adjustment");
@@ -171,28 +210,28 @@ public class BarcodeParserService : IBarcodeParserService
 
         // Try rotated 90 degrees
         using var rotated90 = RotateBitmap(originalBitmap, 90);
-        result = _barcodeReader.Decode(rotated90);
+        result = DecodeWithPooledReader(rotated90);
         if (result != null)
         {
-            _logger.LogInformation("Barcode found with 90° rotation");
+            _logger.LogInformation("Barcode found with 90 degree rotation");
             return result;
         }
 
         // Try rotated 270 degrees
         using var rotated270 = RotateBitmap(originalBitmap, 270);
-        result = _barcodeReader.Decode(rotated270);
+        result = DecodeWithPooledReader(rotated270);
         if (result != null)
         {
-            _logger.LogInformation("Barcode found with 270° rotation");
+            _logger.LogInformation("Barcode found with 270 degree rotation");
             return result;
         }
 
         // Try rotated 180 degrees
         using var rotated180 = RotateBitmap(originalBitmap, 180);
-        result = _barcodeReader.Decode(rotated180);
+        result = DecodeWithPooledReader(rotated180);
         if (result != null)
         {
-            _logger.LogInformation("Barcode found with 180° rotation");
+            _logger.LogInformation("Barcode found with 180 degree rotation");
         }
 
         return result;
@@ -205,7 +244,6 @@ public class BarcodeParserService : IBarcodeParserService
         using var canvas = new SKCanvas(grayscale);
         using var paint = new SKPaint();
 
-        // Grayscale color matrix
         paint.ColorFilter = SKColorFilter.CreateColorMatrix(new float[]
         {
             0.21f, 0.72f, 0.07f, 0, 0,
@@ -294,30 +332,60 @@ public class BarcodeParserService : IBarcodeParserService
         data.JurisdictionVersion = string.Empty;
 
         // Additional fields for backwards compatibility
-        data.Address = data.AddressLine1; // Use primary address line
-        data.Sex = data.Gender;           // Alias for gender
+        data.Address = data.AddressLine1;
+        data.Sex = data.Gender;
 
         return data;
     }
 }
 
 /// <summary>
-/// SkiaSharp luminance source for ZXing barcode reading
+/// SkiaSharp luminance source for ZXing barcode reading.
+/// Optimised: reads raw pixel bytes via GetPixelSpan() — avoids
+/// allocating a managed SKColor[] copy (bitmap.Pixels).
 /// </summary>
 public class SKBitmapLuminanceSource : BaseLuminanceSource
 {
     public SKBitmapLuminanceSource(SKBitmap bitmap)
         : base(bitmap.Width, bitmap.Height)
     {
-        var pixels = bitmap.Pixels;
-        for (int y = 0; y < bitmap.Height; y++)
+        var w = bitmap.Width;
+        var h = bitmap.Height;
+        var span = bitmap.GetPixelSpan(); // ReadOnlySpan<byte>, no managed copy
+        int bytesPerPixel = bitmap.BytesPerPixel;
+
+        // Most common: BGRA8888 (4 bytes/pixel) or RGBA8888
+        // Both have R/G/B in the first 3 bytes (order differs but luminance is symmetric enough)
+        if (bytesPerPixel >= 3)
         {
-            for (int x = 0; x < bitmap.Width; x++)
+            bool isBgra = bitmap.ColorType == SKColorType.Bgra8888;
+            for (int i = 0; i < w * h; i++)
             {
-                var pixel = pixels[y * bitmap.Width + x];
-                // Calculate luminance using standard formula
-                var luminance = (byte)((pixel.Red * 299 + pixel.Green * 587 + pixel.Blue * 114) / 1000);
-                luminances[y * bitmap.Width + x] = luminance;
+                int offset = i * bytesPerPixel;
+                byte r, g, b;
+                if (isBgra)
+                {
+                    b = span[offset];
+                    g = span[offset + 1];
+                    r = span[offset + 2];
+                }
+                else
+                {
+                    r = span[offset];
+                    g = span[offset + 1];
+                    b = span[offset + 2];
+                }
+                luminances[i] = (byte)((r * 299 + g * 587 + b * 114) / 1000);
+            }
+        }
+        else
+        {
+            // Fallback for unusual color types — use SKColor API
+            var pixels = bitmap.Pixels;
+            for (int i = 0; i < w * h; i++)
+            {
+                var p = pixels[i];
+                luminances[i] = (byte)((p.Red * 299 + p.Green * 587 + p.Blue * 114) / 1000);
             }
         }
     }

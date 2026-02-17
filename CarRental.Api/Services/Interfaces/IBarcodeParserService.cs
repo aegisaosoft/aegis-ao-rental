@@ -5,7 +5,7 @@ namespace CarRental.Api.Services.Interfaces;
 public interface IBarcodeParserService
 {
     Task<BarcodeParseResult> ParseDriverLicenseBarcodeAsync(Stream imageStream, string mimeType);
-    Task<BarcodeParseResult> ParseDriverLicenseBarcodeAsync(byte[] imageData);
+    Task<BarcodeParseResult> ParseDriverLicenseBarcodeAsync(byte[] imageData, string? fileName = null, string? contentType = null);
 }
 
 public class BarcodeParseResult

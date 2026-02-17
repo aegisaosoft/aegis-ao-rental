@@ -226,7 +226,28 @@ builder.Services.Configure<CarRental.Api.Configurations.DocumentAiConfiguration>
     builder.Configuration.GetSection("DocumentAi"));
 builder.Services.AddSingleton<CarRental.Api.Configurations.IDocumentAiConfiguration>(serviceProvider =>
     serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<CarRental.Api.Configurations.DocumentAiConfiguration>>().Value);
-builder.Services.AddScoped<CarRental.Api.Services.Interfaces.IBarcodeParserService, CarRental.Api.Services.BarcodeParserService>();
+
+// Image orientation correction (EXIF auto-rotate for iPhone photos)
+builder.Services.AddSingleton<CarRental.Api.Services.ImageOrientationService>();
+
+// ZXing BarcodeReader ObjectPool — thread-safe concurrent barcode parsing
+builder.Services.AddSingleton<Microsoft.Extensions.ObjectPool.ObjectPoolProvider, Microsoft.Extensions.ObjectPool.DefaultObjectPoolProvider>();
+builder.Services.AddSingleton<Microsoft.Extensions.ObjectPool.IPooledObjectPolicy<ZXing.BarcodeReader<SkiaSharp.SKBitmap>>, CarRental.Api.Services.BarcodeReaderPoolPolicy>();
+builder.Services.AddSingleton(sp =>
+{
+    var provider = sp.GetRequiredService<Microsoft.Extensions.ObjectPool.ObjectPoolProvider>();
+    var policy = sp.GetRequiredService<Microsoft.Extensions.ObjectPool.IPooledObjectPolicy<ZXing.BarcodeReader<SkiaSharp.SKBitmap>>>();
+    return provider.Create(policy);
+});
+builder.Services.AddSingleton<CarRental.Api.Services.BarcodeParserService>();
+builder.Services.AddSingleton<CarRental.Api.Services.Interfaces.IBarcodeParserService>(sp =>
+    sp.GetRequiredService<CarRental.Api.Services.BarcodeParserService>());
+builder.Services.AddHostedService<CarRental.Api.HostedServices.ZXingWarmupService>();
+
+// Front-side parser singleton (EXIF correction + Document AI OCR)
+builder.Services.AddSingleton<CarRental.Api.Services.FrontSideParserService>();
+builder.Services.AddSingleton<CarRental.Api.Services.Interfaces.IFrontSideParserService>(sp =>
+    sp.GetRequiredService<CarRental.Api.Services.FrontSideParserService>());
 
 // Add Azure DNS Service (mandatory - requires Azure configuration)
 builder.Services.AddScoped<IAzureDnsService, AzureDnsService>();
@@ -292,9 +313,8 @@ builder.Services.AddScoped<IInstagramCampaignService, InstagramCampaignService>(
 builder.Services.AddScoped<IInstagramMessagingService, InstagramMessagingService>();
 builder.Services.AddScoped<IBookingAssistantService, BookingAssistantService>();
 
-// Add Driver License Processing Services
-builder.Services.AddScoped<BarcodeParserService>();
-builder.Services.AddHttpClient(); // For Google Cloud Document AI integration
+// HTTP client for Google Cloud Document AI integration
+builder.Services.AddHttpClient();
 
 // Add Social Media Scheduler Background Service (for scheduled posts)
 builder.Services.AddHostedService<SocialMediaSchedulerService>();
