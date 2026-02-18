@@ -43,6 +43,11 @@ public class ModelsGroupedByCategoryDto
     public List<ModelDto> Models { get; set; } = new();
 }
 
+public class UpdateModelCategoryDto
+{
+    public Guid? CategoryId { get; set; }
+}
+
 public class BulkUpdateModelDailyRateDto
 {
     [Required]

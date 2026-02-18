@@ -518,6 +518,36 @@ public class ModelsController : ControllerBase
     }
 
     /// <summary>
+    /// Update category for a specific model
+    /// </summary>
+    [HttpPut("{id}/category")]
+    [Authorize]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> UpdateModelCategory(Guid id, [FromBody] UpdateModelCategoryDto request)
+    {
+        try
+        {
+            var model = await _context.Models.FindAsync(id);
+            if (model == null)
+                return NotFound(new { message = "Model not found" });
+
+            model.CategoryId = request.CategoryId;
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Updated category for model {ModelId} ({Make} {Model}) to {CategoryId}",
+                id, model.Make, model.ModelName, request.CategoryId);
+
+            return Ok(new { message = "Category updated successfully", categoryId = request.CategoryId });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating category for model {ModelId}", id);
+            return StatusCode(500, new { message = "An error occurred" });
+        }
+    }
+
+    /// <summary>
     /// Parses the first year from a comma-separated string of years
     /// </summary>
     /// <param name="yearsString">Comma-separated years string (e.g., "2020, 2021, 2022")</param>
