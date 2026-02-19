@@ -51,8 +51,10 @@ namespace CarRental.Api.Middleware
                 var path = context.Request.Path.Value ?? "";
                 var method = context.Request.Method;
                 
-                // Skip company resolution for webhook endpoints (Stripe calls don't need company context)
-                if (path.StartsWith("/api/webhooks/", StringComparison.OrdinalIgnoreCase))
+                // Skip company resolution for endpoints that don't need company context
+                if (path.StartsWith("/api/webhooks/", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/api/car-images/", StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith("/api/aegis-admin/", StringComparison.OrdinalIgnoreCase))
                 {
                     await _next(context);
                     return;

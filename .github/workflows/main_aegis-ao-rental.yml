@@ -29,6 +29,15 @@ jobs:
       - name: dotnet publish
         run: dotnet publish -c Release -o ${{env.DOTNET_ROOT}}/myapp
 
+      - name: Copy Python files to publish output
+        run: |
+          mkdir -p ${{env.DOTNET_ROOT}}/myapp/python
+          cp python/remove_cars_pro.py ${{env.DOTNET_ROOT}}/myapp/python/
+          cp python/requirements.txt ${{env.DOTNET_ROOT}}/myapp/python/
+
+      - name: Copy startup script
+        run: cp startup.sh ${{env.DOTNET_ROOT}}/myapp/startup.sh
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
@@ -47,13 +56,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: .net-app
-      
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_56B23BC408034846A922D374794D93E6 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_F192033A25E546D19E5C245B98E94322 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_F7CAF7002F37447C823E53453D5A2DF2 }}
+
+      - name: Configure Azure App Service startup
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az webapp config set --resource-group aegis_rentals --name aegis-ao-rental --startup-file "/home/site/wwwroot/startup.sh"
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
@@ -62,4 +77,3 @@ jobs:
           app-name: 'aegis-ao-rental'
           slot-name: 'Production'
           package: .
-          

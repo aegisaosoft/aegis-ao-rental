@@ -265,6 +265,12 @@ builder.Services.AddScoped<IAzureBlobStorageService, SmartBlobStorageService>();
 
 Console.WriteLine("✅ Smart Blob Storage Service registered - automatic fallback between Azure and local storage");
 
+// Add Car Image Pipeline services
+builder.Services.AddHttpClient<ICarsScraper, CarsScraper>();
+builder.Services.AddScoped<IPythonProcessor, PythonProcessor>();
+builder.Services.AddHttpClient<ICarImageService, CarImageService>();
+builder.Services.AddSingleton<CarImageSearchJobStore>();
+
 // Add Translation Service
 builder.Services.AddScoped<ITranslationService, GoogleTranslationService>();
 
