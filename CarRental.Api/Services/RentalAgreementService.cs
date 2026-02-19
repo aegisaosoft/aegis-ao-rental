@@ -691,8 +691,8 @@ public class RentalAgreementService : IRentalAgreementService
             
             // Customer info
             CustomerName = $"{booking.Customer.FirstName} {booking.Customer.LastName}",
-            CustomerEmail = booking.Customer.Email,
-            CustomerPhone = booking.Customer.Phone,
+            CustomerEmail = booking.Customer?.Email ?? "",
+            CustomerPhone = booking.Customer?.Phone,
             CustomerAddress = customerAddress,
             DriverLicenseNumber = license?.LicenseNumber,
             DriverLicenseState = license?.StateIssued,

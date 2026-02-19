@@ -3051,8 +3051,8 @@ public class BookingController : ControllerBase
             var (rulesText, fullTermsText) = RentalTermsService.GetRulesAndTermsTexts(request.Language ?? "en");
 
             // Get SMS Consent text based on language using unified service
-            var smsConsentText = request.IncludeSmsConsent
-                ? (request.SmsConsentText ?? RentalTermsService.GetSmsConsentText(request.Language ?? "en"))
+            var smsConsentText = request.IncludeSmsConsent == true
+                ? (request.SmsConsentText ?? RentalTermsService.GetSmsConsentText(request.Language ?? "en") ?? "")
                 : "";
 
             // Debug logging
@@ -3161,7 +3161,7 @@ public class BookingController : ControllerBase
                 // Terms
                 RulesText = rulesText,
                 FullTermsText = fullTermsText,
-                SmsConsentText = smsConsentText,
+                SmsConsentText = smsConsentText ?? "",
             };
 
             var pdfBytes = pdfGenerator.Generate(pdfData);

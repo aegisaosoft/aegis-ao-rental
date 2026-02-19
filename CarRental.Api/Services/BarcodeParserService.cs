@@ -129,7 +129,7 @@ public class BarcodeParserService : IBarcodeParserService
 
                     _logger.LogInformation("PDF417 barcode detected, raw data length: {Length}", result.Text?.Length ?? 0);
 
-                    var barcodeData = result.Text;
+                    var barcodeData = result.Text ?? "";
                     var parseResult = Barcode.Parse(barcodeData);
 
                     if (parseResult?.Card == null)

@@ -554,8 +554,8 @@ public class DriverLicenseController : ControllerBase
         {
             // Update existing license
             existingLicense.LicenseNumber = licenseData.LicenseNumber;
-            existingLicense.StateIssued = sanitizedStateIssued;
-            existingLicense.CountryIssued = sanitizedCountryIssued;
+            existingLicense.StateIssued = sanitizedStateIssued ?? "";
+            existingLicense.CountryIssued = sanitizedCountryIssued ?? "US";
             existingLicense.FirstName = SanitizeTextField(licenseData.FirstName, 100);
             existingLicense.LastName = SanitizeTextField(licenseData.LastName, 100);
             existingLicense.Sex = sanitizedSex;
@@ -583,8 +583,8 @@ public class DriverLicenseController : ControllerBase
             {
                 CustomerId = customerId,
                 LicenseNumber = licenseData.LicenseNumber,
-                StateIssued = sanitizedStateIssued,
-                CountryIssued = sanitizedCountryIssued,
+                StateIssued = sanitizedStateIssued ?? "",
+                CountryIssued = sanitizedCountryIssued ?? "US",
                 FirstName = SanitizeTextField(licenseData.FirstName, 100),
                 LastName = SanitizeTextField(licenseData.LastName, 100),
                 Sex = sanitizedSex,

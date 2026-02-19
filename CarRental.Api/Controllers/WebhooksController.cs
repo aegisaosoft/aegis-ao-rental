@@ -184,12 +184,12 @@ public class WebhooksController : ControllerBase
             {
                 var stripeEvent = EventUtility.ParseEvent(json);
                 var signatureHeader = Request.Headers["Stripe-Signature"];
-                _logger.LogInformation("Signature header: {SignatureHeader}", signatureHeader);
+                _logger.LogInformation("Signature header: {SignatureHeader}", signatureHeader.ToString());
 
                 // If no StripeSettings provided, try to determine from company metadata in webhook
                 if (stripeSettings == null)
                 {
-                    stripeSettings = await ExtractStripeSettingsFromWebhook(json);
+                    stripeSettings = await ExtractStripeSettingsFromWebhook(json ?? "");
                 }
 
                 // Get webhook secret from StripeSettings if provided, otherwise from configuration
@@ -208,7 +208,7 @@ public class WebhooksController : ControllerBase
                 if (!string.IsNullOrEmpty(webhookSecret))
                 {
                     _logger.LogInformation("Using webhook secret: {SecretPrefix}...", webhookSecret.Substring(0, Math.Min(20, webhookSecret.Length)));
-                    _logger.LogInformation("JSON body first 100 chars: {JsonPrefix}", json.Substring(0, Math.Min(100, json.Length)));
+                    _logger.LogInformation("JSON body first 100 chars: {JsonPrefix}", json?.Substring(0, Math.Min(100, json.Length)));
 
                     try
                     {
