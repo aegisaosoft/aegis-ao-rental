@@ -97,13 +97,18 @@ public class PythonProcessor : IPythonProcessor
             // Устанавливаем UTF-8 для Python stdout/stderr
             psi.Environment["PYTHONIOENCODING"] = "utf-8";
 
+            // Используем собственный таймаут вместо клиентского CancellationToken,
+            // чтобы обработка не прерывалась при отключении клиента
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(TimeoutSeconds));
+            var processCt = timeoutCts.Token;
+
             using var process = new Process { StartInfo = psi };
             process.Start();
 
-            var stdout = process.StandardOutput.ReadToEndAsync(ct);
-            var stderr = process.StandardError.ReadToEndAsync(ct);
+            var stdout = process.StandardOutput.ReadToEndAsync(processCt);
+            var stderr = process.StandardError.ReadToEndAsync(processCt);
 
-            await process.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(TimeoutSeconds), ct);
+            await process.WaitForExitAsync(processCt);
 
             var stdoutText = await stdout;
             var stderrText = await stderr;

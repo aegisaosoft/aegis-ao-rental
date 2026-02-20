@@ -99,7 +99,7 @@ public class CarImageController : ControllerBase
     /// Скачать, обработать Python скриптом и загрузить в Blob Storage
     /// </summary>
     [HttpPost("process")]
-    public async Task<IActionResult> Process([FromBody] CarProcessRequestDto request, CancellationToken ct)
+    public async Task<IActionResult> Process([FromBody] CarProcessRequestDto request)
     {
         if (string.IsNullOrWhiteSpace(request.Make) || string.IsNullOrWhiteSpace(request.Model))
             return BadRequest(new { error = "Make and Model are required" });
@@ -110,7 +110,9 @@ public class CarImageController : ControllerBase
         _logger.LogInformation("CarImage Process: {Make} {Model}, source={Url}",
             request.Make, request.Model, request.SourceImageUrl);
 
-        var result = await _carImageService.ProcessAndUploadAsync(request, ct);
+        // Не передаём HTTP CancellationToken — обработка должна завершиться
+        // даже если клиент отключился (Python + upload могут занять >30 сек)
+        var result = await _carImageService.ProcessAndUploadAsync(request, CancellationToken.None);
 
         if (result.Status != "success")
         {
